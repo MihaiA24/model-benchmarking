@@ -1,0 +1,49 @@
+# API key — nunca committear
+openrouter_key.txt
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Node — en baselines, resultados y raíz
+node_modules/
+**/node_modules/
+
+# Build outputs — en baselines y resultados
+dist/
+build/
+target/
+**/dist/
+**/build/
+**/target/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git pack files (grandes)
+*.pack
+*.idx
+
+# ── Workdirs de resultados (copias de baseline por run) ──────────────────────
+# Los workdirs son copias completas del baseline (~100-300 MB c/u) y se pueden regenerar.
+# Solo se committean las métricas CSV y los _raw_response.txt (ya explícitamente añadidos).
+results/bug1-*/
+results/bug2-*/
+results/sb-*/
+results/ng-*/
+results/re-*/
+results/data-*/
+
+# ── Baselines con node_modules y .git anidados ───────────────────────────────
+baselines/angular-conduit/
+baselines/react-conduit/
+baselines/petclinic/
+baselines/petclinic-feat1/

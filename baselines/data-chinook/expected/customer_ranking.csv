@@ -1,0 +1,60 @@
+Country,CustomerId,FirstName,LastName,TotalPurchases,Rank
+Argentina,56,Diego,Gutiérrez,37.62,1
+Australia,55,Mark,Taylor,37.62,1
+Austria,7,Astrid,Gruber,42.62,1
+Belgium,8,Daan,Peeters,37.62,1
+Brazil,1,Luís,Gonçalves,39.62,1
+Brazil,10,Eduardo,Martins,37.62,2
+Brazil,11,Alexandre,Rocha,37.62,2
+Brazil,12,Roberto,Almeida,37.62,2
+Brazil,13,Fernanda,Ramos,37.62,2
+Canada,3,François,Tremblay,39.62,1
+Canada,15,Jennifer,Peterson,38.62,2
+Canada,14,Mark,Philips,37.62,3
+Canada,29,Robert,Brown,37.62,3
+Canada,30,Edward,Francis,37.62,3
+Canada,31,Martha,Silk,37.62,3
+Canada,32,Aaron,Mitchell,37.62,3
+Canada,33,Ellie,Sullivan,37.62,3
+Chile,57,Luis,Rojas,46.62,1
+Czech Republic,6,Helena,Holý,49.62,1
+Czech Republic,5,František,Wichterlová,40.62,2
+Denmark,9,Kara,Nielsen,37.62,1
+Finland,44,Terhi,Hämäläinen,41.62,1
+France,43,Isabelle,Mercier,40.62,1
+France,42,Wyatt,Girard,39.62,2
+France,39,Camille,Bernard,38.62,3
+France,40,Dominique,Lefebvre,38.62,3
+France,41,Marc,Dubois,37.62,5
+Germany,37,Fynn,Zimmermann,43.62,1
+Germany,2,Leonie,Köhler,37.62,2
+Germany,36,Hannah,Schneider,37.62,2
+Germany,38,Niklas,Schröder,37.62,2
+Hungary,45,Ladislav,Kovács,45.62,1
+India,58,Manoj,Pareek,38.62,1
+India,59,Puja,Srivastava,36.64,2
+Ireland,46,Hugh,O'Reilly,45.62,1
+Italy,47,Lucas,Mancini,37.62,1
+Netherlands,48,Johannes,Van der Berg,40.62,1
+Norway,4,Bjørn,Hansen,39.62,1
+Poland,49,Stanisław,Wójcik,37.62,1
+Portugal,34,João,Fernandes,39.62,1
+Portugal,35,Madalena,Sampaio,37.62,2
+Spain,50,Enrique,Muñoz,37.62,1
+Sweden,51,Joakim,Johansson,38.62,1
+USA,26,Richard,Cunningham,47.62,1
+USA,24,Frank,Ralston,43.62,2
+USA,28,Julia,Barnett,43.62,2
+USA,25,Victor,Stevens,42.62,4
+USA,17,Jack,Smith,39.62,5
+USA,20,Dan,Miller,39.62,5
+USA,22,Heather,Leacock,39.62,5
+USA,19,Tim,Goyer,38.62,8
+USA,16,Frank,Harris,37.62,9
+USA,18,Michelle,Brooks,37.62,9
+USA,21,Kathy,Chase,37.62,9
+USA,23,John,Gordon,37.62,9
+USA,27,Patrick,Gray,37.62,9
+United Kingdom,52,Emma,Jones,37.62,1
+United Kingdom,53,Phil,Hughes,37.62,1
+United Kingdom,54,Steve,Murray,37.62,1

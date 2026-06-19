@@ -1,0 +1,27 @@
+```javascript
+/**
+ * Calcula el tiempo de lectura estimado en minutos.
+ * @param {string} body - Texto del artículo
+ * @returns {number} Minutos de lectura (mínimo 1)
+ */
+export default function getReadingTime(body) {
+  if (!body) {
+    return 1;
+  }
+  const words = body.split(/\s+/).filter(word => word.length > 0);
+  return Math.max(1, Math.ceil(words.length / 200));
+}
+``````javascript
+/**
+ * Calcula el tiempo de lectura estimado en minutos.
+ * @param {string} body - Texto del artículo
+ * @returns {number} Minutos de lectura (mínimo 1)
+ */
+export default function getReadingTime(body) {
+  if (!body) {
+    return 1;
+  }
+  const words = body.split(/\s+/).filter(word => word.length > 0);
+  return Math.max(1, Math.ceil(words.length / 200));
+}
+```

@@ -1,0 +1,10 @@
+task,model,run,build_ok,test_ok,in_tok,out_tok,cost_usd,latency_s,workdir
+sb-feat1-name-length,minimax/minimax-m3,1,True,True,744,1371,0.0019,23.7,results\sb-feat1-name-length__minimax_minimax-m3__r1
+sb-feat1-name-length,minimax/minimax-m3,2,True,True,744,687,0.001,11.0,results\sb-feat1-name-length__minimax_minimax-m3__r2
+sb-feat1-name-length,minimax/minimax-m3,3,True,True,744,1378,0.0019,23.5,results\sb-feat1-name-length__minimax_minimax-m3__r3
+sb-feat1-name-length,deepseek/deepseek-v4-flash,1,True,True,595,509,0.0001,11.0,results\sb-feat1-name-length__deepseek_deepseek-v4-flash__r1
+sb-feat1-name-length,deepseek/deepseek-v4-flash,2,True,True,612,905,0.0002,10.8,results\sb-feat1-name-length__deepseek_deepseek-v4-flash__r2
+sb-feat1-name-length,deepseek/deepseek-v4-flash,3,True,True,595,2096,0.0004,16.4,results\sb-feat1-name-length__deepseek_deepseek-v4-flash__r3
+sb-feat1-name-length,z-ai/glm-4.7,1,True,True,560,2631,0.0048,38.4,results\sb-feat1-name-length__z-ai_glm-4.7__r1
+sb-feat1-name-length,z-ai/glm-4.7,2,False,False,560,2616,0.0048,125.0,results\sb-feat1-name-length__z-ai_glm-4.7__r2
+sb-feat1-name-length,z-ai/glm-4.7,3,True,True,560,2586,0.0047,128.2,results\sb-feat1-name-length__z-ai_glm-4.7__r3

@@ -1,0 +1,4 @@
+alias,model_real
+Modelo C,deepseek/deepseek-v4-flash
+Modelo A,minimax/minimax-m3
+Modelo B,z-ai/glm-4.7
