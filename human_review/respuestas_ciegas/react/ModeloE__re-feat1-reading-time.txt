@@ -1,0 +1,18 @@
+```javascript
+/**
+ * Calcula el tiempo de lectura estimado en minutos.
+ * @param {string} body - Texto del artículo
+ * @returns {number} Minutos de lectura (mínimo 1)
+ */
+export default function getReadingTime(body) {
+  if (!body) {
+    return 1;
+  }
+
+  const words = body.split(/\s+/);
+  const wordCount = words.length;
+  const minutes = Math.ceil(wordCount / 200);
+
+  return minutes;
+}
+```

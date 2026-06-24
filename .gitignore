@@ -47,3 +47,12 @@ baselines/angular-conduit/
 baselines/react-conduit/
 baselines/petclinic/
 baselines/petclinic-feat1/
+
+# ── Privacidad: datos personales y de-anonimización (no compartir) ────────────
+# Excel de revisión humana: contiene nombres y emails de los revisores.
+*.xlsx
+# Mapping alias->modelo real y veredicto: revelan el doble ciego.
+results/model_mapping.csv
+human_review/VEREDICTO.md
+# Temporal de análisis
+results/_verdict_data.json

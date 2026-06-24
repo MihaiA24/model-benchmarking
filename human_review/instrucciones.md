@@ -1,14 +1,17 @@
 # Instrucciones para la revisión humana — PoC Evaluación de Modelos de IA
 
+> **Cómo se hace la revisión en la práctica:** ver `README_revision.md` (recogida por
+> Google Forms). Este fichero es la referencia de la **rúbrica**.
+
 ## Contexto
 
-Hemos ejecutado 99 evaluaciones automáticas (3 modelos × 11 tareas × 3 runs) sobre cuatro stacks:
+Hemos ejecutado 363 evaluaciones automáticas (11 modelos × 11 tareas × 3 runs) sobre cuatro stacks:
 Spring Boot, Angular, React y Datos (Chinook SQLite).
 
 La capa automática mide si el código **compila y pasa los tests**. Esta revisión humana mide
 **calidad, idiomaticidad y seguridad** — dimensiones que los tests no capturan.
 
-Los modelos están **anonimizados como Modelo A, B y C**. No intentes deducir cuál es cuál
+Los modelos están **anonimizados como Modelo A–K**. No intentes deducir cuál es cuál
 hasta que se revele el mapping al final.
 
 ---

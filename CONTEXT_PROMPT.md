@@ -127,7 +127,7 @@ mvn -q -Dtest=PetControllerTests#processCreationFormWithTooLongName test  # debe
 ### Paso 5 — Baseline de Angular
 
 ```bash
-git clone https://github.com/khaledosman/angular-realworld-example-app baselines/angular-conduit
+git clone https://github.com/gothinkster/angular-realworld-example-app baselines/angular-conduit
 cd baselines/angular-conduit
 npm ci
 cd ../..

@@ -10,14 +10,18 @@ if not OPENROUTER_API_KEY or OPENROUTER_API_KEY == "PEGA_AQUI_TU_KEY":
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 MODELS = [
-    "minimax/minimax-m3",
-    "deepseek/deepseek-v4-flash",
-    "z-ai/glm-4.7",
+    # Originales ya evaluados (sus filas ya estan en los CSV) -> NO re-ejecutar.
+    # "minimax/minimax-m3",
+    # "deepseek/deepseek-v4-flash",
+    # "z-ai/glm-4.7",
     "qwen/qwen3.7-plus",
     "google/gemini-3.1-flash-lite",
     "qwen/qwen3-coder-next",
     "tencent/hy3-preview",
+    "qwen/qwen3-coder",          # Qwen3 Coder 480B A35B
+    "deepseek/deepseek-v4-pro",
     "z-ai/glm-5.2",
+    "minimax/minimax-m2.7",      # MiniMax M2.7 (m3 ya evaluado)
 ]
 PRICES = {
     "minimax/minimax-m3":              (0.30, 1.20),
@@ -27,11 +31,47 @@ PRICES = {
     "google/gemini-3.1-flash-lite":    (0.25, 1.50),
     "qwen/qwen3-coder-next":           (0.11, 0.80),
     "tencent/hy3-preview":             (0.066, 0.26),
-    "z-ai/glm-5.2":                    (1.20, 4.10),
+    "qwen/qwen3-coder":                (0.22, 1.80),
+    "deepseek/deepseek-v4-pro":        (0.435, 0.87),
+    "z-ai/glm-5.2":                    (1.00, 4.00),
+    "minimax/minimax-m2.7":            (0.25, 1.00),
 }
 RUNS = 3
 
 TASKS = [
+    {
+        # Prompt CONGELADO: identico al de poc_harness.py (los 3 modelos originales
+        # recibieron exactamente este texto). No modificar.
+        "name": "bug1-petvalidator",
+        "baseline": "baselines/petclinic",
+        "target_file": "src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java",
+        "prompt": (
+            "Reporte de bug: al validar una mascota, un nombre formado solo por "
+            "espacios en blanco (espacios, tabuladores, saltos de linea) se acepta "
+            "como valido, cuando deberia rechazarse como obligatorio/vacio. "
+            "Corrige la validacion en este fichero, respetando el estilo del proyecto. "
+            "Devuelve SOLO el contenido completo y corregido del fichero, en un unico "
+            "bloque de codigo."
+        ),
+        "build_cmd": ["mvn", "-q", "-DskipTests", "compile"],
+        "test_cmd":  ["mvn", "-q", "-Dtest=PetControllerTests", "test"],
+    },
+    {
+        # Prompt CONGELADO: identico al de poc_harness.py. No modificar.
+        "name": "bug2-ownercontroller",
+        "baseline": "baselines/petclinic",
+        "target_file": "src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java",
+        "prompt": (
+            "Reporte de bug: en la busqueda de propietarios, cuando hay varios "
+            "resultados la aplicacion redirige directamente al detalle de un "
+            "propietario en lugar de mostrar la lista paginada. Correcto: un unico "
+            "resultado va al detalle; varios resultados muestran la lista. Corrigelo "
+            "en este fichero, respetando el estilo del proyecto. Devuelve SOLO el "
+            "contenido completo y corregido del fichero, en un unico bloque de codigo."
+        ),
+        "build_cmd": ["mvn", "-q", "-DskipTests", "compile"],
+        "test_cmd":  ["mvn", "-q", "-Dtest=OwnerControllerTests", "test"],
+    },
     {
         "name": "sb-feat1-name-length",
         "baseline": "baselines/petclinic-feat1",

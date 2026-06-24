@@ -3,19 +3,23 @@
 import subprocess, sys, pathlib, time
 
 SCRIPTS = [
-    ("Spring Boot",  "run_springboot.py"),
-    ("Angular",      "run_angular.py"),
-    ("React",        "run_react.py"),
-    ("Datos",        "run_data.py"),
+    ("Spring Boot", "run_springboot.py"),
+    ("Angular", "run_angular.py"),
+    ("React", "run_react.py"),
+    ("Datos", "run_data.py"),
 ]
 
 HERE = pathlib.Path(__file__).parent
 
 print("Lanzando 4 ventanas en paralelo...")
 for title, script in SCRIPTS:
+    script_path = HERE / script
+
+    # Construimos el comando como un solo string para evitar problemas de escape en Windows
+    command = f'start "{title}" cmd /k "python "{script_path}" & echo. & echo Terminado. Pulsa ENTER para cerrar. & pause"'
+
     subprocess.Popen(
-        ["cmd", "/c", "start", f'"{title}"', "cmd", "/k",
-         f'python "{HERE / script}" & echo. & echo Terminado. Pulsa ENTER para cerrar. & pause'],
+        command,
         shell=True,
         cwd=str(HERE),
     )

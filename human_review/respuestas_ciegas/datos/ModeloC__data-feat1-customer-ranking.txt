@@ -1,0 +1,40 @@
+```python
+"""
+Tarea: rankear clientes por total comprado dentro de su país usando window functions.
+Columnas requeridas: Country, CustomerId, FirstName, LastName, TotalPurchases, Rank
+- TotalPurchases = suma de Invoice.Total por cliente, redondeada a 2 decimales
+- Rank: RANK() dentro del país ordenado por TotalPurchases DESC
+- Orden final: Country ASC, Rank ASC
+"""
+import sqlite3
+import pandas as pd
+
+conn = sqlite3.connect('Chinook.db')
+
+# Query SQL con window function RANK()
+df = pd.read_sql_query("""
+    SELECT 
+        Country,
+        CustomerId,
+        FirstName,
+        LastName,
+        TotalPurchases,
+        RANK() OVER (PARTITION BY Country ORDER BY TotalPurchases DESC) as Rank
+    FROM (
+        SELECT 
+            c.Country,
+            c.CustomerId,
+            c.FirstName,
+            c.LastName,
+            ROUND(SUM(i.Total), 2) as TotalPurchases
+        FROM Customer c
+        JOIN Invoice i ON c.CustomerId = i.CustomerId
+        GROUP BY c.CustomerId, c.Country, c.FirstName, c.LastName
+    )
+    ORDER BY Country ASC, Rank ASC
+""", conn)
+
+conn.close()
+print(df.to_string(index=False))
+df.to_csv('output_feat1.csv', index=False)
+```

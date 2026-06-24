@@ -10,7 +10,10 @@ CANDIDATES = [
     ("google/gemini-3.1-flash-lite",  "$0.25/$1.50"),
     ("qwen/qwen3-coder-next",         "$0.11/$0.80"),
     ("tencent/hy3-preview",           "$0.066/$0.26"),
-    ("z-ai/glm-5.2",                  "$1.20/$4.10"),
+    ("qwen/qwen3-coder",              "$0.22/$1.80"),   # Qwen3 Coder 480B A35B
+    ("deepseek/deepseek-v4-pro",      "$0.435/$0.87"),
+    ("z-ai/glm-5.2",                  "$1.00/$4.00"),
+    ("minimax/minimax-m2.7",          "$0.25/$1.00"),
 ]
 
 MSG = [{"role": "user", "content": "Reply with exactly: OK"}]
