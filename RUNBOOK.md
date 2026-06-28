@@ -127,12 +127,31 @@ python run_benchmark.py --stack all --harness agent --runs 3
 
 ## 5. Parallelism
 
-| Invocation model | Parallelism | Risk |
-|---|---|---|
-| `run_benchmark.py` (single) | Sequential — all harnesses/models/runs one at a time | None |
-| `run_all.py --wait` | 4 stack subprocesses in parallel | `raw_api` can hit 4 concurrent requests (exceeds ADR-0001 cap of 2); agent CLIs may collide on shared session state across stacks |
+`run_benchmark.py` runs sequentially. Two ways to parallelize:
 
-Harness queues (ADR-0001) are **not implemented**. The sequential `run_benchmark.py` path is safe. `run_all.py` is faster but unguarded — avoid mixing agent harnesses across stack subprocesses, or run one stack at a time for agent runs.
+**By harness (safe, recommended):** each harness has independent CLI state (`~/.omp`, `~/.hermes`, etc.) and rate limits. Run 4 terminals:
+
+```bash
+python run_benchmark.py --stack all --harness raw_api   --models opencode-go --runs 3 --results-dir results/raw_api
+python run_benchmark.py --stack all --harness omp       --models opencode-go --runs 3 --results-dir results/omp
+python run_benchmark.py --stack all --harness opencode  --models opencode-go --runs 3 --results-dir results/opencode
+python run_benchmark.py --stack all --harness hermes    --models opencode-go --runs 3 --results-dir results/hermes
+```
+
+Use `--results-dir` per harness — two processes appending to the same per-stack CSV will interleave rows. Merge dirs after:
+
+```bash
+python merge_metrics.py --results-dir results/raw_api results/omp results/opencode results/hermes
+```
+
+**By stack (`run_all.py`, caution):** fans out 4 stack subprocesses, all using the same `--harness`. Same harness across stacks can collide on CLI session state. Only safe for `raw_api` (stateless HTTP). For agent harnesses, prefer harness-fanout above.
+
+```bash
+python run_all.py --harness raw_api --models new --wait   # safe: stateless
+python run_all.py --harness omp --models opencode-go --wait  # unsafe: OMP session collision
+```
+
+Harness queues (ADR-0001) are **not implemented**. The backlog item tracks per-harness concurrency lanes with caps `raw_api=2`, `omp=1`, `opencode=1`, `hermes=1`.
 
 ## 6. Resume and rerun
 
