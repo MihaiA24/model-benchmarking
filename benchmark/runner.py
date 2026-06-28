@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
-import os
 import shutil
 import subprocess
 import sys
@@ -249,7 +248,7 @@ def _append_agent_submission(transcript_path: Path, workdir: Path, before: dict[
                 f.write("\n")
 
 
-def run_one(*, harness: str, task, model: str, adapter_model: str, run: int, results_dir: Path, adapter_timeout_s: int, check_timeout_s: int) -> dict[str, object]:
+def run_one(*, harness: str, task, model: str, adapter_model: str, run: int, results_dir: Path, adapter_timeout_s: int, check_timeout_s: int, workdir_cache_dir: Path | None = None) -> dict[str, object]:
     label = safe_label(f"{harness}__{task.name}__{model}__r{run}")
     workdir = results_dir / label
     transcript_path = workdir / "_raw_response.txt"
@@ -263,7 +262,7 @@ def run_one(*, harness: str, task, model: str, adapter_model: str, run: int, res
     }
     before: dict[str, str] = {}
     try:
-        make_workdir(task, workdir)
+        make_workdir(task, workdir, cache_dir=workdir_cache_dir)
         before = _snapshot_files(workdir)
         prompt = raw_api_prompt(task) if harness == "raw_api" else agent_prompt(task)
         adapter = ADAPTERS[harness]()
@@ -419,6 +418,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--adapter-model", action="append", help="Override selector per harness, e.g. omp=openrouter/qwen/qwen3.7-plus")
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--results-dir", default="results")
+    parser.add_argument("--workdir-cache", help="Seeded task snapshot cache path. Defaults to BENCHMARK_WORKDIR_CACHE from .env/env.")
     parser.add_argument("--adapter-timeout", type=int, default=900, help="Seconds for API/agent invocation")
     parser.add_argument("--check-timeout", type=int, default=600, help="Seconds for each build/test command")
     parser.add_argument("--no-resume", action="store_true", help="Do not skip completed rows already in CSV")
@@ -438,6 +438,8 @@ def main(argv: list[str] | None = None) -> int:
     adapter_models = parse_adapter_models(args.adapter_model)
     tasks = select_tasks(stacks, args.task)
     results_dir = repo_path(args.results_dir)
+    workdir_cache = args.workdir_cache or env.get("BENCHMARK_WORKDIR_CACHE")
+    workdir_cache_dir = repo_path(workdir_cache) if workdir_cache else None
 
     if args.migrate_csv:
         changed = []
@@ -493,6 +495,7 @@ def main(argv: list[str] | None = None) -> int:
             results_dir=results_dir,
             adapter_timeout_s=args.adapter_timeout,
             check_timeout_s=args.check_timeout,
+            workdir_cache_dir=workdir_cache_dir,
         )
         append_row(csv_path, row)
         print(

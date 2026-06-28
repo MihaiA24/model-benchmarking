@@ -125,6 +125,23 @@ If `.env` has `BENCHMARK_MODELS=opencode-go/deepseek-v4-flash`, omit `--models`:
 python run_benchmark.py --stack all --harness agent --runs 3
 ```
 
+### 4.8 Workdir cache
+
+Prepare seeded task snapshots once, then point `.env` at that cache:
+
+```bash
+python prepare_workdir_cache.py --stack all --cache-dir .benchmark-cache/task-snapshots --refresh
+printf '\n# Reuse seeded task snapshots; per-run workdirs are cloned from this path.\nBENCHMARK_WORKDIR_CACHE=.benchmark-cache/task-snapshots\n' >> .env
+
+python run_benchmark.py \
+  --stack all \
+  --harness agent \
+  --models opencode-go \
+  --runs 3
+```
+
+On APFS/macOS, cached snapshots are copied with copy-on-write file clones when available; other filesystems fall back to normal file copies. The cache only changes setup speed: each run still gets an isolated workdir.
+
 ## 5. Parallelism
 
 `run_benchmark.py` runs sequentially. Two ways to parallelize:

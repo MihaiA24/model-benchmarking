@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 import shutil
 import stat
@@ -31,8 +32,32 @@ def _link_node_modules(src: Path, dst: Path) -> None:
         dst.symlink_to(src, target_is_directory=True)
 
 
-def make_workdir(task, workdir: Path) -> None:
-    remove_tree(workdir)
+def _clone_file(src: str, dst: str) -> bool:
+    if os.name != "posix" or os.uname().sysname != "Darwin":
+        return False
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.clonefile(src.encode(), dst.encode(), 0) == 0:
+        return True
+    return False
+
+
+def _clone_or_copy_file(src: str, dst: str) -> str:
+    if _clone_file(src, dst):
+        shutil.copystat(src, dst)
+        return dst
+    return shutil.copy2(src, dst)
+
+
+def clone_tree(src: Path, dst: Path) -> None:
+    """Copy a tree, using APFS copy-on-write file clones when available."""
+    shutil.copytree(src, dst, symlinks=True, copy_function=_clone_or_copy_file)
+
+
+def task_snapshot_path(cache_dir: Path, task) -> Path:
+    return cache_dir / task.name
+
+
+def _populate_workdir(task, workdir: Path) -> None:
     baseline = repo_path(task.baseline)
     if not baseline.exists():
         raise FileNotFoundError(f"Baseline not found for {task.name}: {baseline}")
@@ -41,6 +66,25 @@ def make_workdir(task, workdir: Path) -> None:
     if task.link_node_modules:
         _link_node_modules(baseline / "node_modules", workdir / "node_modules")
     apply_seed(task, workdir)
+
+
+def prepare_task_snapshot(task, cache_dir: Path, *, refresh: bool = False) -> Path:
+    snapshot = task_snapshot_path(cache_dir, task)
+    if refresh:
+        remove_tree(snapshot)
+    if not snapshot.exists():
+        snapshot.parent.mkdir(parents=True, exist_ok=True)
+        _populate_workdir(task, snapshot)
+    return snapshot
+
+
+def make_workdir(task, workdir: Path, *, cache_dir: Path | None = None) -> None:
+    remove_tree(workdir)
+    if cache_dir is None:
+        _populate_workdir(task, workdir)
+        return
+    snapshot = prepare_task_snapshot(task, cache_dir)
+    clone_tree(snapshot, workdir)
 
 
 def apply_seed(task, workdir: Path) -> None:

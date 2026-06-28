@@ -46,6 +46,9 @@ results/ng-*/
 results/re-*/
 results/data-*/
 
+# Seeded task snapshots used to clone per-run workdirs.
+.benchmark-cache/
+
 # ── Baselines con node_modules y .git anidados ───────────────────────────────
 baselines/angular-conduit/
 baselines/react-conduit/
