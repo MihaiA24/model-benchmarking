@@ -213,10 +213,8 @@ python merge_metrics.py
 ```
 
 El runner central usa modo **resume** por defecto: no repite filas ya completadas con la
-clave `(harness, task, model, run)`. Los CSV añaden `harness`, `model_calls` y
-`telemetry_note`: `raw_api` registra 1 llamada OpenRouter; `omp`/`opencode` rellenan
-tokens/coste/llamadas si su JSON lo expone; `hermes` queda marcado como no disponible.
-El backlog técnico vive en `docs/backlog.md`; el item abierto actual es capturar telemetry real de Hermes desde una fuente machine-readable.
+clave `(harness, task, model, run)`. Los CSV incluyen `capability_mode` (`single_shot`/`agent_iterated`), `telemetry_trust` (`exact`/`parsed`/`blank`), `tool_set`, `model_calls` y `telemetry_note`: `raw_api` registra 1 llamada OpenRouter con `telemetry_trust=exact`; `omp`/`opencode` rellenan tokens/coste/llamadas desde JSON (`parsed`); `hermes` queda marcado como `blank`. Coste y tokens solo son comparables dentro de cohortes que comparten ambos `capability_mode` y `telemetry_trust` (ADR-0002).
+El backlog técnico vive en `docs/backlog.md`; los items abiertos son: (1) capturar telemetry real de Hermes desde una fuente machine-readable; (2) implementar colas de concurrencia por harness (ADR-0001).
 
 ---
 

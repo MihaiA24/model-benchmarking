@@ -91,7 +91,7 @@ Check model slugs for raw API:
 python test_slugs.py
 ```
 
-Run preflight before any long batch. It checks baselines, keys, CLI binaries, model/harness compatibility, and legacy CSV schema:
+Run preflight before any long batch. It checks baselines, keys, CLI binaries, model/harness compatibility, seeded bug presence (Spring Boot), and legacy CSV schema:
 
 ```bash
 python run_benchmark.py \
@@ -217,6 +217,9 @@ Important columns:
 - `task`
 - `model`
 - `run`
+- `capability_mode` — `single_shot` (raw API, one pass, no tools) or `agent_iterated` (agent harness with tools and iteration). Runs are comparable only within a capability mode (ADR-0002).
+- `telemetry_trust` — `exact` (raw API, machine-read usage), `parsed` (CLI JSON event stream), or `blank` (no machine-readable source; Hermes). Cost and tokens are comparable only within cohorts sharing both capability mode and telemetry trust.
+- `tool_set` — tools available to the agent harness (`read,bash,edit,write,grep,find,lsp` for OMP, `terminal,file` for Hermes, empty for raw API).
 - `build_ok`
 - `test_ok`
 - `in_tok`, `out_tok`, `cost_usd`, `model_calls`, `telemetry_note` — telemetry per run. `raw_api` is exact for one OpenRouter request; `omp`/`opencode` are filled when their JSON streams expose usage records; `hermes` currently marks telemetry unavailable because its oneshot CLI only prints final text.
@@ -256,7 +259,7 @@ Do not reveal `results/model_mapping.csv` until human review is complete.
 | React tests hang | `CI=true` | Runner sets `CI=true`; do not remove it. |
 | Angular/React workdir cannot find packages | baseline `node_modules` missing | Run `npm ci` in the baseline repo. |
 | CLI adapter fails but code changed | inspect `_raw_response.txt` and `_error.txt` | Fix CLI auth/model selector, then rerun with `--no-resume` if needed. |
-| `model_calls` / token columns are blank | inspect `telemetry_note` | The harness did not expose machine-readable usage. For Hermes this is expected with the current CLI; use provider billing/logs if you need exact calls. |
+| `model_calls` / token columns are blank | inspect `telemetry_note` and `telemetry_trust` | `telemetry_trust=blank` means no machine-readable source (expected for Hermes). For Hermes use provider billing/logs; for `raw_api`/`omp`/`opencode` check CLI output in `_raw_response.txt`. |
 
 ## 10. Stop criteria
 
@@ -269,4 +272,4 @@ A benchmark batch is complete when:
 
 ## 11. Backlog
 
-Open implementation tasks live in `docs/backlog.md`. Current known item: make Hermes per-run telemetry (`model_calls`, tokens, cost) auditable from a machine-readable source instead of relying on the current `telemetry_note`.
+Open implementation tasks live in `docs/backlog.md`. Current open items: (1) make Hermes per-run telemetry (`model_calls`, tokens, cost) auditable from a machine-readable source instead of relying on the current `telemetry_note`; (2) implement per-harness concurrency queues (ADR-0001) — the current runner is sequential and `run_all.py` can exceed the `raw_api=2` cap.

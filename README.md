@@ -222,7 +222,7 @@ python run_benchmark.py \
 Los adapters de agente editan directamente el workdir preparado en `results/`.
 Con `--models opencode-go`, OMP, OpenCode y Hermes reciben los mismos selectores
 `opencode-go/<modelo>` y usan la suscripción OpenCode Go.
-Las columnas `model_calls`, `in_tok`, `out_tok`, `cost_usd` y `telemetry_note` permiten auditar llamadas y coste. `raw_api` registra 1 llamada OpenRouter; `omp` y `opencode` se rellenan desde JSON cuando la CLI lo expone; `hermes` queda marcado como no disponible en `telemetry_note`.
+Las columnas `capability_mode`, `telemetry_trust`, `tool_set`, `model_calls`, `in_tok`, `out_tok`, `cost_usd` y `telemetry_note` permiten auditar llamadas y coste. `capability_mode` distingue `single_shot` (raw API) de `agent_iterated` (agentes con herramientas); `telemetry_trust` marca la fiabilidad (`exact`/`parsed`/`blank`). `raw_api` registra 1 llamada OpenRouter con `telemetry_trust=exact`; `omp` y `opencode` se rellenan desde JSON (`parsed`); `hermes` queda marcado como `blank` en `telemetry_trust` y `telemetry_note`. Coste y tokens solo son comparables dentro de cohortes que comparten ambos `capability_mode` y `telemetry_trust` (ADR-0002).
 
 OpenCode Go single-model shortcut. Si `BENCHMARK_MODELS` está en `.env`, puedes
 omitir `--models`; el argumento explícito siempre gana:
