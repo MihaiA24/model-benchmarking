@@ -28,20 +28,15 @@ Runbook operativo: [`RUNBOOK.md`](RUNBOOK.md).
 
 | Capa | Estado |
 |------|--------|
-| Harness automático raw API (3 modelos originales × 11 tareas × 3 runs) | **Completado** — 99 evaluaciones |
+| Harness automático raw API | `results/metrics_all.csv` tiene 362 filas de `raw_api` para los presets `original` + `new`; falta la fila legacy `minimax/minimax-m3` / `ng-bug1-missing-input` / run 3 |
 | Runner central con adapters `raw_api`, `omp`, `opencode`, `hermes` | **Implementado** — usar `run_benchmark.py` |
 | Resultados automáticos consolidados | `results/metrics_all.csv` |
-| Materiales de revisión humana | `human_review/` — listos |
+| Materiales de revisión humana | `human_review/` — snapshot ciego generado; regenerar si se puntúan nuevos harnesses |
 | Presentación ejecutiva | `presentacion.html` — con datos reales |
 
-**Modelos originales evaluados:** minimax-m3, deepseek-v4-flash, glm-4.7
+**Modelos raw API presentes:** `original` + `new` (11 modelos en total).
 
-**Modelos nuevos pendientes de ejecutar:**
-- `qwen/qwen3.7-plus` ($0.32 / $1.28 por 1M tok in/out)
-- `google/gemini-3.1-flash-lite` ($0.25 / $1.50)
-- `qwen/qwen3-coder-next` ($0.11 / $0.80)
-- `tencent/hy3-preview` ($0.066 / $0.26)
-- `z-ai/glm-5.2` ($1.20 / $4.10)
+**Pendiente si se quiere comparar harnesses de agente:** ejecutar `--harness agent --models opencode-go` y regenerar métricas/revisión humana.
 
 ---
 
@@ -221,7 +216,7 @@ Genera:
 
 ### 4.6 Duración estimada por stack
 
-| Stack | Tiempo estimado (8 modelos × 3 tareas × 3 runs) |
+| Stack | Tiempo estimado para `--models new` (8 modelos × tareas del stack × 3 runs) |
 |-------|--------------------------------------------------|
 | Spring Boot | ~30–45 min (Maven compila cada vez) |
 | Angular | ~15–25 min (solo build, más rápido) |
@@ -249,11 +244,12 @@ y cómo hacer la reconciliación entre revisores.
 human_review/plantilla_puntuacion.csv
 ```
 
-Contiene 33 filas (3 modelos × 11 tareas) con las columnas:
-- `modelo` — Modelo A, B o C (sin revelar el nombre real)
+Se genera con `python gen_plantilla.py` desde `results/metrics_all.csv`. Contiene una fila representativa por `(modelo, harness, tarea)` para las métricas consolidadas en ese momento, con columnas como:
+- `modelo` — alias ciego del modelo (sin revelar el nombre real)
+- `harness` — `raw_api`, `omp`, `opencode` o `hermes`
 - `tarea` — ID de la tarea
 - `test_ok_auto` — si el test automático pasó
-- `archivo_respuesta` — ruta al `_raw_response.txt` que debes leer
+- `archivo_respuesta` — ruta al transcript ciego que debes leer
 - `eje1_correctitud` ... `eje5_esfuerzo` — columnas vacías para que el revisor puntúe (1–5)
 - `comentarios` — notas libres
 
@@ -390,7 +386,11 @@ model-benchmarking/
 
 ## 8. Modelos evaluados
 
-### Modelos originales (ya ejecutados)
+### Modelos raw API en `results/metrics_all.csv`
+
+El CSV consolidado actual contiene los presets `original` + `new` (11 modelos). La comparativa de agente `opencode-go` aún no está consolidada en este CSV.
+
+#### Preset `original`
 
 | Slug OpenRouter | Precio in/out (1M tok) | Alias en métricas |
 |-----------------|----------------------|-------------------|
@@ -398,29 +398,30 @@ model-benchmarking/
 | `deepseek/deepseek-v4-flash` | $0.09 / $0.18 | deepseek-v4-flash |
 | `z-ai/glm-4.7` | $0.40 / $1.75 | glm-4.7 |
 
-### Modelos nuevos (añadidos, pendientes de ejecutar)
+#### Preset `new`
 
-| Slug OpenRouter | Precio in/out (1M tok) | Estado |
-|-----------------|----------------------|--------|
-| `qwen/qwen3.7-plus` | $0.32 / $1.28 | Pendiente |
-| `google/gemini-3.1-flash-lite` | $0.25 / $1.50 | Pendiente |
-| `qwen/qwen3-coder-next` | $0.11 / $0.80 | Pendiente |
-| `tencent/hy3-preview` | $0.066 / $0.26 | Pendiente |
-| `z-ai/glm-5.2` | $1.20 / $4.10 | Pendiente |
+| Slug OpenRouter | Precio in/out (1M tok) | Estado en `results/metrics_all.csv` |
+|-----------------|----------------------|-------------------------------------|
+| `qwen/qwen3.7-plus` | $0.32 / $1.28 | Presente |
+| `google/gemini-3.1-flash-lite` | $0.25 / $1.50 | Presente |
+| `qwen/qwen3-coder-next` | $0.11 / $0.80 | Presente |
+| `tencent/hy3-preview` | $0.066 / $0.26 | Presente |
+| `z-ai/glm-5.2` | $1.20 / $4.10 | Presente |
 
 > **Nota técnica:** `tencent/hy3-preview` y `z-ai/glm-5.2` necesitan `max_tokens >= 200`
 > para responder. Esto ya está configurado en los harnesses.
 
-Para añadir un modelo nuevo en el futuro: edita la lista `MODELS` y el dict `PRICES`
-en `run_springboot.py`, `run_angular.py`, `run_react.py` y `run_data.py`.
+Para añadir un modelo raw API nuevo en el futuro, actualiza `benchmark/models.py` (`NEW_MODELS`, `MODEL_PRESETS` y `PRICES`).
 
 ---
 
 ## 9. Resultados automáticos actuales
 
-**3 modelos × 11 tareas × 3 runs = 99 evaluaciones completadas.**
+`results/metrics_all.csv` contiene 362 filas `raw_api` de 363 esperadas para 11 modelos × 11 tareas × 3 runs. Falta `minimax/minimax-m3` / `ng-bug1-missing-input` / run 3.
 
-### Resumen ejecutivo
+### Resumen ejecutivo legacy
+
+La tabla siguiente resume el corte original de 3 modelos usado en la presentación ejecutiva inicial; no incluye los modelos `new` ni los harnesses de agente.
 
 | Modelo | % Tests verdes | Coste medio/tarea | Latencia media |
 |--------|---------------|-------------------|----------------|

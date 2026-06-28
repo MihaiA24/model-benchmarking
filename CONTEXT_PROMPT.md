@@ -25,20 +25,17 @@ Luego lee este fichero entero antes de hacer nada.
 ## Estado del proyecto
 
 ### Ya completado
-- **3 modelos originales evaluados** con 11 tareas × 3 runs = 99 evaluaciones automáticas
-- Resultados en `results/metrics_all.csv`
-- Materiales de revisión humana en `human_review/`
+- `results/metrics_all.csv` tiene 362 filas `raw_api` para los presets `original` + `new`; falta la fila legacy `minimax/minimax-m3` / `ng-bug1-missing-input` / run 3
+- Materiales de revisión humana en `human_review/` como snapshot ciego; regenerar si se puntúan nuevos harnesses
 - Presentación ejecutiva en `presentacion.html`
 - Runner central con adapters `raw_api`, `omp`, `opencode`, `hermes`
 - Runbook operativo en `RUNBOOK.md`
 
 ### Pendiente de ejecutar
-- **5 modelos nuevos** ya añadidos a todos los harnesses, pero faltan sus runs:
-  - `qwen/qwen3.7-plus` ($0.32/$1.28)
-  - `google/gemini-3.1-flash-lite` ($0.25/$1.50)
-  - `qwen/qwen3-coder-next` ($0.11/$0.80)
-  - `tencent/hy3-preview` ($0.066/$0.26) — necesita max_tokens >= 200
-  - `z-ai/glm-5.2` ($1.20/$4.10) — necesita max_tokens >= 200
+- Comparativa de harnesses de agente con modelos OpenCode Go:
+  ```bash
+  python run_benchmark.py --stack all --harness agent --models opencode-go --runs 3
+  ```
 
 ---
 
