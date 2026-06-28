@@ -29,6 +29,8 @@ Luego lee este fichero entero antes de hacer nada.
 - Resultados en `results/metrics_all.csv`
 - Materiales de revisión humana en `human_review/`
 - Presentación ejecutiva en `presentacion.html`
+- Runner central con adapters `raw_api`, `omp`, `opencode`, `hermes`
+- Runbook operativo en `RUNBOOK.md`
 
 ### Pendiente de ejecutar
 - **5 modelos nuevos** ya añadidos a todos los harnesses, pero faltan sus runs:
@@ -42,13 +44,16 @@ Luego lee este fichero entero antes de hacer nada.
 
 ## Setup completo desde cero
 
-### Paso 1 — API key
+### Paso 1 — API keys
 
-Crea el fichero `openrouter_key.txt` en la raíz del repo con tu key de OpenRouter:
+El runner carga `.env` desde la raíz del repo antes de invocar tests, builds o CLIs:
+```dotenv
+OPENROUTER_API_KEY=sk-or-v1-TUKEY
+OPENCODE_API_KEY=opencode-go-key
 ```
-sk-or-v1-TUKEY
-```
-Este fichero está en `.gitignore` — nunca se commitea.
+
+También acepta los ficheros legacy `openrouter_key.txt` y `opencode_key.txt`.
+`.env` y esos ficheros están en `.gitignore` — nunca se commitean.
 
 ### Paso 2 — Dependencias Python
 
@@ -187,23 +192,32 @@ CI=true npm test -- --watchAll=false  # deben pasar los tests existentes
 
 ---
 
-## Ejecutar los modelos nuevos
+## Ejecutar modelos o harnesses
 
-Con los baselines configurados, lanza los harnesses:
+Con los baselines configurados:
 
 ```bash
-# Verifica primero que los slugs responden
+# Verifica primero que los slugs OpenRouter responden
 python test_slugs.py
 
-# Lanza los 4 harnesses en paralelo (abre 4 ventanas cmd en Windows)
+# Legacy raw API: lanza los 4 stacks en paralelo
 python run_all.py
+
+# Harness benchmark: todos los modelos OpenCode Go en OMP, OpenCode y Hermes
+python run_benchmark.py \
+  --stack all \
+  --harness agent \
+  --models opencode-go \
+  --runs 3
 
 # Cuando terminen, consolida los resultados
 python merge_metrics.py
 ```
 
-Los harnesses usan modo **append**: las filas de los 3 modelos originales ya están en los CSV,
-solo añadirán las de los 5 modelos nuevos.
+El runner central usa modo **resume** por defecto: no repite filas ya completadas con la
+clave `(harness, task, model, run)`. Los CSV añaden `harness`, `model_calls` y
+`telemetry_note`: `raw_api` registra 1 llamada OpenRouter; `omp`/`opencode` rellenan
+tokens/coste/llamadas si su JSON lo expone; `hermes` queda marcado como no disponible.
 
 ---
 
@@ -231,28 +245,30 @@ model-benchmarking/
 ├── CONTEXT_PROMPT.md             ← Este fichero
 ├── openrouter_key.txt.example    ← Plantilla — crea openrouter_key.txt con tu key real
 │
-├── run_springboot.py             ← Harness Spring Boot
-├── run_angular.py                ← Harness Angular
-├── run_react.py                  ← Harness React
-├── run_data.py                   ← Harness Datos
-├── run_all.py                    ← Lanza los 4 en paralelo (Windows)
-├── merge_metrics.py              ← Fusiona CSVs → metrics_all + anon + mapping
-├── test_slugs.py                 ← Verifica que los slugs de OpenRouter funcionan
+├── run_benchmark.py               ← Runner central (`raw_api`, `omp`, `opencode`, `hermes`)
+├── benchmark/                     ← Tareas, adapters, workdirs y checks
+├── run_springboot.py              ← Wrapper legacy Spring Boot vía raw_api
+├── run_angular.py                 ← Wrapper legacy Angular vía raw_api
+├── run_react.py                   ← Wrapper legacy React vía raw_api
+├── run_data.py                    ← Wrapper legacy Datos vía raw_api
+├── run_all.py                     ← Lanza los 4 stacks en paralelo
+├── merge_metrics.py               ← Fusiona CSVs con columna harness
+├── test_slugs.py                  ← Verifica que los slugs de OpenRouter funcionan
 │
 ├── baselines/data-chinook/       ← EN EL REPO: Chinook SQLite + scripts Python
 │   (petclinic, angular, react)   ← NO EN EL REPO: ver pasos 4-6 arriba
 │
 ├── human_review/
 │   ├── instrucciones.md          ← Protocolo para revisores humanos
-│   ├── plantilla_puntuacion.csv  ← 33 filas vacías para puntuar (sin mapping)
+│   ├── plantilla_puntuacion.csv  ← Filas por (modelo, harness, tarea)
 │   └── prompt_resultado_final.md ← Prompt LLM para calcular puntuación combinada
 │
 └── results/
-    ├── metrics_all.csv           ← Consolidado de los 3 modelos originales
-    ├── metrics_anon.csv          ← Igual con Modelo A/B/C (para revisión ciega)
+    ├── metrics_all.csv           ← Consolidado por stack/harness/modelo
+    ├── metrics_anon.csv          ← Igual con aliases Modelo A/B/C
     ├── model_mapping.csv         ← Mapping real — NO abrir hasta final de revisión
-    └── <task>__<model>__r<n>/
-        └── _raw_response.txt     ← Respuesta cruda de cada run (para revisores)
+    └── <harness>__<task>__<model>__r<n>/
+        └── _raw_response.txt     ← Respuesta cruda o transcript + cambios finales
 ```
 
 ---
@@ -260,7 +276,7 @@ model-benchmarking/
 ## Próximos pasos sugeridos
 
 1. Configurar baselines según pasos 4-6 (si quieres re-ejecutar el harness)
-2. Ejecutar los 5 modelos nuevos: `python run_all.py`
+2. Ejecutar raw API (`python run_all.py`) o agentes (`python run_benchmark.py --harness omp,opencode,hermes ...`)
 3. Consolidar: `python merge_metrics.py`
 4. Iniciar revisión humana: `human_review/instrucciones.md`
 5. Calcular puntuación final: `human_review/prompt_resultado_final.md`

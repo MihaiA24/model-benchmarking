@@ -1,8 +1,8 @@
 # Revisión humana ciega — Guía operativa
 
-11 modelos (anonimizados **Modelo A–K**) × 11 tareas = **121 respuestas** a evaluar, sobre
-4 frameworks. Esta guía explica cómo montar la recogida con **Google Forms** (vuelca solo a
-una Google Sheet) y cómo coordinar a los revisores.
+Cada fila representa una combinación **modelo anonimizado + harness + tarea**. Esta guía
+explica cómo montar la recogida con **Google Forms** (vuelca solo a una Google Sheet)
+y cómo coordinar a los revisores.
 
 ---
 
@@ -18,30 +18,31 @@ una Google Sheet) y cómo coordinar a los revisores.
    **«Resultados revisión modelos IA»** (todas las respuestas caen ahí, una pestaña por framework).
 
 Cada formulario empieza con el **objetivo + instrucciones + rúbrica**, y luego una sección por
-respuesta: el código a evaluar + las 5 preguntas (escala 1–5) + un comentario opcional.
+respuesta: el código/transcript a evaluar + las 5 preguntas (escala 1–5) + un comentario opcional.
 
 ---
 
 ## 2. Repartir el trabajo (clave para que no sea tedioso)
 
-121 respuestas por revisor es mucho. Reparte **por framework** con **2 revisores por framework**
-(doble ciego = dos personas independientes puntúan lo mismo):
+El número de respuestas depende de cuántos harnesses y modelos hayas ejecutado. Reparte
+**por framework** con **2 revisores por framework** (doble ciego = dos personas
+independientes puntúan lo mismo):
 
-| Framework | Respuestas | Revisores sugeridos |
-|-----------|-----------|---------------------|
-| Spring Boot | 33 | 2 (perfil backend/Java) |
-| Angular | 33 | 2 (perfil front) |
-| React | 33 | 2 (perfil front) |
-| Datos | 22 | 2 (perfil SQL/datos) |
+| Framework | Revisor sugerido |
+|-----------|------------------|
+| Spring Boot | Perfil backend/Java |
+| Angular | Perfil front |
+| React | Perfil front |
+| Datos | Perfil SQL/datos |
 
-Cada revisor solo recibe el link de **su** formulario. ~30 respuestas × 5 ejes ≈ asumible.
+Cada revisor solo recibe el link de **su** formulario.
 
 ---
 
 ## 3. Reglas para los revisores
 
 - Puntúa cada eje **1 (muy malo) – 5 (excelente)**. Los 5 ejes están en la rúbrica del formulario.
-- **No intentes adivinar** qué modelo es (es ciego). Sé consistente entre respuestas.
+- **No intentes adivinar** qué modelo real hay detrás del alias. Sé consistente entre respuestas.
 - Si el **test automático falla** (lo indica cada sección), refléjalo en el eje 1 (correctitud).
 - Dudas o algo que chirríe → al comentario de esa respuesta.
 
@@ -52,7 +53,7 @@ Cada revisor solo recibe el link de **su** formulario. ~30 respuestas × 5 ejes 
 1. Cuando las dos personas de un framework terminen, en la hoja tendrás 2 filas por respuesta.
 2. Donde difieran **> 1 punto** en algún eje, que lo discutan y fijen una nota consensuada.
 3. Solo cuando TODO esté puntuado y reconciliado, revela el mapping real:
-   **`results/model_mapping.csv`** (Modelo A–K → modelo real). **No lo abras antes.**
+   **`results/model_mapping.csv`** (alias → modelo real). **No lo abras antes.**
 4. Resultado final = combinar **% tests verdes (auto)** + **media de calidad (humana)** +
    **coste/tarea** + **latencia**. Fija un umbral mínimo de calidad y luego mira el precio.
    Lo normal no es un único ganador, sino **routing**: modelo barato por defecto + uno potente
@@ -62,7 +63,7 @@ Cada revisor solo recibe el link de **su** formulario. ~30 respuestas × 5 ejes 
 
 ## Ficheros de este paquete
 
-- `form_data.json` — datos para el Apps Script (121 respuestas + objetivo/instrucciones/rúbrica).
+- `form_data.json` — datos para el Apps Script (respuestas + objetivo/instrucciones/rúbrica).
 - `build_forms.gs` — script que crea los 4 formularios + la hoja.
 - `respuestas_ciegas/<framework>/` — el código ciego, por si se quiere revisar fuera del formulario.
 - `plantilla_puntuacion.csv` — alternativa en CSV (mismo contenido) si no se usan los formularios.

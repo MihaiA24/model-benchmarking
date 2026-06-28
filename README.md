@@ -1,8 +1,9 @@
 # PoC — Evaluación de modelos de IA para desarrollo
 
-Benchmark automatizado para elegir qué modelo de IA adoptar vía API en un equipo de
-~300–400 desarrolladores. Compara calidad, coste y latencia sobre los cuatro stacks reales
-de la empresa: **Spring Boot, Angular, React y Datos (Chinook SQLite)**.
+Benchmark automatizado para elegir qué combinación de **modelo + harness de IA**
+adoptar en un equipo de ~300–400 desarrolladores. Compara calidad, coste,
+latencia y capacidad de automatización sobre los cuatro stacks reales de la empresa:
+**Spring Boot, Angular, React y Datos (Chinook SQLite)**.
 
 ---
 
@@ -19,14 +20,16 @@ de la empresa: **Spring Boot, Angular, React y Datos (Chinook SQLite)**.
 9. [Resultados automáticos actuales](#9-resultados-automáticos-actuales)
 10. [Gobernanza y adopción](#10-gobernanza-y-adopción)
 
+Runbook operativo: [`RUNBOOK.md`](RUNBOOK.md).
+
 ---
 
 ## 1. Estado actual
 
 | Capa | Estado |
 |------|--------|
-| Harness automático (3 modelos originales × 11 tareas × 3 runs) | **Completado** — 99 evaluaciones |
-| 5 modelos nuevos añadidos a todos los harnesses | **Pendiente de ejecutar** |
+| Harness automático raw API (3 modelos originales × 11 tareas × 3 runs) | **Completado** — 99 evaluaciones |
+| Runner central con adapters `raw_api`, `omp`, `opencode`, `hermes` | **Implementado** — usar `run_benchmark.py` |
 | Resultados automáticos consolidados | `results/metrics_all.csv` |
 | Materiales de revisión humana | `human_review/` — listos |
 | Presentación ejecutiva | `presentacion.html` — con datos reales |
@@ -96,26 +99,34 @@ git clone <url-del-baseline-feat1> baselines/petclinic-feat1
 
 ## 3. Dónde meter la API key
 
-El harness lee la API key de OpenRouter desde un fichero de texto plano:
+El runner carga `.env` desde la raíz del repo antes de invocar tests, builds o CLIs.
 
-```
-openrouter_key.txt
+Para `raw_api`, usa `OPENROUTER_API_KEY` en `.env`:
+
+```dotenv
+OPENROUTER_API_KEY=sk-or-v1-...
 ```
 
-Este fichero **no está en el repo** (está en `.gitignore`). Debes crearlo tú:
+Para OpenCode Go, usa `OPENCODE_API_KEY`; el runner lo copia también a
+`OPENCODE_GO_API_KEY` para Hermes:
+
+```dotenv
+OPENCODE_API_KEY=...
+```
+
+También puedes seguir usando variables de entorno o ficheros legacy:
 
 ```bash
-# Windows PowerShell
-"sk-or-v1-TUKEY" | Out-File -Encoding ascii openrouter_key.txt
-
-# O simplemente crea el fichero con cualquier editor y pega la key
+export OPENROUTER_API_KEY="sk-or-v1-..."
+export OPENCODE_API_KEY="..."
+printf '%s' 'sk-or-v1-...' > openrouter_key.txt
+printf '%s' '...' > opencode_key.txt
 ```
 
-El fichero debe contener solo la key, sin espacios ni saltos de línea extra.
-El repo incluye `openrouter_key.txt.example` como referencia del formato.
+`.env`, `openrouter_key.txt` y `opencode_key.txt` están en `.gitignore`. El repo incluye `openrouter_key.txt.example` como referencia de formato.
 
-> **Consigue tu key en:** https://openrouter.ai/keys
-> La key nunca se commitea. Si accidentalmente la commiteas, revócala inmediatamente desde OpenRouter.
+> **OpenRouter:** https://openrouter.ai/keys
+> **OpenCode Go:** https://dev.opencode.ai/docs/go/
 
 ---
 
@@ -139,34 +150,63 @@ google/gemini-3.1-flash-lite    $0.25/$1.50  OK (0.7s) -> 'OK'
 ...
 ```
 
-### 4.2 Lanzar todos los harnesses en paralelo (recomendado)
+### 4.2 Preflight y benchmark raw API legado en paralelo
 
 ```bash
-python run_all.py
+python run_benchmark.py --stack all --harness raw_api --models new --preflight
+python run_all.py --wait
 ```
 
-Esto abre **4 ventanas de terminal** en Windows, una por stack:
-- Ventana 1: Spring Boot (`run_springboot.py`)
-- Ventana 2: Angular (`run_angular.py`)
-- Ventana 3: React (`run_react.py`)
-- Ventana 4: Datos (`run_data.py`)
+Esto lanza los 4 stacks con el runner central y el adapter `raw_api`:
+- Spring Boot (`python run_benchmark.py --stack springboot --harness raw_api`)
+- Angular (`python run_benchmark.py --stack angular --harness raw_api`)
+- React (`python run_benchmark.py --stack react --harness raw_api`)
+- Datos (`python run_benchmark.py --stack data --harness raw_api`)
 
-Cada ventana muestra el progreso en tiempo real y se queda abierta al terminar.
+En Windows abre ventanas `cmd`; en Unix/macOS escribe logs en `results/run_all_<stack>.log`.
 
-> Los harnesses usan modo **append**: si el CSV ya existe, añaden filas nuevas.
-> Esto permite añadir modelos nuevos sin re-ejecutar los que ya están.
-> Si quieres re-ejecutar todo desde cero, borra los CSV en `results/` antes.
+> El runner usa modo **resume** por defecto: no repite filas ya completadas con la clave
+> `(harness, task, model, run)`. Usa `--no-resume` si quieres repetir un run.
 
-### 4.3 Lanzar un stack concreto
+Si el preflight avisa de CSV legado, migra explícitamente una vez:
 
 ```bash
-python run_springboot.py   # Solo Spring Boot
-python run_angular.py      # Solo Angular
-python run_react.py        # Solo React
-python run_data.py         # Solo Datos
+python run_benchmark.py --stack all --migrate-csv
 ```
 
-### 4.4 Consolidar resultados
+### 4.3 Lanzar OMP, OpenCode y Hermes sobre las mismas tareas
+
+```bash
+python run_benchmark.py \
+  --stack all \
+  --harness agent \
+  --models opencode-go \
+  --runs 3
+```
+
+Los adapters de agente editan directamente el workdir preparado en `results/`.
+Con `--models opencode-go`, OMP, OpenCode y Hermes reciben los mismos selectores
+`opencode-go/<modelo>` y usan la suscripción OpenCode Go.
+Las columnas `model_calls`, `in_tok`, `out_tok`, `cost_usd` y `telemetry_note` permiten auditar llamadas y coste. `raw_api` registra 1 llamada OpenRouter; `omp` y `opencode` se rellenan desde JSON cuando la CLI lo expone; `hermes` queda marcado como no disponible en `telemetry_note`.
+
+OpenCode Go single-model shortcut:
+
+```bash
+python run_benchmark.py --stack all --harness agent --models opencode-go/qwen3.7-plus --runs 3
+```
+
+OpenCode Go requiere `OPENCODE_API_KEY` / `OPENCODE_GO_API_KEY` en el entorno o `opencode_key.txt` en la raíz. `opencode_key.txt` se mapea a ambos nombres.
+
+### 4.4 Lanzar un stack concreto
+
+```bash
+python run_springboot.py   # Spring Boot vía raw_api
+python run_angular.py      # Angular vía raw_api
+python run_react.py        # React vía raw_api
+python run_data.py         # Datos vía raw_api
+```
+
+### 4.5 Consolidar resultados
 
 Cuando terminen los harnesses, fusiona todos los CSV:
 
@@ -176,10 +216,10 @@ python merge_metrics.py
 
 Genera:
 - `results/metrics_all.csv` — todos los runs con nombre real del modelo
-- `results/metrics_anon.csv` — igual pero con Modelo A/B/C (para revisión ciega)
-- `results/model_mapping.csv` — mapping real A→modelo (no revelar hasta el final)
+- `results/metrics_anon.csv` — igual con aliases Modelo A/B/C
+- `results/model_mapping.csv` — mapping alias→modelo real (no revelar hasta el final)
 
-### 4.5 Duración estimada por stack
+### 4.6 Duración estimada por stack
 
 | Stack | Tiempo estimado (8 modelos × 3 tareas × 3 runs) |
 |-------|--------------------------------------------------|
@@ -288,19 +328,22 @@ model-benchmarking/
 │
 ├── README.md                       ← Este fichero
 ├── CLAUDE.md                       ← Instrucciones de metodología para Claude Code
+├── RUNBOOK.md                       ← Checklist operativo de ejecución
 ├── CONTEXT_PROMPT.md               ← Prompt para retomar el proyecto en otro PC
 ├── openrouter_key.txt.example      ← Ejemplo del fichero de API key (no commitear la real)
 │
-├── run_springboot.py               ← Harness Spring Boot (sb-feat1-name-length)
-├── run_angular.py                  ← Harness Angular (3 tareas: bug1, feat1, feat2)
-├── run_react.py                    ← Harness React (3 tareas: bug1, feat1, feat2)
-├── run_data.py                     ← Harness Datos (2 tareas: bug1, feat1)
-├── run_all.py                      ← Lanza los 4 harnesses en paralelo (Windows)
-├── run_data_feat1only.py           ← Re-run solo data-feat1 (fix encoding)
-├── merge_metrics.py                ← Fusiona los 4 CSV → metrics_all + anon + mapping
-├── test_slugs.py                   ← Verifica que los slugs de OpenRouter responden
-├── poc_harness.py                  ← Harness original del piloto Spring Boot (referencia)
-├── presentacion.html               ← Presentación ejecutiva con resultados reales
+├── run_benchmark.py                 ← Runner central (`raw_api`, `omp`, `opencode`, `hermes`)
+├── benchmark/                       ← Registro de tareas, adapters, workdirs y checks
+├── run_springboot.py                ← Wrapper legacy: Spring Boot vía raw_api
+├── run_angular.py                   ← Wrapper legacy: Angular vía raw_api
+├── run_react.py                     ← Wrapper legacy: React vía raw_api
+├── run_data.py                      ← Wrapper legacy: Datos vía raw_api
+├── run_all.py                       ← Lanza los 4 stacks en paralelo
+├── run_data_feat1only.py            ← Re-run histórico solo data-feat1 (fix encoding)
+├── merge_metrics.py                 ← Fusiona CSV con columna `harness` → metrics_all + anon + mapping
+├── test_slugs.py                    ← Verifica que los slugs de OpenRouter responden
+├── poc_harness.py                   ← Harness original del piloto Spring Boot (referencia)
+├── presentacion.html                ← Presentación ejecutiva con resultados reales
 │
 ├── baselines/
 │   ├── data-chinook/               ← Dataset Chinook SQLite + scripts Python (EN REPO)
@@ -317,28 +360,27 @@ model-benchmarking/
 │
 ├── human_review/
 │   ├── instrucciones.md            ← Protocolo completo para revisores humanos
-│   ├── plantilla_puntuacion.csv    ← Template vacío (33 filas, 5 ejes por fila)
+│   ├── plantilla_puntuacion.csv    ← Template vacío por (modelo, harness, tarea)
 │   └── prompt_resultado_final.md   ← Prompt LLM para calcular puntuación combinada
 │
 └── results/
-    ├── metrics_springboot.csv      ← Métricas Spring Boot (modelos originales)
+    ├── metrics_springboot.csv      ← Métricas Spring Boot (`harness`, modelo, run)
     ├── metrics_angular.csv         ← Métricas Angular
     ├── metrics_react.csv           ← Métricas React
     ├── metrics_data.csv            ← Métricas Datos
-    ├── metrics_all.csv             ← Consolidado de todos los stacks
-    ├── metrics_anon.csv            ← Igual con Modelo A/B/C (para revisión ciega)
+    ├── metrics_all.csv             ← Consolidado de todos los stacks/harnesses
+    ├── metrics_anon.csv            ← Igual con aliases Modelo A/B/C
     ├── metrics.csv                 ← CSV del piloto original (referencia)
-    ├── model_mapping.csv           ← Mapping A/B/C → modelo real (NO ABRIR hasta el final)
+    ├── model_mapping.csv           ← Mapping alias → modelo real (NO ABRIR hasta el final)
     │
-    ├── bug1-petvalidator__<modelo>__r<n>/
-    │   └── _raw_response.txt       ← Respuesta cruda del modelo (lo que puntuarán los revisores)
-    ├── bug2-ownercontroller__<modelo>__r<n>/
+    ├── raw_api__bug1-petvalidator__<modelo>__r<n>/
+    │   └── _raw_response.txt       ← Respuesta cruda o transcript + cambios finales
+    ├── omp__<tarea>__<modelo>__r<n>/
     │   └── _raw_response.txt
-    ├── sb-feat1-name-length__<modelo>__r<n>/
+    ├── opencode__<tarea>__<modelo>__r<n>/
     │   └── _raw_response.txt
-    ├── ng-*/                       ← Angular (bug1, feat1, feat2)
-    ├── re-*/                       ← React (bug1, feat1, feat2)
-    └── data-*/                     ← Datos (bug1, feat1)
+    └── hermes__<tarea>__<modelo>__r<n>/
+        └── _raw_response.txt
 ```
 
 ---

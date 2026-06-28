@@ -12,7 +12,7 @@
  *     y de la hoja de resultados. Comparte cada formulario con su pareja de revisores.
  *
  * Todas las respuestas de los 4 formularios caen en la MISMA Google Sheet (una pestaña por
- * formulario). El modelo va anonimizado (Modelo A–K): doble ciego.
+ * formulario). El modelo va anonimizado; el harness queda visible para comparar arneses.
  */
 
 var DATA_FILE   = 'form_data.json';
@@ -70,8 +70,9 @@ function buildForm(fw, d, ssId) {
   for (var n = 0; n < items.length; n++) {
     var it = items[n];
     var header = 'Respuesta ' + (n + 1) + ' / ' + items.length +
-                 '  ·  ' + it.modelo + '  ·  ' + it.tarea;
-    var ctx = 'Tarea (' + it.tipo + '): ' + it.tarea_desc +
+                 '  ·  ' + it.modelo + '  ·  ' + it.harness + '  ·  ' + it.tarea;
+    var ctx = 'Harness: ' + it.harness + '\n' +
+              'Tarea (' + it.tipo + '): ' + it.tarea_desc +
               '\nTest automático: ' + (String(it.test_ok) === 'True' ? 'PASA' : 'FALLA');
     form.addPageBreakItem().setTitle(header).setHelpText(ctx);
 
@@ -85,14 +86,14 @@ function buildForm(fw, d, ssId) {
     // 5 ejes (escala 1–5, obligatorios).
     for (var e = 0; e < d.rubrica.length; e++) {
       form.addScaleItem()
-          .setTitle(it.modelo + ' · ' + it.tarea + ' — ' + d.rubrica[e][0])
+          .setTitle(it.modelo + ' · ' + it.harness + ' · ' + it.tarea + ' — ' + d.rubrica[e][0])
           .setBounds(1, 5)
           .setLabels('Muy malo', 'Excelente')
           .setRequired(true);
     }
     // Comentario opcional.
     form.addParagraphTextItem()
-        .setTitle('Comentario (opcional) — ' + it.modelo + ' · ' + it.tarea);
+        .setTitle('Comentario (opcional) — ' + it.modelo + ' · ' + it.harness + ' · ' + it.tarea);
   }
 
   // Volcar respuestas a la hoja compartida (crea una pestaña por formulario).

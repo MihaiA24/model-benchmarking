@@ -1,5 +1,9 @@
 # API key — nunca committear
 openrouter_key.txt
+opencode_key.txt
+.env
+.env.*
+!.env.example
 
 # Python
 __pycache__/

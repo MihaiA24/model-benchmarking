@@ -2,8 +2,8 @@
 """Genera human_review/form_data.json para el Apps Script que crea los Google Forms.
 
 Lee la plantilla (anonimizada) + los ficheros ciegos y produce un JSON con:
-- objetivo + instrucciones + rubrica (cabecera que va al PRINCIPIO de cada formulario)
-- frameworks -> lista de respuestas {modelo, tarea, tipo, test_ok, codigo}
+- objetivo + instrucciones + rubrica
+- frameworks -> lista de respuestas {modelo, harness, tarea, tipo, test_ok, codigo}
 
 Ejecutar despues de gen_plantilla.py:
     python gen_form_data.py
@@ -16,19 +16,18 @@ PLANTILLA = HR / "plantilla_puntuacion.csv"
 OUT = HR / "form_data.json"
 
 OBJETIVO = (
-    "Estamos eligiendo qué modelo de IA adoptará la empresa para el desarrollo diario. "
-    "Hemos pedido a 11 modelos (anonimizados como Modelo A–K) que resuelvan las mismas "
-    "tareas reales sobre nuestros stacks. La capa automática ya midió si el código compila "
-    "y pasa los tests; tú vas a medir lo que los tests NO capturan: calidad, idiomaticidad "
+    "Estamos eligiendo qué combinación de modelo y harness de IA adoptará la empresa "
+    "para el desarrollo diario. La capa automática ya midió si el código compila y pasa "
+    "los tests; tú vas a medir lo que los tests NO capturan: calidad, idiomaticidad "
     "y seguridad. Tu criterio decide el resultado final."
 )
 
 INSTRUCCIONES = (
     "Cómo puntuar:\n"
-    "• Para cada respuesta verás el código que generó un modelo (no sabes cuál: es ciego).\n"
+    "• Para cada respuesta verás el código o artefacto que generó una combinación modelo+harness.\n"
     "• Puntúa los 5 ejes de 1 (muy malo) a 5 (excelente).\n"
     "• Si el test automático falló, tenlo en cuenta en el eje 1 (correctitud).\n"
-    "• No intentes adivinar qué modelo es. Sé consistente entre respuestas.\n"
+    "• No intentes adivinar qué modelo real hay detrás del alias. Sé consistente entre respuestas.\n"
     "• Si algo te chirría, déjalo en el comentario final de cada respuesta."
 )
 
@@ -40,19 +39,18 @@ RUBRICA = [
     ("5. Esfuerzo de arreglo", "¿Cuánto trabajo para dejarlo production-ready? (5 = se integra tal cual)"),
 ]
 
-# Descripcion corta de cada tarea, para contexto del revisor.
 TASK_DESC = {
-    "bug1-petvalidator":          "Bug-fix: un nombre de mascota con solo espacios se aceptaba como válido.",
-    "bug2-ownercontroller":       "Bug-fix: con varios resultados redirige al detalle en vez de mostrar la lista.",
-    "sb-feat1-name-length":       "Feature: rechazar nombres de más de 50 caracteres (error 'tooLong').",
-    "ng-bug1-missing-input":      "Bug-fix: faltaba @Input() en la propiedad 'config' (rompe el binding).",
-    "ng-feat1-reading-time":      "Feature: método getReadingTime() para mostrar el tiempo de lectura.",
-    "ng-feat2-service-search":    "Feature: implementar search() en el servicio de artículos.",
-    "re-bug1-favorite-count":     "Bug-fix: el reducer no actualiza favoritesCount al marcar favorito.",
-    "re-feat1-reading-time":      "Feature: función getReadingTime(body) (mínimo 1 minuto).",
-    "re-feat2-author-filter":     "Feature: acción FILTER_BY_AUTHOR en el reducer (la tarea más difícil).",
-    "data-bug1-sales-genre":      "Bug-fix: JOIN incorrecto en el cálculo de ventas por género.",
-    "data-feat1-customer-ranking":"Feature: ranking de clientes por país con window functions.",
+    "bug1-petvalidator": "Bug-fix: un nombre de mascota con solo espacios se aceptaba como válido.",
+    "bug2-ownercontroller": "Bug-fix: con varios resultados redirige al detalle en vez de mostrar la lista.",
+    "sb-feat1-name-length": "Feature: rechazar nombres de más de 50 caracteres (error 'tooLong').",
+    "ng-bug1-missing-input": "Bug-fix: faltaba @Input() en la propiedad 'config' (rompe el binding).",
+    "ng-feat1-reading-time": "Feature: método getReadingTime() para mostrar el tiempo de lectura.",
+    "ng-feat2-service-search": "Feature: implementar search() en el servicio de artículos.",
+    "re-bug1-favorite-count": "Bug-fix: el reducer no actualiza favoritesCount al marcar favorito.",
+    "re-feat1-reading-time": "Feature: función getReadingTime(body) (mínimo 1 minuto).",
+    "re-feat2-author-filter": "Feature: acción FILTER_BY_AUTHOR en el reducer (la tarea más difícil).",
+    "data-bug1-sales-genre": "Bug-fix: JOIN incorrecto en el cálculo de ventas por género.",
+    "data-feat1-customer-ranking": "Feature: ranking de clientes por país con window functions.",
 }
 
 FRAMEWORK_ORDER = ["Spring Boot", "Angular", "React", "Datos"]
@@ -61,31 +59,31 @@ FRAMEWORK_ORDER = ["Spring Boot", "Angular", "React", "Datos"]
 def main():
     rows = list(csv.DictReader(open(PLANTILLA, newline="", encoding="utf-8")))
     frameworks = defaultdict(list)
-    for r in rows:
-        code = pathlib.Path(r["archivo_respuesta"]).read_text(encoding="utf-8")
-        frameworks[r["stack"]].append({
-            "modelo": r["modelo"],
-            "tarea": r["tarea"],
-            "tarea_desc": TASK_DESC.get(r["tarea"], ""),
-            "tipo": r["tipo"],
-            "test_ok": r["test_ok_auto"],
+    for row in rows:
+        code = pathlib.Path(row["archivo_respuesta"]).read_text(encoding="utf-8")
+        frameworks[row["stack"]].append({
+            "modelo": row["modelo"],
+            "harness": row.get("harness", "raw_api"),
+            "tarea": row["tarea"],
+            "tarea_desc": TASK_DESC.get(row["tarea"], ""),
+            "tipo": row["tipo"],
+            "test_ok": row["test_ok_auto"],
             "codigo": code,
         })
-    # ordenar dentro de cada framework por tarea y luego modelo
-    for fw in frameworks:
-        frameworks[fw].sort(key=lambda x: (x["tarea"], x["modelo"]))
+    for framework in frameworks:
+        frameworks[framework].sort(key=lambda item: (item["tarea"], item["harness"], item["modelo"]))
 
     data = {
         "objetivo": OBJETIVO,
         "instrucciones": INSTRUCCIONES,
         "rubrica": RUBRICA,
-        "frameworks": {fw: frameworks[fw] for fw in FRAMEWORK_ORDER if fw in frameworks},
+        "frameworks": {framework: frameworks[framework] for framework in FRAMEWORK_ORDER if framework in frameworks},
     }
     OUT.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    total = sum(len(v) for v in data["frameworks"].values())
+    total = sum(len(items) for items in data["frameworks"].values())
     print(f"{OUT} generado: {len(data['frameworks'])} frameworks, {total} respuestas")
-    for fw, items in data["frameworks"].items():
-        print(f"  {fw}: {len(items)} respuestas")
+    for framework, items in data["frameworks"].items():
+        print(f"  {framework}: {len(items)} respuestas")
 
 
 if __name__ == "__main__":

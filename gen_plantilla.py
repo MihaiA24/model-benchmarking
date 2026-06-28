@@ -2,16 +2,19 @@
 """Genera el paquete de revision humana CIEGO a partir de metrics_all.csv.
 
 - Lee el mapping real -> alias de results/model_mapping.csv (lo crea merge_metrics.py).
-- Por cada (modelo, tarea) elige UN run representativo (prefiere test verde, run mas bajo).
-- Copia su _raw_response.txt a human_review/respuestas_ciegas/<Alias>__<tarea>.txt
-  (nombre SIN el modelo real -> doble ciego de verdad; la ruta original lo filtraba).
-- Escribe human_review/plantilla_puntuacion.csv: una fila por (alias, tarea) con las
-  5 columnas de la rubrica vacias para que las rellenen los revisores.
+- Por cada (harness, modelo, tarea) elige UN run representativo.
+- Copia el artefacto de respuesta a human_review/respuestas_ciegas/.
+- Escribe human_review/plantilla_puntuacion.csv con columnas de rubrica vacias.
 
 Ejecutar DESPUES de merge_metrics.py:
     python gen_plantilla.py
 """
-import csv, pathlib, shutil, re
+from __future__ import annotations
+
+import csv
+import pathlib
+import re
+import shutil
 
 RESULTS = pathlib.Path("results")
 HR = pathlib.Path("human_review")
@@ -20,7 +23,6 @@ METRICS = RESULTS / "metrics_all.csv"
 MAPPING = RESULTS / "model_mapping.csv"
 OUT = HR / "plantilla_puntuacion.csv"
 
-# stack -> nombre de subcarpeta (una carpeta de respuestas por framework)
 STACK_DIR = {
     "Spring Boot": "springboot",
     "Angular": "angular",
@@ -28,20 +30,23 @@ STACK_DIR = {
     "Datos": "datos",
 }
 
-# Metadatos de las 11 tareas (stack, tipo) para contexto del revisor.
 TASK_META = {
-    "bug1-petvalidator":          ("Spring Boot", "Bug-fix"),
-    "bug2-ownercontroller":       ("Spring Boot", "Bug-fix"),
-    "sb-feat1-name-length":       ("Spring Boot", "Feature"),
-    "ng-bug1-missing-input":      ("Angular",     "Bug-fix"),
-    "ng-feat1-reading-time":      ("Angular",     "Feature"),
-    "ng-feat2-service-search":    ("Angular",     "Feature"),
-    "re-bug1-favorite-count":     ("React",       "Bug-fix"),
-    "re-feat1-reading-time":      ("React",       "Feature"),
-    "re-feat2-author-filter":     ("React",       "Feature"),
-    "data-bug1-sales-genre":      ("Datos",       "Bug-fix"),
-    "data-feat1-customer-ranking":("Datos",       "Feature"),
+    "bug1-petvalidator": ("Spring Boot", "Bug-fix"),
+    "bug2-ownercontroller": ("Spring Boot", "Bug-fix"),
+    "sb-feat1-name-length": ("Spring Boot", "Feature"),
+    "ng-bug1-missing-input": ("Angular", "Bug-fix"),
+    "ng-feat1-reading-time": ("Angular", "Feature"),
+    "ng-feat2-service-search": ("Angular", "Feature"),
+    "re-bug1-favorite-count": ("React", "Bug-fix"),
+    "re-feat1-reading-time": ("React", "Feature"),
+    "re-feat2-author-filter": ("React", "Feature"),
+    "data-bug1-sales-genre": ("Datos", "Bug-fix"),
+    "data-feat1-customer-ranking": ("Datos", "Feature"),
 }
+
+
+def slug(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_")
 
 
 def load_mapping():
@@ -53,51 +58,64 @@ def load_mapping():
 
 
 def pick_run(rows):
-    """De los runs de un (modelo, tarea), elige el representativo:
-    prefiere test verde; a igualdad, el run mas bajo."""
-    def key(r):
-        passed = 0 if r.get("test_ok") in ("True", True) else 1
+    """Prefiere test verde; a igualdad, run mas bajo."""
+    def key(row):
+        passed = 0 if row.get("test_ok") in ("True", True, "true", "1") else 1
         try:
-            rn = int(r["run"])
+            run = int(row["run"])
         except (ValueError, KeyError):
-            rn = 99
-        return (passed, rn)
+            run = 99
+        return (passed, run)
     return sorted(rows, key=key)[0]
+
+
+def response_path(row: dict[str, str]) -> pathlib.Path:
+    if row.get("transcript_path"):
+        return pathlib.Path(row["transcript_path"])
+    if row.get("workdir"):
+        return pathlib.Path(row["workdir"]) / "_raw_response.txt"
+    task = row["task"]
+    model = row["model"]
+    run = row["run"]
+    harness = row.get("harness") or "raw_api"
+    legacy_label = f"{task}__{model.replace('/', '_')}__r{run}"
+    harness_label = f"{harness}__{task}__{model.replace('/', '_')}__r{run}"
+    legacy = RESULTS / legacy_label / "_raw_response.txt"
+    return legacy if legacy.exists() else RESULTS / harness_label / "_raw_response.txt"
 
 
 def main():
     real2alias = load_mapping()
     rows = list(csv.DictReader(open(METRICS, newline="", encoding="utf-8")))
 
-    # agrupar por (modelo_real, tarea)
     groups = {}
-    for r in rows:
-        if r.get("test_ok") in ("ERROR", "", None):
+    for row in rows:
+        if row.get("test_ok") in ("ERROR", "", None):
             continue
-        groups.setdefault((r["model"], r["task"]), []).append(r)
+        row["harness"] = row.get("harness") or "raw_api"
+        groups.setdefault((row["harness"], row["model"], row["task"]), []).append(row)
 
     if BLIND.exists():
         shutil.rmtree(BLIND)
     BLIND.mkdir(parents=True)
 
     out_rows = []
-    for (model, task), grp in groups.items():
+    for (harness, model, task), group in groups.items():
         alias = real2alias.get(model, model)
-        chosen = pick_run(grp)
-        run = chosen["run"]
-        # ruta del raw response original (contiene el nombre real -> NO se entrega)
-        label = f"{task}__{model.replace('/', '_')}__r{run}"
-        src = RESULTS / label / "_raw_response.txt"
+        chosen = pick_run(group)
+        src = response_path(chosen)
         stack, tipo = TASK_META.get(task, ("?", "?"))
         subdir = STACK_DIR.get(stack, "otros")
-        alias_slug = alias.replace(" ", "")
-        blind_name = f"{alias_slug}__{task}.txt"
+        blind_name = f"{slug(alias)}__{slug(harness)}__{task}.txt"
         (BLIND / subdir).mkdir(parents=True, exist_ok=True)
         dst = BLIND / subdir / blind_name
         if src.exists():
             shutil.copyfile(src, dst)
+        else:
+            dst.write_text(f"[respuesta no encontrada: {src}]\n", encoding="utf-8")
         out_rows.append({
             "modelo": alias,
+            "harness": harness,
             "tarea": task,
             "stack": stack,
             "tipo": tipo,
@@ -111,19 +129,31 @@ def main():
             "comentarios": "",
         })
 
-    # orden: por tarea y luego por alias, para que el revisor no agrupe por modelo
-    out_rows.sort(key=lambda r: (r["tarea"], r["modelo"]))
-    fields = ["modelo", "tarea", "stack", "tipo", "test_ok_auto", "archivo_respuesta",
-              "eje1_correctitud", "eje2_calidad", "eje3_seguridad",
-              "eje4_instrucciones", "eje5_esfuerzo", "comentarios"]
+    out_rows.sort(key=lambda row: (row["tarea"], row["harness"], row["modelo"]))
+    fields = [
+        "modelo",
+        "harness",
+        "tarea",
+        "stack",
+        "tipo",
+        "test_ok_auto",
+        "archivo_respuesta",
+        "eje1_correctitud",
+        "eje2_calidad",
+        "eje3_seguridad",
+        "eje4_instrucciones",
+        "eje5_esfuerzo",
+        "comentarios",
+    ]
     with open(OUT, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
-        w.writeheader()
-        w.writerows(out_rows)
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(out_rows)
 
-    n_models = len({r["modelo"] for r in out_rows})
-    print(f"Plantilla: {OUT} ({len(out_rows)} filas, {n_models} modelos)")
-    print(f"Respuestas ciegas: {BLIND}/ ({len(list(BLIND.glob('*.txt')))} ficheros)")
+    n_models = len({row["modelo"] for row in out_rows})
+    n_harnesses = len({row["harness"] for row in out_rows})
+    print(f"Plantilla: {OUT} ({len(out_rows)} filas, {n_models} modelos, {n_harnesses} harnesses)")
+    print(f"Respuestas ciegas: {BLIND}/ ({len(list(BLIND.rglob('*.txt')))} ficheros)")
     print("Las rutas NO contienen el nombre real del modelo -> doble ciego correcto.")
 
 
