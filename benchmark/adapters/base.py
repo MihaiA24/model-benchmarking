@@ -19,6 +19,9 @@ class AdapterResult:
     telemetry_note: str = ""
     latency_s: float = 0.0
     transcript_path: str = ""
+    capability_mode: str = ""
+    telemetry_trust: str = ""
+    tool_set: str = ""
 
 
 class HarnessAdapter(Protocol):

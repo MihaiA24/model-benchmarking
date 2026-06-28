@@ -25,6 +25,9 @@ FIELDNAMES = [
     "task",
     "model",
     "run",
+    "capability_mode",
+    "telemetry_trust",
+    "tool_set",
     "build_ok",
     "test_ok",
     "in_tok",
@@ -46,13 +49,19 @@ _CLI_HARNESSES = {"omp": "omp", "opencode": "opencode", "hermes": "hermes"}
 
 def _csv_path(stack: str, results_dir: Path) -> Path:
     return results_dir / STACK_CSV[stack].name
-
-
 def _normalize_row(row: dict[str, str]) -> dict[str, str]:
     normalized = {field: row.get(field, "") for field in FIELDNAMES}
     normalized["harness"] = normalized["harness"] or "raw_api"
     if not normalized["transcript_path"] and normalized.get("workdir"):
         normalized["transcript_path"] = str(Path(normalized["workdir"]) / "_raw_response.txt")
+    if not normalized["capability_mode"]:
+        normalized["capability_mode"] = "single_shot" if normalized["harness"] == "raw_api" else "agent_iterated"
+    if not normalized["telemetry_trust"]:
+        normalized["telemetry_trust"] = {"raw_api": "exact", "omp": "parsed", "opencode": "parsed", "hermes": "blank"}.get(normalized["harness"], "")
+    if not normalized["tool_set"] and normalized["harness"] == "omp":
+        normalized["tool_set"] = "read,bash,edit,write,grep,find,lsp"
+    if not normalized["tool_set"] and normalized["harness"] == "hermes":
+        normalized["tool_set"] = "terminal,file"
     if not normalized["model_calls"] and normalized["harness"] == "raw_api" and normalized.get("test_ok") not in ("", "ERROR", None):
         normalized["model_calls"] = "1"
         normalized["telemetry_note"] = normalized["telemetry_note"] or "legacy raw_api row; one OpenRouter request"
@@ -272,6 +281,9 @@ def run_one(*, harness: str, task, model: str, adapter_model: str, run: int, res
         row.update({
             "build_ok": build_ok,
             "test_ok": test_ok,
+            "capability_mode": result.capability_mode,
+            "telemetry_trust": result.telemetry_trust,
+            "tool_set": result.tool_set,
             "in_tok": result.in_tokens,
             "out_tok": result.out_tokens,
             "cost_usd": result.cost_usd,
@@ -289,6 +301,9 @@ def run_one(*, harness: str, task, model: str, adapter_model: str, run: int, res
         row.update({
             "build_ok": "ERROR",
             "test_ok": "ERROR",
+            "capability_mode": "single_shot" if harness == "raw_api" else "agent_iterated",
+            "telemetry_trust": {"raw_api": "exact", "omp": "parsed", "opencode": "parsed", "hermes": "blank"}.get(harness, ""),
+            "tool_set": {"omp": "read,bash,edit,write,grep,find,lsp", "hermes": "terminal,file"}.get(harness, ""),
             "in_tok": "",
             "out_tok": "",
             "cost_usd": "",
@@ -330,6 +345,19 @@ def _opencode_models() -> tuple[int, str]:
     return result.returncode, (result.stdout or "") + (result.stderr or "")
 
 
+def _check_seeded_bug(task, baseline: Path) -> str | None:
+    """Assert the seeded bug is present in the baseline before running."""
+    if not task.seed_patches:
+        target = baseline / task.target_file
+        if not target.exists():
+            return None
+        content = target.read_text(encoding="utf-8", errors="replace")
+        if task.name == "bug1-petvalidator" and "hasLength" not in content:
+            return f"bug1-petvalidator: expected 'hasLength' bug in {task.target_file} — baseline may have drifted"
+        if task.name == "bug2-ownercontroller" and ">= 1" not in content:
+            return f"bug2-ownercontroller: expected '>= 1' bug in {task.target_file} — baseline may have drifted"
+    return None
+
 def run_preflight(*, planned: list[tuple], stacks: list[str], tasks: list, results_dir: Path) -> int:
     failures: list[str] = []
     warnings: list[str] = []
@@ -361,6 +389,9 @@ def run_preflight(*, planned: list[tuple], stacks: list[str], tasks: list, resul
             failures.append(f"missing baseline for {task.name}: {baseline}")
         if task.link_node_modules and not (baseline / "node_modules").exists():
             failures.append(f"missing node_modules for {task.name}: {baseline / 'node_modules'}")
+        bug_check = _check_seeded_bug(task, baseline)
+        if bug_check:
+            failures.append(bug_check)
 
     for stack in stacks:
         csv_path = _csv_path(stack, results_dir)

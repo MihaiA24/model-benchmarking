@@ -231,6 +231,9 @@ def _run_command(cmd: list[str], *, cwd: Path, timeout_s: int, env: dict[str, st
 
 class _CliAdapter:
     name = "cli"
+    capability_mode = "agent_iterated"
+    telemetry_trust = "parsed"
+    tool_set = ""
 
     def _command(self, *, workdir: Path, model: str, prompt: str, timeout_s: int) -> tuple[list[str], list[str]]:
         raise NotImplementedError
@@ -260,19 +263,25 @@ class _CliAdapter:
             telemetry_note=telemetry.note,
             latency_s=latency,
             transcript_path=str(transcript_path),
+            capability_mode=self.capability_mode,
+            telemetry_trust=self.telemetry_trust,
+            tool_set=self.tool_set,
         )
 
 
 class OmpAdapter(_CliAdapter):
     name = "omp"
+    tool_set = "read,bash,edit,write,grep,find,lsp"
 
     def _command(self, *, workdir: Path, model: str, prompt: str, timeout_s: int) -> tuple[list[str], list[str]]:
-        tools = "read,bash,edit,write,grep,find,lsp"
+        config_overlay = str(Path(__file__).parent / "omp-benchmark.yml")
+        tools = self.tool_set
         cmd = [
             "omp",
             "-p",
             f"--cwd={workdir}",
             f"--model={model}",
+            f"--config={config_overlay}",
             "--mode=json",
             "--no-session",
             "--no-title",
@@ -290,6 +299,7 @@ class OmpAdapter(_CliAdapter):
 
 class OpenCodeAdapter(_CliAdapter):
     name = "opencode"
+    tool_set = "default"
 
     def _command(self, *, workdir: Path, model: str, prompt: str, timeout_s: int) -> tuple[list[str], list[str]]:
         cmd = [
@@ -301,6 +311,7 @@ class OpenCodeAdapter(_CliAdapter):
             str(workdir),
             "--format",
             "json",
+            "--pure",
             "--dangerously-skip-permissions",
             "--",
             prompt,
@@ -310,9 +321,11 @@ class OpenCodeAdapter(_CliAdapter):
 
 class HermesAdapter(_CliAdapter):
     name = "hermes"
+    telemetry_trust = "blank"
+    tool_set = "terminal,file"
 
     def _extract_telemetry(self, stdout: str, stderr: str, model: str) -> CliTelemetry:
-        return CliTelemetry(note="hermes: oneshot CLI does not expose per-run model call/token/cost telemetry")
+        return CliTelemetry(note="hermes: oneshot CLI does not expose per-run model call/token/cost telemetry; temperature not pinned (CLI lacks flag)")
 
 
     def _model_args(self, model: str) -> list[str]:

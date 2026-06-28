@@ -34,7 +34,6 @@ def _fmt_cmd(cmd: list[str] | None) -> str:
 def agent_prompt(task) -> str:
     """Prompt used when a coding-agent harness edits the workdir directly."""
     task_details = _strip_raw_output_contract(task.prompt)
-    test_cmd = None if task.test_ok_equals_build else task.test_cmd
     return f"""You are running inside an isolated benchmark workdir for task `{task.name}`.
 
 Goal:
@@ -47,10 +46,9 @@ Rules:
 - Make the minimum code changes needed for this task.
 - Do not modify benchmark result CSVs, runner files, or files outside this workdir.
 - Do not use web search, external MCP services, package installs, or network calls.
-- You may read files, edit files, and run local build/test commands.
+- You may read files, edit files, and run local build commands.
 - Leave the fixed files on disk. Your final answer should be a short status summary, not a full file dump.
 
-Verification commands the benchmark runner will execute after you finish:
+Verification command the benchmark runner will execute after you finish:
 - Build: {_fmt_cmd(task.build_cmd)}
-- Test: {_fmt_cmd(test_cmd)}
 """

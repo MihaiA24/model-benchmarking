@@ -21,6 +21,7 @@ class BenchmarkTask:
     copy_ignore: tuple[str, ...] = ()
     link_node_modules: bool = False
     test_ok_equals_build: bool = False
+    baseline_commit: str | None = None
 
 
 BUG1_TEST = """\

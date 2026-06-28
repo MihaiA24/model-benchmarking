@@ -24,9 +24,15 @@ def read_openrouter_key() -> str:
     return ""
 
 
+class FormatError(RuntimeError):
+    """Model response did not contain a parseable code block."""
+
+
 def extract_code(text: str) -> str:
     match = re.search(r"```(?:\w+)?\n(.*?)```", text, re.S)
-    return match.group(1) if match else text
+    if not match:
+        raise FormatError("no code block found in model response")
+    return match.group(1)
 
 
 class RawApiAdapter:
@@ -61,6 +67,9 @@ class RawApiAdapter:
         response.raise_for_status()
         data = response.json()
         text = data["choices"][0]["message"]["content"]
+        if not text:
+            transcript_path.write_text("", encoding="utf-8")
+            raise RuntimeError("infrastructure_failure: empty model response")
         usage = data.get("usage", {})
         in_tokens = usage.get("prompt_tokens", 0)
         out_tokens = usage.get("completion_tokens", 0)
@@ -79,4 +88,7 @@ class RawApiAdapter:
             telemetry_note="openrouter_usage; cost_from_price_table",
             latency_s=latency,
             transcript_path=str(transcript_path),
+            capability_mode="single_shot",
+            telemetry_trust="exact",
+            tool_set="",
         )
