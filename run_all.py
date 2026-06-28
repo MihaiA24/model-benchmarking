@@ -20,6 +20,13 @@ STACKS = [
 HERE = pathlib.Path(__file__).parent.resolve()
 
 
+def log_dir_for(args: argparse.Namespace) -> pathlib.Path:
+    if args.results_dir:
+        path = pathlib.Path(args.results_dir)
+        return path if path.is_absolute() else HERE / path
+    return HERE / "results"
+
+
 def command_for(stack: str, args: argparse.Namespace) -> list[str]:
     cmd = [
         sys.executable,
@@ -28,11 +35,12 @@ def command_for(stack: str, args: argparse.Namespace) -> list[str]:
         stack,
         "--harness",
         args.harness,
-        "--models",
-        args.models,
-        "--runs",
-        str(args.runs),
     ]
+    if args.models is not None:
+        cmd.extend(["--models", args.models])
+    cmd.extend(["--runs", str(args.runs)])
+    if args.results_dir:
+        cmd.extend(["--results-dir", args.results_dir])
     for adapter_model in args.adapter_model or []:
         cmd.extend(["--adapter-model", adapter_model])
     if args.no_resume:
@@ -47,8 +55,9 @@ def command_for(stack: str, args: argparse.Namespace) -> list[str]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Launch all benchmark stacks through run_benchmark.py.")
     parser.add_argument("--harness", default="raw_api", help="Harness selector passed to run_benchmark.py")
-    parser.add_argument("--models", default="new", help="Model selector passed to run_benchmark.py")
+    parser.add_argument("--models", default=None, help="Model selector passed to run_benchmark.py; omit to use BENCHMARK_MODELS from .env/env, then new")
     parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument("--results-dir", help="Results directory passed to run_benchmark.py")
     parser.add_argument("--adapter-model", action="append", help="Repeatable harness=model selector override")
     parser.add_argument("--no-resume", action="store_true")
     parser.add_argument("--preflight", action="store_true")
@@ -59,7 +68,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    print(f"Lanzando 4 stacks en paralelo con harness={args.harness}...")
+    model_source = args.models if args.models not in (None, "") else "BENCHMARK_MODELS/.env"
+    results_dir = args.results_dir or "results"
+    print(f"Lanzando 4 stacks en paralelo con harness={args.harness}, models={model_source}, results_dir={results_dir}...")
     processes: list[tuple[str, str, subprocess.Popen, object | None]] = []
     for title, stack in STACKS:
         cmd = command_for(stack, args)
@@ -70,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
             process = subprocess.Popen(command, shell=True, cwd=str(HERE))
             log_path = "cmd window"
         else:
-            log_path = HERE / "results" / f"run_all_{stack}.log"
+            log_path = log_dir_for(args) / f"run_all_{stack}.log"
             log_path.parent.mkdir(exist_ok=True)
             log_handle = open(log_path, "w", encoding="utf-8")
             process = subprocess.Popen(cmd, cwd=str(HERE), stdout=log_handle, stderr=subprocess.STDOUT)
