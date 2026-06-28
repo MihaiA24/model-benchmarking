@@ -13,7 +13,7 @@ from typing import Iterable
 
 from benchmark.adapters import ADAPTERS, ALL_HARNESSES
 from benchmark.checks import run_checks
-from benchmark.models import expand_models
+from benchmark.models import expand_models, opencode_go_model_id, opencode_go_selector
 from benchmark.prompts import agent_prompt, raw_api_prompt
 from benchmark.tasks import STACK_CSV, STACKS, TASK_BY_NAME, TASKS_BY_STACK
 from benchmark.util import benchmark_env, repo_path, safe_label, secret_file
@@ -165,6 +165,11 @@ def parse_adapter_models(values: list[str] | None) -> dict[str, str]:
         mapping[harness] = selector
     return mapping
 
+def default_adapter_model(harness: str, model: str) -> str:
+    if harness != "raw_api":
+        return opencode_go_selector(model) or model
+    return model
+
 
 def select_tasks(stacks: Iterable[str], task_names: list[str] | None) -> list:
     if task_names:
@@ -185,8 +190,6 @@ def _validate_model_for_harness(harness: str, model: str, adapter_model: str, ov
     errors: list[str] = []
     if "/" not in adapter_model:
         errors.append(f"{harness}: model selector must be provider/model, got `{adapter_model}`")
-    if harness == "raw_api" and adapter_model.startswith("opencode-go/"):
-        errors.append("raw_api cannot call OpenCode Go subscription models; use `--harness agent` or override raw_api to an OpenRouter slug")
     return errors
 
 
@@ -368,9 +371,19 @@ def run_preflight(*, planned: list[tuple], stacks: list[str], tasks: list, resul
         if binary and not shutil.which(binary):
             failures.append(f"missing CLI binary: {binary}")
 
-    if "raw_api" in harnesses and not _has_secret("OPENROUTER_API_KEY", "openrouter_key.txt"):
-        failures.append("missing OpenRouter key: set OPENROUTER_API_KEY or create openrouter_key.txt")
-    if any(adapter_model.startswith("opencode-go/") for *_, adapter_model, _, _ in planned):
+    openrouter_available = _has_secret("OPENROUTER_API_KEY", "openrouter_key.txt")
+    opencode_go_models = sorted({
+        opencode_go_selector(adapter_model)
+        for _, _, harness, _, adapter_model, _, _ in planned
+        if adapter_model.startswith("opencode-go/") or (harness == "raw_api" and opencode_go_model_id(adapter_model))
+    })
+    for _, _, harness, _, adapter_model, _, _ in planned:
+        if harness != "raw_api":
+            continue
+        if adapter_model.startswith("opencode-go/") or openrouter_available or opencode_go_model_id(adapter_model):
+            continue
+        failures.append(f"missing OpenRouter key for raw_api model {adapter_model}; no OpenCode Go fallback")
+    if opencode_go_models:
         if not _has_opencode_go_secret():
             failures.append("missing OpenCode Go key: set OPENCODE_API_KEY / OPENCODE_GO_API_KEY or create opencode_key.txt")
         if shutil.which("opencode"):
@@ -378,7 +391,7 @@ def run_preflight(*, planned: list[tuple], stacks: list[str], tasks: list, resul
             if code != 0:
                 warnings.append(f"opencode models failed: {output[:200]}")
             else:
-                missing = sorted({model for model in adapter_models if model.startswith("opencode-go/") and model not in output})
+                missing = sorted(model for model in opencode_go_models if model not in output)
                 if missing:
                     warnings.append("OpenCode did not list requested Go models: " + ", ".join(missing[:5]))
 
@@ -459,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
         for harness in harnesses:
             for model in models:
                 overridden = harness in adapter_models
-                adapter_model = adapter_models.get(harness, model)
+                adapter_model = adapter_models[harness] if overridden else default_adapter_model(harness, model)
                 for run in range(1, args.runs + 1):
                     key = (harness, task.name, model, str(run))
                     if key in done:

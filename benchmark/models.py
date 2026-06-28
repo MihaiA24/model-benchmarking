@@ -35,6 +35,27 @@ OPENCODE_GO_MODELS = [
     "opencode-go/qwen3.6-plus",
 ]
 
+OPENCODE_GO_PREFIX = "opencode-go/"
+OPENCODE_GO_MODEL_IDS = {model.removeprefix(OPENCODE_GO_PREFIX) for model in OPENCODE_GO_MODELS}
+
+
+def is_opencode_go_selector(model: str) -> bool:
+    return model.startswith(OPENCODE_GO_PREFIX)
+
+
+def opencode_go_model_id(model: str) -> str:
+    if is_opencode_go_selector(model):
+        return model.removeprefix(OPENCODE_GO_PREFIX)
+    _, _, candidate = model.partition("/")
+    if candidate in OPENCODE_GO_MODEL_IDS:
+        return candidate
+    return ""
+
+
+def opencode_go_selector(model: str) -> str:
+    model_id = opencode_go_model_id(model)
+    return f"{OPENCODE_GO_PREFIX}{model_id}" if model_id else ""
+
 PRICES = {
     "minimax/minimax-m3": (0.30, 1.20),
     "deepseek/deepseek-v4-flash": (0.09, 0.18),
