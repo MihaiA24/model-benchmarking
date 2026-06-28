@@ -60,3 +60,4 @@ results/model_mapping.csv
 human_review/VEREDICTO.md
 # Temporal de análisis
 results/_verdict_data.json
+results

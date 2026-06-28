@@ -218,6 +218,7 @@ El runner central usa modo **resume** por defecto: no repite filas ya completada
 clave `(harness, task, model, run)`. Los CSV añaden `harness`, `model_calls` y
 `telemetry_note`: `raw_api` registra 1 llamada OpenRouter; `omp`/`opencode` rellenan
 tokens/coste/llamadas si su JSON lo expone; `hermes` queda marcado como no disponible.
+El backlog técnico vive en `docs/backlog.md`; el item abierto actual es capturar telemetry real de Hermes desde una fuente machine-readable.
 
 ---
 

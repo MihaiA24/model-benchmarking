@@ -213,6 +213,7 @@ def _run_command(cmd: list[str], *, cwd: Path, timeout_s: int, env: dict[str, st
         cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
         text=True,
         encoding="utf-8",
         errors="replace",

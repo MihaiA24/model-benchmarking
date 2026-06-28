@@ -330,6 +330,9 @@ model-benchmarking/
 ├── CLAUDE.md                       ← Instrucciones de metodología para Claude Code
 ├── RUNBOOK.md                       ← Checklist operativo de ejecución
 ├── CONTEXT_PROMPT.md               ← Prompt para retomar el proyecto en otro PC
+├── docs/
+│   ├── backlog.md                   ← Backlog técnico (`Hermes` telemetry, próximos hardening)
+│   └── adr/                          ← Decisiones de arquitectura del runner
 ├── openrouter_key.txt.example      ← Ejemplo del fichero de API key (no commitear la real)
 │
 ├── run_benchmark.py                 ← Runner central (`raw_api`, `omp`, `opencode`, `hermes`)

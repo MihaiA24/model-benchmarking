@@ -264,3 +264,7 @@ A benchmark batch is complete when:
 2. No row has `build_ok=ERROR` or `test_ok=ERROR` unless documented as infrastructure failure.
 3. `merge_metrics.py` has regenerated `metrics_all.csv`.
 4. Human-review artifacts have been regenerated if reviewers will score the new runs.
+
+## 11. Backlog
+
+Open implementation tasks live in `docs/backlog.md`. Current known item: make Hermes per-run telemetry (`model_calls`, tokens, cost) auditable from a machine-readable source instead of relying on the current `telemetry_note`.

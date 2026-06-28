@@ -74,7 +74,7 @@ class RawApiAdapter:
             text=text,
             in_tokens=in_tokens,
             out_tokens=out_tokens,
-            cost_usd=round(cost, 4),
+            cost_usd=round(cost, 6),
             model_calls=1,
             telemetry_note="openrouter_usage; cost_from_price_table",
             latency_s=latency,
