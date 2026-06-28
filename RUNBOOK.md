@@ -125,7 +125,16 @@ If `.env` has `BENCHMARK_MODELS=opencode-go/deepseek-v4-flash`, omit `--models`:
 python run_benchmark.py --stack all --harness agent --runs 3
 ```
 
-## 5. Resume and rerun
+## 5. Parallelism
+
+| Invocation model | Parallelism | Risk |
+|---|---|---|
+| `run_benchmark.py` (single) | Sequential — all harnesses/models/runs one at a time | None |
+| `run_all.py --wait` | 4 stack subprocesses in parallel | `raw_api` can hit 4 concurrent requests (exceeds ADR-0001 cap of 2); agent CLIs may collide on shared session state across stacks |
+
+Harness queues (ADR-0001) are **not implemented**. The sequential `run_benchmark.py` path is safe. `run_all.py` is faster but unguarded — avoid mixing agent harnesses across stack subprocesses, or run one stack at a time for agent runs.
+
+## 6. Resume and rerun
 
 Default: resume. Skips existing rows by `(harness, task, model, run)`.
 
@@ -137,7 +146,7 @@ python run_benchmark.py ... --no-resume
 python run_benchmark.py ... --results-dir results/v2
 ```
 
-## 6. Outputs
+## 7. Outputs
 
 Per run:
 
@@ -162,7 +171,7 @@ Per-stack CSVs: `results/metrics_{springboot,angular,react,data}.csv`
 | `telemetry_note` | How measured or why unavailable. |
 | `latency_s`, `workdir`, `transcript_path`, `error` | Run metadata. |
 
-## 7. Consolidate and review
+## 8. Consolidate and review
 
 ```bash
 python merge_metrics.py && python gen_plantilla.py && python gen_form_data.py
@@ -172,7 +181,7 @@ Outputs: `metrics_all.csv`, `metrics_anon.csv`, `model_mapping.csv`, `human_revi
 
 Do not reveal `model_mapping.csv` until human review is complete.
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
@@ -185,13 +194,13 @@ Do not reveal `model_mapping.csv` until human review is complete.
 | Telemetry columns blank | Check `telemetry_trust`. `blank` = expected for Hermes. Others: inspect CLI output. |
 | Legacy CSV schema | `python run_benchmark.py --stack all --migrate-csv` |
 
-## 9. Stop criteria
+## 10. Stop criteria
 
 1. Every planned `(harness, task, model, run)` has one CSV row.
 2. No `build_ok=ERROR` or `test_ok=ERROR` unless documented as infrastructure failure.
 3. `metrics_all.csv` regenerated.
 4. Human-review artifacts regenerated if reviewers will score new runs.
 
-## 10. Backlog
+## 11. Backlog
 
 `docs/backlog.md` — open items: (1) Hermes per-run telemetry from machine-readable source; (2) per-harness concurrency queues (ADR-0001).
