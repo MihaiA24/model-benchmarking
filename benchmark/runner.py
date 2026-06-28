@@ -384,7 +384,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stack", default="all", help="Comma-separated stacks: springboot,angular,react,data,all")
     parser.add_argument("--task", action="append", help="Run only this task id. Repeatable.")
     parser.add_argument("--harness", default="raw_api", help="Comma-separated harnesses: raw_api,omp,opencode,hermes,agent,all")
-    parser.add_argument("--models", default="new", help="Comma-separated models or preset: original,new,opencode-go,all")
+    parser.add_argument("--models", help="Comma-separated models or preset: original,new,opencode-go,all. Defaults to BENCHMARK_MODELS from .env/env, then new.")
     parser.add_argument("--adapter-model", action="append", help="Override selector per harness, e.g. omp=openrouter/qwen/qwen3.7-plus")
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--results-dir", default="results")
@@ -400,9 +400,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    env = benchmark_env()
     harnesses = expand_harnesses(args.harness)
     stacks = expand_stacks(args.stack)
-    models = expand_models(args.models)
+    models = expand_models(args.models or env.get("BENCHMARK_MODELS"))
     adapter_models = parse_adapter_models(args.adapter_model)
     tasks = select_tasks(stacks, args.task)
     results_dir = repo_path(args.results_dir)

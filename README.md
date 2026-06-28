@@ -103,10 +103,12 @@ OPENROUTER_API_KEY=sk-or-v1-...
 ```
 
 Para OpenCode Go, usa `OPENCODE_API_KEY`; el runner lo copia también a
-`OPENCODE_GO_API_KEY` para Hermes:
+`OPENCODE_GO_API_KEY` para Hermes. `BENCHMARK_MODELS` es opcional y se usa
+cuando `run_benchmark.py` se lanza sin `--models`:
 
 ```dotenv
 OPENCODE_API_KEY=...
+BENCHMARK_MODELS=opencode-go/deepseek-v4-flash
 ```
 
 También puedes seguir usando variables de entorno o ficheros legacy:
@@ -184,9 +186,11 @@ Con `--models opencode-go`, OMP, OpenCode y Hermes reciben los mismos selectores
 `opencode-go/<modelo>` y usan la suscripción OpenCode Go.
 Las columnas `model_calls`, `in_tok`, `out_tok`, `cost_usd` y `telemetry_note` permiten auditar llamadas y coste. `raw_api` registra 1 llamada OpenRouter; `omp` y `opencode` se rellenan desde JSON cuando la CLI lo expone; `hermes` queda marcado como no disponible en `telemetry_note`.
 
-OpenCode Go single-model shortcut:
+OpenCode Go single-model shortcut. Si `BENCHMARK_MODELS` está en `.env`, puedes
+omitir `--models`; el argumento explícito siempre gana:
 
 ```bash
+python run_benchmark.py --stack all --harness agent --runs 3
 python run_benchmark.py --stack all --harness agent --models opencode-go/qwen3.7-plus --runs 3
 ```
 

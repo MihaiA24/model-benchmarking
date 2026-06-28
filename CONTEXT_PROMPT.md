@@ -47,6 +47,7 @@ El runner carga `.env` desde la raíz del repo antes de invocar tests, builds o 
 ```dotenv
 OPENROUTER_API_KEY=sk-or-v1-TUKEY
 OPENCODE_API_KEY=opencode-go-key
+BENCHMARK_MODELS=opencode-go/deepseek-v4-flash
 ```
 
 También acepta los ficheros legacy `openrouter_key.txt` y `opencode_key.txt`.

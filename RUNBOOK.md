@@ -76,6 +76,7 @@ or export / `.env` / file-load the key for non-interactive runs:
 export OPENCODE_API_KEY='...'
 export OPENCODE_GO_API_KEY="$OPENCODE_API_KEY"  # needed by Hermes if you do not use opencode_key.txt
 printf 'OPENCODE_API_KEY=%s\n' '...' >> .env
+printf 'BENCHMARK_MODELS=%s\n' 'opencode-go/deepseek-v4-flash' >> .env  # optional default for run_benchmark.py
 # or, easiest for this repo:
 printf '%s' '...' > opencode_key.txt
 ```
@@ -137,13 +138,14 @@ python run_benchmark.py --stack data --harness raw_api --models new --runs 3
 
 ### OpenCode Go subscription run
 
-Run one OpenCode Go model through all agent harnesses:
+Run one OpenCode Go model through all agent harnesses. If `.env` contains
+`BENCHMARK_MODELS=opencode-go/deepseek-v4-flash`, omit `--models`; the CLI flag
+still overrides `.env`:
 
 ```bash
 python run_benchmark.py \
   --stack all \
   --harness agent \
-  --models opencode-go/qwen3.7-plus \
   --runs 3
 ```
 
