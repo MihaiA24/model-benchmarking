@@ -34,6 +34,44 @@ Runbook operativo: [`RUNBOOK.md`](RUNBOOK.md).
 | Materiales de revisión humana | `human_review/` — snapshot ciego generado; regenerar si se puntúan nuevos harnesses |
 | Presentación ejecutiva | `presentacion.html` — con datos reales |
 
+### Arquitectura implementada del benchmark de harnesses
+
+```mermaid
+flowchart TD
+  CLI["CLI run_benchmark.py"]
+  Plan["Plan de runs<br/>stacks + tasks + modelos"]
+  Workdir["Workdir por run<br/>results/{harness}__{task}__{model}__r{run}/"]
+  Prompt["Prompt por harness<br/>raw API o agente"]
+  Registry["Registro de adapters<br/>ADAPTERS"]
+  RawApi["Harness raw_api"]
+  Omp["Harness omp"]
+  OpenCode["Harness opencode"]
+  Hermes["Harness hermes"]
+  Checks["Verificación<br/>build + tests"]
+  Metrics["Fila CSV de métricas<br/>results/metrics_*.csv"]
+  Transcript["Run transcript<br/>_raw_response.txt"]
+  Errors["Artefactos de fallo<br/>_error.txt, _build_output.txt, _test_output.txt"]
+
+  CLI --> Plan
+  Plan --> Workdir
+  Workdir --> Prompt
+  Prompt --> Registry
+  Registry --> RawApi
+  Registry --> Omp
+  Registry --> OpenCode
+  Registry --> Hermes
+  RawApi --> Checks
+  Omp --> Checks
+  OpenCode --> Checks
+  Hermes --> Checks
+  Checks --> Metrics
+  Checks --> Transcript
+  Checks -. si falla .-> Errors
+```
+
+Implementado por `run_benchmark.py`, `benchmark/runner.py`, `benchmark/adapters/`, `benchmark/checks.py` y los CSV en `results/`.
+El mismo runner también implementa `--preflight`, `--dry-run`, `--no-resume` y `--migrate-csv`; el diagrama muestra solo el flujo runtime.
+
 **Modelos raw API presentes:** `original` + `new` (11 modelos en total).
 
 **Pendiente si se quiere comparar harnesses de agente:** ejecutar `--harness agent --models opencode-go` y regenerar métricas/revisión humana.
