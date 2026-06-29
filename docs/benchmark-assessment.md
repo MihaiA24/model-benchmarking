@@ -11,6 +11,14 @@ The benchmark answers two distinct, explicitly separated research questions:
 
 Runs are comparable within a capability mode, never across. A single-shot pass and an agent-iterated pass are not the same achievement, even when they share a task and model.
 
+## Current result-audit addendum (`results/full_combined_v3`)
+
+The current combined run must be interpreted through the fair derivative artifacts, not the raw merged CSV. `metrics_all.csv` remains the immutable audit input. `audit_results.py` and `rescore_results.py` derive `metrics_fair.csv` from saved transcripts/workdirs only; no model/API/agent harness calls are made during this correction pass.
+
+Current fair automatic result: 396 merged rows, 275 scored rows, 121 infrastructure/unscored exclusions, and 250/275 fair automatic passes. Use `results/full_combined_v3/fair_comparison_summary.md` and `metrics_fair.csv` for % tests verdes in human-review/final-decision materials. The fair summary now carries Wilson 95% confidence intervals and `low_n` warnings because each harness/model denominator is still only 21–25 scored runs.
+
+Use `fair_failure_evidence.md` for the 25 scored failures and `infra_remediation_report.md` for the 121 excluded infrastructure rows. Hermes pass rates are usable, but Hermes quality/cost conclusions are not: `fair_comparison_telemetry_gaps.csv` records 0 exact Hermes token/cost rows, so those rows require a future trustworthy usage source before cost ranking.
+
 ## 2. Assessment of the older benchmark (`master`)
 
 ### 2.1 What it did

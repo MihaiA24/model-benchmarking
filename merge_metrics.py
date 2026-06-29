@@ -11,6 +11,8 @@ import shutil
 import string
 from collections import defaultdict
 
+from benchmark.models import opencode_go_selector
+
 DEFAULT_RESULTS = pathlib.Path("results/2_run")
 METRIC_FILENAMES = [
     "metrics.csv",  # piloto Spring Boot bugs (legacy)
@@ -24,6 +26,10 @@ FIELDNAMES = [
     "harness",
     "task",
     "model",
+    "adapter_model",
+    "provider_backend",
+    "api_backend",
+    "pricing_model",
     "run",
     "capability_mode",
     "telemetry_trust",
@@ -41,10 +47,49 @@ FIELDNAMES = [
     "error",
 ]
 
+def default_adapter_model(harness: str, model: str, telemetry_note: str = "") -> str:
+    if harness != "raw_api" or "opencode_go" in telemetry_note:
+        return opencode_go_selector(model) or model
+    return model
+
+
+def default_provider_backend(harness: str, adapter_model: str, telemetry_note: str = "") -> str:
+    if adapter_model.startswith("opencode-go/") or "opencode_go" in telemetry_note:
+        return "opencode-go"
+    if harness == "raw_api" and "openrouter" in telemetry_note:
+        return adapter_model.split("/", 1)[0] if "/" in adapter_model else "openrouter"
+    return adapter_model.split("/", 1)[0] if "/" in adapter_model else ""
+
+
+def default_api_backend(harness: str, provider_backend: str, telemetry_note: str = "") -> str:
+    if "opencode_go_chat" in telemetry_note:
+        return "opencode_go_chat"
+    if "openrouter_usage" in telemetry_note:
+        return "openrouter_chat"
+    if harness == "raw_api":
+        return "opencode_go_chat" if provider_backend == "opencode-go" else "openrouter_chat"
+    if harness in {"omp", "opencode", "hermes"}:
+        return f"{harness}_cli"
+    return ""
+
+
+def default_pricing_model(harness: str, model: str, adapter_model: str, provider_backend: str) -> str:
+    if provider_backend == "opencode-go":
+        return opencode_go_selector(adapter_model) or opencode_go_selector(model) or adapter_model or model
+    return adapter_model or model
+
 
 def normalize(row: dict[str, str]) -> dict[str, str]:
     out = {field: row.get(field, "") for field in FIELDNAMES}
     out["harness"] = out["harness"] or "raw_api"
+    if not out["adapter_model"]:
+        out["adapter_model"] = default_adapter_model(out["harness"], out["model"], out.get("telemetry_note", ""))
+    if not out["provider_backend"]:
+        out["provider_backend"] = default_provider_backend(out["harness"], out["adapter_model"], out.get("telemetry_note", ""))
+    if not out["api_backend"]:
+        out["api_backend"] = default_api_backend(out["harness"], out["provider_backend"], out.get("telemetry_note", ""))
+    if not out["pricing_model"]:
+        out["pricing_model"] = default_pricing_model(out["harness"], out["model"], out["adapter_model"], out["provider_backend"])
     if not out["transcript_path"] and out.get("workdir"):
         out["transcript_path"] = str(pathlib.Path(out["workdir"]) / "_raw_response.txt")
     if not out["capability_mode"]:
@@ -93,8 +138,8 @@ def copy_artifacts(row: dict[str, str], out_dir: pathlib.Path) -> dict[str, str]
         return row
 
     dest = out_dir / workdir.name
-    if workdir.resolve() != dest.resolve():
-        shutil.copytree(workdir, dest, dirs_exist_ok=True)
+    if workdir.resolve() != dest.resolve() and not dest.exists() and not dest.is_symlink():
+        shutil.copytree(workdir, dest, symlinks=True)
 
     transcript_value = row.get("transcript_path", "")
     if transcript_value:

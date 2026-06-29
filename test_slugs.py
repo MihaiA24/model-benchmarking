@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Verifica que los slugs de los modelos nuevos funcionan en OpenRouter."""
-import requests, pathlib, time
+import os
+import pathlib
+import time
 
-KEY = pathlib.Path("openrouter_key.txt").read_text().strip()
+import requests
+
 URL = "https://openrouter.ai/api/v1/chat/completions"
 
 CANDIDATES = [
@@ -18,26 +21,45 @@ CANDIDATES = [
 
 MSG = [{"role": "user", "content": "Reply with exactly: OK"}]
 
-print(f"{'SLUG':<40} {'PRECIO':>14}  {'RESULTADO'}")
-print("-" * 75)
-for slug, price in CANDIDATES:
-    try:
-        t0 = time.time()
-        r = requests.post(URL,
-            headers={"Authorization": f"Bearer {KEY}"},
-            json={"model": slug, "messages": MSG, "max_tokens": 200, "temperature": 0},
-            timeout=30)
-        elapsed = time.time() - t0
-        if r.status_code == 200:
-            data = r.json()
-            content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
-            if content:
-                print(f"{slug:<40} {price:>14}  OK ({elapsed:.1f}s) -> '{content.strip()[:40]}'")
+
+def read_key() -> str:
+    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if key:
+        return key
+    key_path = pathlib.Path("openrouter_key.txt")
+    return key_path.read_text().strip() if key_path.exists() else ""
+
+
+def main() -> int:
+    key = read_key()
+    if not key:
+        raise SystemExit("Falta OPENROUTER_API_KEY u openrouter_key.txt")
+
+    print(f"{'SLUG':<40} {'PRECIO':>14}  {'RESULTADO'}")
+    print("-" * 75)
+    for slug, price in CANDIDATES:
+        try:
+            t0 = time.time()
+            r = requests.post(URL,
+                headers={"Authorization": f"Bearer {key}"},
+                json={"model": slug, "messages": MSG, "max_tokens": 200, "temperature": 0},
+                timeout=30)
+            elapsed = time.time() - t0
+            if r.status_code == 200:
+                data = r.json()
+                content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+                if content:
+                    print(f"{slug:<40} {price:>14}  OK ({elapsed:.1f}s) -> '{content.strip()[:40]}'")
+                else:
+                    print(f"{slug:<40} {price:>14}  EMPTY_RESPONSE:")
+                    print(f"  full: {str(data)[:400]}")
             else:
-                print(f"{slug:<40} {price:>14}  EMPTY_RESPONSE:")
-                print(f"  full: {str(data)[:400]}")
-        else:
-            err = r.json().get("error", {}).get("message", r.text)[:80]
-            print(f"{slug:<40} {price:>14}  FAIL HTTP {r.status_code}: {err}")
-    except Exception as e:
-        print(f"{slug:<40} {price:>14}  ERROR: {e}")
+                err = r.json().get("error", {}).get("message", r.text)[:80]
+                print(f"{slug:<40} {price:>14}  FAIL HTTP {r.status_code}: {err}")
+        except Exception as e:
+            print(f"{slug:<40} {price:>14}  ERROR: {e}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
