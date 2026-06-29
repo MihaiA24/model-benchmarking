@@ -44,6 +44,8 @@ def is_opencode_go_selector(model: str) -> bool:
 
 
 def opencode_go_model_id(model: str) -> str:
+    if model in OPENCODE_GO_MODEL_IDS:
+        return model
     if is_opencode_go_selector(model):
         return model.removeprefix(OPENCODE_GO_PREFIX)
     _, _, candidate = model.partition("/")

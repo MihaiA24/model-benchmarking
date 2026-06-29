@@ -27,6 +27,8 @@ target/
 .idea/
 .vscode/
 *.iml
+.serena/
+.cursor/
 
 # OS
 .DS_Store

@@ -5,24 +5,30 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Iterable
 
 from benchmark.adapters import ADAPTERS, ALL_HARNESSES
-from benchmark.checks import run_checks
+from benchmark.checks import run_build_check, run_checks
 from benchmark.models import expand_models, opencode_go_model_id, opencode_go_selector
 from benchmark.prompts import agent_prompt, raw_api_prompt
 from benchmark.tasks import STACK_CSV, STACKS, TASK_BY_NAME, TASKS_BY_STACK
 from benchmark.util import benchmark_env, repo_path, safe_label, secret_file
-from benchmark.workdir import make_workdir
+from benchmark.workdir import make_clean_baseline_workdir, make_workdir
 
 FIELDNAMES = [
     "harness",
     "task",
     "model",
+    "adapter_model",
+    "provider_backend",
+    "api_backend",
+    "pricing_model",
     "run",
     "capability_mode",
     "telemetry_trust",
@@ -51,6 +57,31 @@ def _csv_path(stack: str, results_dir: Path) -> Path:
 def _normalize_row(row: dict[str, str]) -> dict[str, str]:
     normalized = {field: row.get(field, "") for field in FIELDNAMES}
     normalized["harness"] = normalized["harness"] or "raw_api"
+    if not normalized["adapter_model"]:
+        normalized["adapter_model"] = default_adapter_model(
+            normalized["harness"],
+            normalized["model"],
+            normalized.get("telemetry_note", ""),
+        )
+    if not normalized["provider_backend"]:
+        normalized["provider_backend"] = default_provider_backend(
+            normalized["harness"],
+            normalized["adapter_model"],
+            normalized.get("telemetry_note", ""),
+        )
+    if not normalized["api_backend"]:
+        normalized["api_backend"] = default_api_backend(
+            normalized["harness"],
+            normalized["provider_backend"],
+            normalized.get("telemetry_note", ""),
+        )
+    if not normalized["pricing_model"]:
+        normalized["pricing_model"] = default_pricing_model(
+            normalized["harness"],
+            normalized["model"],
+            normalized["adapter_model"],
+            normalized["provider_backend"],
+        )
     if not normalized["transcript_path"] and normalized.get("workdir"):
         normalized["transcript_path"] = str(Path(normalized["workdir"]) / "_raw_response.txt")
     if not normalized["capability_mode"]:
@@ -165,10 +196,36 @@ def parse_adapter_models(values: list[str] | None) -> dict[str, str]:
         mapping[harness] = selector
     return mapping
 
-def default_adapter_model(harness: str, model: str) -> str:
-    if harness != "raw_api":
+def default_adapter_model(harness: str, model: str, telemetry_note: str = "") -> str:
+    if harness != "raw_api" or "opencode_go" in telemetry_note:
         return opencode_go_selector(model) or model
     return model
+
+
+def default_provider_backend(harness: str, adapter_model: str, telemetry_note: str = "") -> str:
+    if adapter_model.startswith("opencode-go/") or "opencode_go" in telemetry_note:
+        return "opencode-go"
+    if harness == "raw_api" and "openrouter" in telemetry_note:
+        return adapter_model.split("/", 1)[0] if "/" in adapter_model else "openrouter"
+    return adapter_model.split("/", 1)[0] if "/" in adapter_model else ""
+
+
+def default_api_backend(harness: str, provider_backend: str, telemetry_note: str = "") -> str:
+    if "opencode_go_chat" in telemetry_note:
+        return "opencode_go_chat"
+    if "openrouter_usage" in telemetry_note:
+        return "openrouter_chat"
+    if harness == "raw_api":
+        return "opencode_go_chat" if provider_backend == "opencode-go" else "openrouter_chat"
+    if harness in _CLI_HARNESSES:
+        return f"{harness}_cli"
+    return ""
+
+
+def default_pricing_model(harness: str, model: str, adapter_model: str, provider_backend: str) -> str:
+    if provider_backend == "opencode-go":
+        return opencode_go_selector(adapter_model) or opencode_go_selector(model) or adapter_model or model
+    return adapter_model or model
 
 
 def select_tasks(stacks: Iterable[str], task_names: list[str] | None) -> list:
@@ -259,6 +316,7 @@ def run_one(*, harness: str, task, model: str, adapter_model: str, run: int, res
         "harness": harness,
         "task": task.name,
         "model": model,
+        "adapter_model": adapter_model,
         "run": run,
         "workdir": str(workdir),
         "transcript_path": str(transcript_path),
@@ -283,6 +341,10 @@ def run_one(*, harness: str, task, model: str, adapter_model: str, run: int, res
         row.update({
             "build_ok": build_ok,
             "test_ok": test_ok,
+            "adapter_model": result.adapter_model or adapter_model,
+            "provider_backend": result.provider_backend,
+            "api_backend": result.api_backend,
+            "pricing_model": result.pricing_model,
             "capability_mode": result.capability_mode,
             "telemetry_trust": result.telemetry_trust,
             "tool_set": result.tool_set,
@@ -300,9 +362,14 @@ def run_one(*, harness: str, task, model: str, adapter_model: str, run: int, res
             (workdir / "_error.txt").write_text(str(exc), encoding="utf-8")
             if harness != "raw_api" and transcript_path.exists() and before:
                 _append_agent_submission(transcript_path, workdir, before)
+        provider_backend = default_provider_backend(harness, adapter_model)
         row.update({
             "build_ok": "ERROR",
             "test_ok": "ERROR",
+            "adapter_model": adapter_model,
+            "provider_backend": provider_backend,
+            "api_backend": default_api_backend(harness, provider_backend),
+            "pricing_model": default_pricing_model(harness, model, adapter_model, provider_backend),
             "capability_mode": "single_shot" if harness == "raw_api" else "agent_iterated",
             "telemetry_trust": {"raw_api": "exact", "omp": "parsed", "opencode": "parsed", "hermes": "blank"}.get(harness, ""),
             "tool_set": {"omp": "read,bash,edit,write,grep,find,lsp", "hermes": "terminal,file"}.get(harness, ""),
@@ -360,7 +427,34 @@ def _check_seeded_bug(task, baseline: Path) -> str | None:
             return f"bug2-ownercontroller: expected '>= 1' bug in {task.target_file} — baseline may have drifted"
     return None
 
-def run_preflight(*, planned: list[tuple], stacks: list[str], tasks: list, results_dir: Path) -> int:
+def _fmt_cmd(cmd: list[str]) -> str:
+    return shlex.join(str(part) for part in cmd)
+
+
+def _summarize_output(path: Path, *, max_chars: int = 500) -> str:
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="replace").strip()
+    return " ".join(text.split())[:max_chars]
+
+
+def _check_clean_baseline_build(task, *, timeout_s: int) -> str | None:
+    """Verify baseline prerequisites before spending a model call."""
+    with tempfile.TemporaryDirectory(prefix=f"benchmark-preflight-{safe_label(task.name)}-") as tmp:
+        workdir = Path(tmp) / "baseline"
+        try:
+            make_clean_baseline_workdir(task, workdir)
+            build_ok = run_build_check(workdir, task, timeout_s=timeout_s)
+        except Exception as exc:
+            return f"{task.name}: clean baseline preflight failed for `{_fmt_cmd(task.build_cmd)}`: {exc}"
+        if build_ok:
+            return None
+        output = _summarize_output(workdir / "_build_output.txt")
+        suffix = f": {output}" if output else ""
+        return f"{task.name}: clean baseline build failed for `{_fmt_cmd(task.build_cmd)}`{suffix}"
+
+
+def run_preflight(*, planned: list[tuple], stacks: list[str], tasks: list, results_dir: Path, check_timeout_s: int) -> int:
     failures: list[str] = []
     warnings: list[str] = []
     harnesses = sorted({item[2] for item in planned})
@@ -397,13 +491,21 @@ def run_preflight(*, planned: list[tuple], stacks: list[str], tasks: list, resul
 
     for task in tasks:
         baseline = repo_path(task.baseline)
+        blocked = False
         if not baseline.exists():
             failures.append(f"missing baseline for {task.name}: {baseline}")
+            blocked = True
         if task.link_node_modules and not (baseline / "node_modules").exists():
             failures.append(f"missing node_modules for {task.name}: {baseline / 'node_modules'}")
+            blocked = True
         bug_check = _check_seeded_bug(task, baseline)
         if bug_check:
             failures.append(bug_check)
+            blocked = True
+        if not blocked:
+            build_check = _check_clean_baseline_build(task, timeout_s=check_timeout_s)
+            if build_check:
+                failures.append(build_check)
 
     for stack in stacks:
         csv_path = _csv_path(stack, results_dir)
@@ -487,13 +589,23 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.preflight:
-        return run_preflight(planned=planned, stacks=stacks, tasks=tasks, results_dir=results_dir)
+        return run_preflight(planned=planned, stacks=stacks, tasks=tasks, results_dir=results_dir, check_timeout_s=args.check_timeout)
 
     if args.dry_run:
         for task, _, harness, model, adapter_model, run, _ in planned:
             print(f"PLAN {task.stack:10} | {task.name:32} | {harness:8} | model={model} | adapter_model={adapter_model} | run={run}")
         print(f"Planned runs: {len(planned)}")
         return 0
+
+    preflight_status = run_preflight(
+        planned=planned,
+        stacks=stacks,
+        tasks=tasks,
+        results_dir=results_dir,
+        check_timeout_s=args.check_timeout,
+    )
+    if preflight_status:
+        return preflight_status
 
     for stack in stacks:
         require_csv_schema(_csv_path(stack, results_dir))

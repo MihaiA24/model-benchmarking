@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 import time
 from pathlib import Path
@@ -9,12 +10,31 @@ from pathlib import Path
 import requests
 
 from benchmark.adapters.base import AdapterResult
-from benchmark.models import PRICES, is_opencode_go_selector, opencode_go_model_id
+from benchmark.models import (
+    PRICES,
+    is_opencode_go_selector,
+    opencode_go_model_id,
+    opencode_go_selector,
+)
 from benchmark.util import benchmark_env, secret_file
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENCODE_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 PLACEHOLDER_KEYS = {"", "PEGA_AQUI_TU_KEY"}
+_CODE_BLOCK_RE = re.compile(r"```[^\n`]*\n(.*?)```", re.S)
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
+
+
+@dataclass(frozen=True)
+class ApiCallResult:
+    text: str
+    in_tokens: int
+    out_tokens: int
+    latency_s: float
+    telemetry_note: str
+    provider_backend: str
+    api_backend: str
+    pricing_model: str
 
 
 def _read_key(env_names: tuple[str, ...], filename: str) -> str:
@@ -44,10 +64,17 @@ class FormatError(RuntimeError):
 
 
 def extract_code(text: str) -> str:
-    match = re.search(r"```(?:\w+)?\n(.*?)```", text, re.S)
-    if not match:
-        raise FormatError("no code block found in model response")
-    return match.group(1)
+    if not text.strip():
+        raise FormatError("format_error: empty model response")
+
+    # Reasoning-model transcripts often include example snippets in <think> before
+    # the final full-file answer. The benchmark should judge the submitted file,
+    # not the first illustrative snippet.
+    visible_text = _THINK_BLOCK_RE.sub("", text)
+    matches = _CODE_BLOCK_RE.findall(visible_text) or _CODE_BLOCK_RE.findall(text)
+    if not matches:
+        raise FormatError("format_error: no code block found in model response")
+    return matches[-1]
 
 def _usage_tokens(usage: dict, *, input_key: str, output_key: str) -> tuple[int, int]:
     return int(usage.get(input_key) or 0), int(usage.get(output_key) or 0)
@@ -60,7 +87,7 @@ class RawApiAdapter:
         self.temperature = temperature
         self.max_tokens = max_tokens
 
-    def _call_openrouter(self, *, key: str, model: str, user_msg: str, timeout_s: int) -> tuple[str, int, int, float, str]:
+    def _call_openrouter(self, *, key: str, model: str, user_msg: str, timeout_s: int) -> ApiCallResult:
         started = time.time()
         response = requests.post(
             OPENROUTER_URL,
@@ -79,9 +106,18 @@ class RawApiAdapter:
         text = data["choices"][0]["message"]["content"]
         usage = data.get("usage", {})
         in_tokens, out_tokens = _usage_tokens(usage, input_key="prompt_tokens", output_key="completion_tokens")
-        return text, in_tokens, out_tokens, latency, "openrouter_usage; cost_from_price_table"
+        return ApiCallResult(
+            text=text,
+            in_tokens=in_tokens,
+            out_tokens=out_tokens,
+            latency_s=latency,
+            telemetry_note="openrouter_usage; cost_from_price_table",
+            provider_backend=model.split("/", 1)[0] if "/" in model else "openrouter",
+            api_backend="openrouter_chat",
+            pricing_model=model,
+        )
 
-    def _call_opencode_chat(self, *, key: str, model_id: str, user_msg: str, timeout_s: int) -> tuple[str, int, int, float, str]:
+    def _call_opencode_chat(self, *, key: str, model_id: str, user_msg: str, timeout_s: int) -> ApiCallResult:
         started = time.time()
         response = requests.post(
             OPENCODE_CHAT_URL,
@@ -100,10 +136,19 @@ class RawApiAdapter:
         text = data["choices"][0]["message"]["content"]
         usage = data.get("usage", {})
         in_tokens, out_tokens = _usage_tokens(usage, input_key="prompt_tokens", output_key="completion_tokens")
-        return text, in_tokens, out_tokens, latency, "opencode_go_chat_api_usage; cost_from_price_table"
+        return ApiCallResult(
+            text=text,
+            in_tokens=in_tokens,
+            out_tokens=out_tokens,
+            latency_s=latency,
+            telemetry_note="opencode_go_chat_api_usage; cost_from_price_table",
+            provider_backend="opencode-go",
+            api_backend="opencode_go_chat",
+            pricing_model=opencode_go_selector(model_id),
+        )
 
 
-    def _call_api(self, *, model: str, user_msg: str, timeout_s: int) -> tuple[str, int, int, float, str]:
+    def _call_api(self, *, model: str, user_msg: str, timeout_s: int) -> ApiCallResult:
         model_id = opencode_go_model_id(model)
 
         if is_opencode_go_selector(model):
@@ -129,25 +174,29 @@ class RawApiAdapter:
         file_content = target.read_text(encoding="utf-8")
         user_msg = f"{prompt}\n\n--- FICHERO ACTUAL ---\n{file_content}"
 
-        text, in_tokens, out_tokens, latency, telemetry_note = self._call_api(model=model, user_msg=user_msg, timeout_s=timeout_s)
-        if not text:
+        call = self._call_api(model=model, user_msg=user_msg, timeout_s=timeout_s)
+        if not call.text:
             transcript_path.write_text("", encoding="utf-8")
             raise RuntimeError("infrastructure_failure: empty model response")
 
-        price_in, price_out = PRICES.get(model, (0, 0))
-        cost = in_tokens / 1e6 * price_in + out_tokens / 1e6 * price_out
+        price_in, price_out = PRICES.get(call.pricing_model, (0, 0))
+        cost = call.in_tokens / 1e6 * price_in + call.out_tokens / 1e6 * price_out
 
-        transcript_path.write_text(text, encoding="utf-8")
-        target.write_text(extract_code(text), encoding="utf-8")
+        transcript_path.write_text(call.text, encoding="utf-8")
+        target.write_text(extract_code(call.text), encoding="utf-8")
 
         return AdapterResult(
-            text=text,
-            in_tokens=in_tokens,
-            out_tokens=out_tokens,
+            text=call.text,
+            in_tokens=call.in_tokens,
+            out_tokens=call.out_tokens,
             cost_usd=round(cost, 6),
             model_calls=1,
-            telemetry_note=telemetry_note,
-            latency_s=latency,
+            adapter_model=call.pricing_model,
+            provider_backend=call.provider_backend,
+            api_backend=call.api_backend,
+            pricing_model=call.pricing_model,
+            telemetry_note=call.telemetry_note,
+            latency_s=call.latency_s,
             transcript_path=str(transcript_path),
             capability_mode="single_shot",
             telemetry_trust="exact",

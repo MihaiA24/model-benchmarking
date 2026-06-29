@@ -57,7 +57,7 @@ def task_snapshot_path(cache_dir: Path, task) -> Path:
     return cache_dir / task.name
 
 
-def _populate_workdir(task, workdir: Path) -> None:
+def _populate_workdir(task, workdir: Path, *, apply_task_seed: bool = True) -> None:
     baseline = repo_path(task.baseline)
     if not baseline.exists():
         raise FileNotFoundError(f"Baseline not found for {task.name}: {baseline}")
@@ -65,7 +65,8 @@ def _populate_workdir(task, workdir: Path) -> None:
     shutil.copytree(baseline, workdir, ignore=ignore)
     if task.link_node_modules:
         _link_node_modules(baseline / "node_modules", workdir / "node_modules")
-    apply_seed(task, workdir)
+    if apply_task_seed:
+        apply_seed(task, workdir)
 
 
 def prepare_task_snapshot(task, cache_dir: Path, *, refresh: bool = False) -> Path:
@@ -85,6 +86,12 @@ def make_workdir(task, workdir: Path, *, cache_dir: Path | None = None) -> None:
         return
     snapshot = prepare_task_snapshot(task, cache_dir)
     clone_tree(snapshot, workdir)
+
+
+def make_clean_baseline_workdir(task, workdir: Path) -> None:
+    """Create a workdir from the clean baseline, without task seed patches/files."""
+    remove_tree(workdir)
+    _populate_workdir(task, workdir, apply_task_seed=False)
 
 
 def apply_seed(task, workdir: Path) -> None:

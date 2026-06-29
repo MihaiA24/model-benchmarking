@@ -29,14 +29,22 @@ def _run_command(cmd: list[str], *, cwd: Path, timeout_s: int) -> subprocess.Com
     )
 
 
-def run_checks(workdir: Path, task, *, timeout_s: int) -> tuple[bool, bool]:
+def run_build_check(workdir: Path, task, *, timeout_s: int) -> bool:
     build = _run_command(task.build_cmd, cwd=workdir, timeout_s=timeout_s)
     build_ok = build.returncode == 0
     if not build_ok:
         (workdir / "_build_output.txt").write_text((build.stdout or "") + (build.stderr or ""), encoding="utf-8")
+    return build_ok
+
+
+def run_checks(workdir: Path, task, *, timeout_s: int) -> tuple[bool, bool]:
+    build_ok = run_build_check(workdir, task, timeout_s=timeout_s)
 
     if task.test_ok_equals_build:
         return build_ok, build_ok
+
+    if not build_ok:
+        return build_ok, False
 
     test = _run_command(task.test_cmd, cwd=workdir, timeout_s=timeout_s)
     test_ok = test.returncode == 0

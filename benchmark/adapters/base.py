@@ -16,6 +16,10 @@ class AdapterResult:
     out_tokens: int | str = ""
     cost_usd: float | str = ""
     model_calls: int | str = ""
+    adapter_model: str = ""
+    provider_backend: str = ""
+    api_backend: str = ""
+    pricing_model: str = ""
     telemetry_note: str = ""
     latency_s: float = 0.0
     transcript_path: str = ""
