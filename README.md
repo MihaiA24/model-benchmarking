@@ -28,9 +28,9 @@ Runbook operativo: [`RUNBOOK.md`](RUNBOOK.md).
 
 | Capa | Estado |
 |------|--------|
-| Harness automático raw API | `results/metrics_all.csv` tiene 362 filas de `raw_api` para los presets `original` + `new`; falta la fila legacy `minimax/minimax-m3` / `ng-bug1-missing-input` / run 3 |
+| Harness automático raw API | Consolidado en `results/full_combined_v3`; interpretar calidad desde `metrics_fair.csv` tras auditoría/rescore |
 | Runner central con adapters `raw_api`, `omp`, `opencode`, `hermes` | **Implementado** — usar `run_benchmark.py` |
-| Resultados automáticos consolidados | `results/metrics_all.csv` |
+| Resultados automáticos consolidados | `results/full_combined_v3/metrics_fair.csv` para calidad automática; `metrics_all.csv` queda como merge bruto/auditable |
 | Materiales de revisión humana | `human_review/` — snapshot ciego generado; regenerar si se puntúan nuevos harnesses |
 | Presentación ejecutiva | `presentacion.html` — con datos reales |
 
@@ -134,11 +134,13 @@ git clone <url-del-baseline-feat1> baselines/petclinic-feat1
 
 El runner carga `.env` desde la raíz del repo antes de invocar tests, builds o CLIs.
 
-Para `raw_api`, usa `OPENROUTER_API_KEY` en `.env`:
+Para `raw_api` con modelos OpenRouter, usa `OPENROUTER_API_KEY` en `.env`:
 
 ```dotenv
 OPENROUTER_API_KEY=sk-or-v1-...
 ```
+
+Para `raw_api` con modelos `opencode-go/*`, el runner usa la API HTTP de OpenCode Go y necesita `OPENCODE_API_KEY` / `OPENCODE_GO_API_KEY` o `opencode_key.txt`.
 
 Para OpenCode Go, usa `OPENCODE_API_KEY`; el runner lo copia también a
 `OPENCODE_GO_API_KEY` para Hermes. `BENCHMARK_MODELS` es opcional y se usa
@@ -245,16 +247,22 @@ python run_data.py         # Datos vía raw_api
 
 ### 4.5 Consolidar resultados
 
-Cuando terminen los harnesses, fusiona todos los CSV:
+Cuando terminen los harnesses, fusiona todos los CSV en un directorio limpio:
 
 ```bash
-python merge_metrics.py
+python merge_metrics.py \
+  --results-dir results/full_raw_api results/full_omp results/full_opencode results/full_hermes \
+  --out-dir results/full_combined_v3
 ```
 
 Genera:
-- `results/metrics_all.csv` — todos los runs con nombre real del modelo
-- `results/metrics_anon.csv` — igual con aliases Modelo A/B/C
-- `results/model_mapping.csv` — mapping alias→modelo real (no revelar hasta el final)
+- `results/full_combined_v3/metrics_all.csv` — todos los runs con nombre real del modelo, más `adapter_model`, `provider_backend`, `api_backend` y `pricing_model`
+- `results/full_combined_v3/metrics_fair.csv` — tabla automática justa tras auditoría/rescore; úsala para % tests verdes
+- `results/full_combined_v3/fair_comparison_summary.md` — resumen automático legible generado desde `metrics_fair.csv`, con intervalos Wilson 95%, avisos de bajo denominador y gaps de telemetría/coste
+- `results/full_combined_v3/fair_failure_evidence.md` — índice de evidencia para los fallos puntuables que sí deben revisar humanos
+- `results/full_combined_v3/infra_remediation_report.md` — qué arreglar antes de una futura rerun para las filas excluidas por infraestructura
+- `results/full_combined_v3/metrics_anon.csv` — igual con aliases Modelo A/B/C
+- `results/full_combined_v3/model_mapping.csv` — mapping alias→modelo real (no revelar hasta el final)
 
 ### 4.6 Duración estimada por stack
 
@@ -286,11 +294,14 @@ y cómo hacer la reconciliación entre revisores.
 human_review/plantilla_puntuacion.csv
 ```
 
-Se genera con `python gen_plantilla.py` desde `results/metrics_all.csv`. Contiene una fila representativa por `(modelo, harness, tarea)` para las métricas consolidadas en ese momento, con columnas como:
+Se genera con `python gen_plantilla.py`; por defecto usa `results/full_combined_v3/metrics_fair.csv`, excluye filas `fair_included=False` por infraestructura, y solo cae a `metrics_all.csv` si no existe la tabla justa. Para interpretar resultados automáticos usa primero `results/full_combined_v3/metrics_fair.csv` y `results/full_combined_v3/fair_comparison_summary.md`, no el merge bruto `metrics_all.csv`. Contiene una fila representativa por `(modelo, harness, tarea)` para las métricas consolidadas en ese momento, con columnas como:
 - `modelo` — alias ciego del modelo (sin revelar el nombre real)
 - `harness` — `raw_api`, `omp`, `opencode` o `hermes`
 - `tarea` — ID de la tarea
-- `test_ok_auto` — si el test automático pasó
+- `tipo` — Bug-fix / Feature / etc.
+- `build_ok_auto` / `test_ok_auto` — resultado automático justo del run representativo
+- `fair_status` / `fair_included` / `fair_notes` — estado de auditoría/rescore visible para el revisor
+- `automatic_source` — CSV que alimentó la plantilla; debe apuntar a `metrics_fair.csv` para la tanda actual
 - `archivo_respuesta` — ruta al transcript ciego que debes leer
 - `eje1_correctitud` ... `eje5_esfuerzo` — columnas vacías para que el revisor puntúe (1–5)
 - `comentarios` — notas libres
@@ -351,10 +362,10 @@ validación humana, etc.). Claude Code lo lee automáticamente al iniciar la ses
 
 ```bash
 # Ver métricas actuales
-python -c "import csv; rows=list(csv.DictReader(open('results/metrics_all.csv'))); print(f'{len(rows)} runs. Modelos: {set(r[\"model\"] for r in rows)}')"
+python -c "import csv; rows=list(csv.DictReader(open('results/full_combined_v3/metrics_fair.csv'))); print(f'{len(rows)} runs. Modelos: {set(r[\"model\"] for r in rows)}')"
 
 # Ver últimas 5 filas del CSV
-python -c "import csv; rows=list(csv.DictReader(open('results/metrics_all.csv'))); [print(r) for r in rows[-5:]]"
+python -c "import csv; rows=list(csv.DictReader(open('results/full_combined_v3/metrics_fair.csv'))); [print(r) for r in rows[-5:]]"
 ```
 
 ---
@@ -409,7 +420,9 @@ model-benchmarking/
     ├── metrics_angular.csv         ← Métricas Angular
     ├── metrics_react.csv           ← Métricas React
     ├── metrics_data.csv            ← Métricas Datos
-    ├── metrics_all.csv             ← Consolidado de todos los stacks/harnesses
+    ├── metrics_all.csv             ← Consolidado bruto/auditable de todos los stacks/harnesses
+    ├── metrics_fair.csv            ← Tabla justa para % tests verdes tras audit/rescore
+    ├── fair_comparison_summary.md  ← Resumen automático desde metrics_fair.csv
     ├── metrics_anon.csv            ← Igual con aliases Modelo A/B/C
     ├── metrics.csv                 ← CSV del piloto original (referencia)
     ├── model_mapping.csv           ← Mapping alias → modelo real (NO ABRIR hasta el final)
@@ -428,38 +441,29 @@ model-benchmarking/
 
 ## 8. Modelos evaluados
 
-### Modelos raw API en `results/metrics_all.csv`
+### Modelos raw API en `results/full_combined_v3/metrics_fair.csv`
 
-El CSV consolidado actual contiene los presets `original` + `new` (11 modelos). La comparativa de agente `opencode-go` aún no está consolidada en este CSV.
+El directorio consolidado actual contiene la comparativa `opencode-go` para `raw_api`, `omp`, `opencode` y `hermes` sobre los tres modelos de esta tanda. Usa `metrics_fair.csv` para calidad automática y `metrics_all.csv` solo para auditoría bruta.
 
-#### Preset `original`
+| Modelo canónico | Adapter actual | Precio usado en `metrics_fair.csv` | Estado |
+|-----------------|----------------|------------------------------------|--------|
+| `minimax/minimax-m3` | `opencode-go/minimax-m3` | $0.30 / $1.20 | Presente |
+| `deepseek/deepseek-v4-flash` | `opencode-go/deepseek-v4-flash` | $0.14 / $0.28 | Presente |
+| `z-ai/glm-5.2` | `opencode-go/glm-5.2` | $1.40 / $4.40 | Presente |
 
-| Slug OpenRouter | Precio in/out (1M tok) | Alias en métricas |
-|-----------------|----------------------|-------------------|
-| `minimax/minimax-m3` | $0.30 / $1.20 | minimax-m3 |
-| `deepseek/deepseek-v4-flash` | $0.09 / $0.18 | deepseek-v4-flash |
-| `z-ai/glm-4.7` | $0.40 / $1.75 | glm-4.7 |
+Los presets históricos `original` y `new` siguen definidos en `benchmark/models.py` para futuras tandas raw API/OpenRouter. El corte justo actual (`full_combined_v3`) compara solo estos tres modelos canónicos en cuatro harnesses.
 
-#### Preset `new`
-
-| Slug OpenRouter | Precio in/out (1M tok) | Estado en `results/metrics_all.csv` |
-|-----------------|----------------------|-------------------------------------|
-| `qwen/qwen3.7-plus` | $0.32 / $1.28 | Presente |
-| `google/gemini-3.1-flash-lite` | $0.25 / $1.50 | Presente |
-| `qwen/qwen3-coder-next` | $0.11 / $0.80 | Presente |
-| `tencent/hy3-preview` | $0.066 / $0.26 | Presente |
-| `z-ai/glm-5.2` | $1.20 / $4.10 | Presente |
-
-> **Nota técnica:** `tencent/hy3-preview` y `z-ai/glm-5.2` necesitan `max_tokens >= 200`
-> para responder. Esto ya está configurado en los harnesses.
-
-Para añadir un modelo raw API nuevo en el futuro, actualiza `benchmark/models.py` (`NEW_MODELS`, `MODEL_PRESETS` y `PRICES`).
+Para añadir un modelo nuevo en el futuro, actualiza `benchmark/models.py` (`NEW_MODELS`, `OPENCODE_GO_MODELS`, `MODEL_PRESETS` y `PRICES`).
 
 ---
 
 ## 9. Resultados automáticos actuales
 
-`results/metrics_all.csv` contiene 362 filas `raw_api` de 363 esperadas para 11 modelos × 11 tareas × 3 runs. Falta `minimax/minimax-m3` / `ng-bug1-missing-input` / run 3.
+Para la comparación automática actual usa `results/full_combined_v3/fair_comparison_summary.md`. Ese resumen parte de `metrics_fair.csv`: 396 filas brutas, 275 filas puntuables tras excluir 121 fallos de infraestructura, y 250/275 tests verdes después del rescore local desde transcripts guardados. El resumen incluye intervalos Wilson 95% y avisos `low_n`, así que el ranking automático es direccional hasta que la revisión humana confirme la ordenación.
+
+Para auditar fallos concretos usa `results/full_combined_v3/fair_failure_evidence.md`. Para preparar una futura rerun usa `results/full_combined_v3/infra_remediation_report.md`. Para coste/calidad, consulta primero `results/full_combined_v3/fair_comparison_telemetry_gaps.csv`: las filas Hermes tienen calidad automática pero no coste/tokens exactos.
+
+`results/full_combined_v3/metrics_all.csv` se conserva como artefacto bruto de merge para auditoría, no como tabla de calidad automática.
 
 ### Resumen ejecutivo legacy
 

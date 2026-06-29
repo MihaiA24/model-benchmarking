@@ -27,7 +27,7 @@ Never commit keys. `.env`, `openrouter_key.txt`, `opencode_key.txt` are gitignor
 
 | Harness | Env var | Key file |
 |---|---|---|
-| `raw_api` | `OPENROUTER_API_KEY` | `openrouter_key.txt` |
+| `raw_api` | `OPENROUTER_API_KEY`; `OPENCODE_API_KEY` / `OPENCODE_GO_API_KEY` for `opencode-go/*` models | `openrouter_key.txt`; `opencode_key.txt` for `opencode-go/*` |
 | `omp` / `opencode` | `OPENCODE_API_KEY` | `opencode_key.txt` |
 | `hermes` | `OPENCODE_GO_API_KEY` | `opencode_key.txt` (maps to both) |
 
@@ -39,7 +39,7 @@ printf '%s' '...' > opencode_key.txt
 
 ## 3. Preflight
 
-Always run before a batch. Checks baselines, keys, CLI binaries, model/harness compatibility, seeded bugs (Spring Boot), and CSV schema:
+`run_benchmark.py` runs preflight automatically before invoking any harness. Use `--preflight` to run the same checks and exit before spending model calls. It checks baselines, clean-baseline build prerequisites, keys, CLI binaries, model/harness compatibility, seeded bugs (Spring Boot), and CSV schema:
 
 ```bash
 python run_benchmark.py --stack all --harness agent --models opencode-go --runs 1 --preflight
@@ -64,6 +64,9 @@ python run_benchmark.py --stack data --harness raw_api --models new --runs 3
 
 # All stacks, all 11 models
 python run_benchmark.py --stack all --harness raw_api --models all --runs 3
+
+# Raw API via OpenCode Go HTTP API when using opencode-go models
+python run_benchmark.py --stack data --harness raw_api --models opencode-go/deepseek-v4-flash --runs 3
 ```
 
 ### 4.2 OMP — agent-iterated
@@ -199,6 +202,10 @@ Per-stack CSVs: `results/metrics_{springboot,angular,react,data}.csv`
 | Column | Description |
 |---|---|
 | `harness` | `raw_api`, `omp`, `opencode`, `hermes` |
+| `model` | Canonical model used for comparison/anonymization. |
+| `adapter_model` | Harness/API selector actually passed after model mapping/fallback. |
+| `provider_backend` / `api_backend` | Provider family and invocation backend that actually served the run. |
+| `pricing_model` | Price table key used for `cost_usd`; may differ from `model` when fallback is used. |
 | `capability_mode` | `single_shot` (raw API) or `agent_iterated` (agents). Comparable only within mode (ADR-0002). |
 | `telemetry_trust` | `exact` (raw API), `parsed` (OMP/OpenCode JSON), `blank` (Hermes). Cost comparable only within trust+mode cohort. |
 | `tool_set` | Agent tools: `read,bash,edit,write,grep,find,lsp` (OMP), `terminal,file` (Hermes), empty (raw API). |
@@ -210,10 +217,47 @@ Per-stack CSVs: `results/metrics_{springboot,angular,react,data}.csv`
 ## 8. Consolidate and review
 
 ```bash
-python merge_metrics.py && python gen_plantilla.py && python gen_form_data.py
+# Merge one or more fanout result dirs into a clean review dir.
+python merge_metrics.py \
+  --results-dir results/full_raw_api results/full_omp results/full_opencode results/full_hermes \
+  --out-dir results/full_combined_v3
+
+# Add --copy-artifacts when the combined dir must contain per-run workdirs too.
+# Generate human-review artifacts only after audit/rescore/fair comparison below.
 ```
 
-Outputs: `metrics_all.csv`, `metrics_anon.csv`, `model_mapping.csv`, `human_review/plantilla_puntuacion.csv`, `human_review/form_data.json`
+Outputs after merge: `metrics_all.csv`, `metrics_anon.csv`, `model_mapping.csv`.
+
+Outputs after audit/rescore/fair comparison: `evaluation_audit.csv`, `posthoc_rescore.csv`, `metrics_fair.csv`, `metrics_fair_summary.md`, `fair_comparison_summary.md`, `fair_comparison_by_harness_model.csv`, `fair_comparison_by_task.csv`, `fair_comparison_status_counts.csv`, `fair_comparison_telemetry_gaps.csv`, `fair_failure_evidence.md`, and `infra_remediation_report.md`.
+
+When a saved run looks suspiciously low, audit and rescore from saved artifacts before interpreting model quality:
+
+```bash
+python audit_results.py --results-dir results/full_combined_v3
+python rescore_results.py --results-dir results/full_combined_v3
+```
+
+These commands do not invoke models. `audit_results.py` classifies infrastructure and extraction failures; `rescore_results.py` locally rebuilds only `posthoc_rescore_candidate` rows from saved `_raw_response.txt` transcripts and writes `posthoc_rescore.csv`, `metrics_fair.csv`, and `metrics_fair_summary.md`.
+
+Regenerate the fair automatic comparison from that table:
+
+```bash
+python generate_fair_comparison.py --results-dir results/full_combined_v3
+jupyter nbconvert --to notebook --execute --inplace benchmark_comparison.ipynb
+```
+
+Use `metrics_fair.csv` / `fair_comparison_summary.md` for automatic % tests verdes. Keep `metrics_all.csv` as the raw merged audit artifact, not as the final quality table. Treat the Wilson intervals and `low_n` warnings in the fair summary as ranking uncertainty, not model failures.
+
+Regenerate human-review artifacts from the fair table:
+
+```bash
+python gen_plantilla.py --results-dir results/full_combined_v3
+python gen_form_data.py
+```
+
+`gen_plantilla.py` defaults to `metrics_fair.csv` when present, excludes `fair_included=False` rows unless `--include-excluded` is passed, and writes `fair_status`, `fair_included`, `fair_notes`, and `automatic_source` into `human_review/plantilla_puntuacion.csv`.
+
+Use `fair_failure_evidence.md` to inspect scored failures. Use `infra_remediation_report.md` to fix baseline/setup issues before a future rerun. Use `fair_comparison_telemetry_gaps.csv` to exclude rows with missing exact token/cost telemetry from quality/cost calculations; current Hermes rows have pass-rate evidence but no exact cost/token telemetry.
 
 Do not reveal `model_mapping.csv` until human review is complete.
 
@@ -223,20 +267,24 @@ Do not reveal `model_mapping.csv` until human review is complete.
 |---|---|
 | `opencode` can't see Go models | `/connect` → OpenCode Go → paste key, or set `OPENCODE_API_KEY` |
 | OpenCode Go usage limit | Wait for reset, enable balance fallback, or switch model |
-| `raw_api` missing key | `OPENROUTER_API_KEY` or `openrouter_key.txt` |
+| `raw_api` missing key | OpenRouter models need `OPENROUTER_API_KEY` / `openrouter_key.txt`; `opencode-go/*` models need `OPENCODE_API_KEY` / `OPENCODE_GO_API_KEY` / `opencode_key.txt` |
 | React tests hang | Runner sets `CI=true`; don't remove |
 | Missing `node_modules` | `npm ci` in the baseline repo |
+| Missing Angular theme asset | Re-run the Angular RealWorld setup/submodule step; preflight should fail before model invocation if `realworld/assets/theme/styles.css` is absent. |
+| Clean baseline build failure | Fix the baseline first. These are infrastructure failures, not model-quality failures. |
+| Suspicious raw API snippet written as target file | Run `python audit_results.py --results-dir <dir>`; hardened extraction ignores reasoning/example snippets and records format errors separately. |
 | CLI adapter fails | Inspect `_raw_response.txt` + `_error.txt`; rerun with `--no-resume` |
-| Telemetry columns blank | Check `telemetry_trust`. `blank` = expected for Hermes. Others: inspect CLI output. |
+| Telemetry columns blank | Check `fair_comparison_telemetry_gaps.csv`. `blank` = expected for current Hermes oneshot CLI and means pass-rate rows are usable but quality/cost ranking must exclude Hermes until exact usage exists. Others: inspect CLI output. |
 | Legacy CSV schema | `python run_benchmark.py --stack all --migrate-csv` |
 
 ## 10. Stop criteria
 
 1. Every planned `(harness, task, model, run)` has one CSV row.
-2. No `build_ok=ERROR` or `test_ok=ERROR` unless documented as infrastructure failure.
-3. `metrics_all.csv` regenerated.
-4. Human-review artifacts regenerated if reviewers will score new runs.
+2. Preflight passes before any model invocation.
+3. No `build_ok=ERROR` or `test_ok=ERROR` unless documented as infrastructure failure.
+4. `metrics_all.csv` regenerated and, when audit/rescore was needed, `metrics_fair.csv`, `fair_comparison_summary.md`, `fair_failure_evidence.md`, `infra_remediation_report.md`, and `fair_comparison_telemetry_gaps.csv` regenerated.
+5. Human-review artifacts regenerated from `metrics_fair.csv` if reviewers will score new runs; `plantilla_puntuacion.csv` should have `automatic_source=.../metrics_fair.csv` and no `fair_included=False` rows unless deliberately included.
 
 ## 11. Backlog
 
-`docs/backlog.md` — open items: (1) Hermes per-run telemetry from machine-readable source; (2) per-harness concurrency queues (ADR-0001).
+`docs/backlog.md` — open items include Hermes per-run telemetry from machine-readable source, per-harness concurrency queues (ADR-0001), and result-audit follow-ups from saved benchmark artifacts.

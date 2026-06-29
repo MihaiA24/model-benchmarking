@@ -13,5 +13,5 @@ The benchmark runner will keep `raw_api` as a control harness and add OMP, OpenC
 ## Consequences
 
 - Default caps are conservative: `raw_api=2`, `omp=1`, `opencode=1`, `hermes=1`.
-- `--models opencode-go` means OpenCode Go provider selectors for agent harnesses only; raw API remains an explicit OpenRouter control path.
+- `--models opencode-go` means OpenCode Go provider selectors. Agent harnesses use their CLIs; `raw_api` uses the OpenCode Go HTTP API for those selectors instead of OpenRouter.
 - Cost/call telemetry uses machine-readable usage when available and notes unavailable or price-table-derived values in `telemetry_note`.

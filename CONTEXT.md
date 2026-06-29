@@ -20,6 +20,14 @@ _Avoid_: adapter model, provider slug
 The harness-specific model string passed to a CLI or API when it differs from the canonical model.
 _Avoid_: canonical model, alias
 
+**Provider Backend**:
+The provider family that actually served a benchmark run, such as OpenRouter or OpenCode Go. This can differ from the canonical model provider when raw API uses a fallback backend.
+_Avoid_: harness, canonical model
+
+**Pricing Model**:
+The exact model identifier whose price table entry was used to calculate `cost_usd`.
+_Avoid_: canonical model when a fallback or adapter selector was charged
+
 **Telemetry Note**:
 The CSV explanation for how a benchmark run's calls, tokens, or cost were measured or why they are unavailable.
 _Avoid_: comment, warning, debug note
