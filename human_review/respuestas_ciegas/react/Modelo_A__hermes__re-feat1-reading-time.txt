@@ -1,0 +1,31 @@
+COMMAND:
+hermes -z <prompt> --provider opencode-go --model deepseek-v4-flash --toolsets terminal,file --yolo --accept-hooks --ignore-rules --ignore-user-config
+
+EXIT: 0
+
+STDOUT:
+All done. **Status: complete.**
+
+- **File modified:** `src/utils/readingTime.js`
+- **Implementation:** Handles falsy/null input (returns 1), splits on whitespace via `trim().split(/\s+/)`, computes `Math.max(1, Math.ceil(wordCount / 200))`.
+- **Build:** Compiles successfully.
+- **Tests:** 4/4 passing (empty/short, 200 words, 400 words, 600 words).
+
+
+STDERR:
+
+
+=== CHANGED FILES ===
+
+--- src/utils/readingTime.js ---
+/**
+ * Calcula el tiempo de lectura estimado en minutos.
+ * @param {string} body - Texto del artículo
+ * @returns {number} Minutos de lectura (mínimo 1)
+ */
+export default function getReadingTime(body) {
+  if (!body) return 1;
+  const words = body.trim().split(/\s+/);
+  const wordCount = words.length;
+  return Math.max(1, Math.ceil(wordCount / 200));
+}

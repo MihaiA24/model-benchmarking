@@ -1,0 +1,371 @@
+<think>
+The user wants me to add a FILTER_BY_AUTHOR case to the articleList reducer. The action shape is { type: 'FILTER_BY_AUTHOR', author: string }.
+
+The reducer must:
+- Filter state.articles to only those where article.author.username === action.author
+- Set state.filteredByAuthor = action.author
+- Keep all other state fields unchanged
+
+I need to respect the existing Redux reducer style. Looking at the file, the style uses:
+- Switch statement
+- Spread operator for state
+- Returns new state objects
+
+I should also add the import for FILTER_BY_AUTHOR from the actionTypes constants file. Let me check - the user said "Respect the existing Redux reducer style" and "Return ONLY the complete corrected file content in a single code block."
+
+I need to decide whether to add the import. Looking at the file, all other action types are imported at the top. Since the user wants the "complete corrected file", I should include the import for FILTER_BY_AUTHOR. But the user didn't mention the import explicitly. Let me re-read...
+
+The user said "Feature request: add a FILTER_BY_AUTHOR case to the articleList reducer." and "Respect the existing Redux reducer style."
+
+The existing style imports all action types from '../constants/actionTypes'. So the complete corrected file would include the import for FILTER_BY_AUTHOR. However, the user only specified the action shape and what the case should do. 
+
+Looking carefully - the user said "Return ONLY the complete corrected file content". This suggests the whole file. But they also didn't mention adding an import. However, to make it work and be consistent with the style, I should add the import. But wait - the user said the new action has shape `{ type: 'FILTER_BY_AUTHOR', author: string }`. They're defining the action type as a string literal 'FILTER_BY_AUTHOR', not as an imported constant.
+
+Looking at the test case: `reducer(state, { type: 'FILTER_BY_AUTHOR', author: 'alice' })` - it uses the string literal directly.
+
+So I have two choices:
+1. Use the string literal 'FILTER_BY_AUTHOR' directly in the case (consistent with the test and the user's description of the action shape)
+2. Import a constant and use it
+
+The user said "Respect the existing Redux reducer style" - the existing style uses imported constants. But they also said the action has shape `{ type: 'FILTER_BY_AUTHOR', author: string }` with the string literal.
+
+Given that the test uses the string literal and the user described the action type as a string, I think using the string literal is acceptable and matches what they asked for. But to be safe and match the style, I should probably import it.
+
+Actually, re-reading: "The new action has shape: { type: 'FILTER_BY_AUTHOR', author: string }" - this is describing the action object. The test uses `{ type: 'FILTER_BY_AUTHOR', author: 'alice' }`. 
+
+If I import it as a constant from actionTypes, the test would still work as long as the constant value equals 'FILTER_BY_AUTHOR'. But the test is passing the string literal directly. That's fine.
+
+I think the safest approach that matches the existing style is to add the import. But the user said "Return ONLY the complete corrected file content" - implying I should return the whole file. So I should include the import.
+
+Wait, let me look at the import block again. It already has many imports. I'll add FILTER_BY_AUTHOR to the list.
+
+Actually, looking more carefully, the user said the action shape is `{ type: 'FILTER_BY_AUTHOR', author: string }` with 'FILTER_BY_AUTHOR' as a string. This is the action type. In the existing code, action types are imported as constants. The cleanest way to respect the existing style is to import it.
+
+But there's a chance the user wants the simplest solution that passes the test. The test passes a string literal. If I use the string literal in the case statement, the test will pass. If I use a constant, as long as the constant equals 'FILTER_BY_AUTHOR', the test will also pass.
+
+I'll go with importing the constant to match the style, but actually... the user didn't ask me to modify the actionTypes file, just the reducer. And the import might fail if FILTER_BY_AUTHOR doesn't exist in actionTypes. But the user is asking me to add this feature, implying it should be complete.
+
+Let me think about this more carefully. The user said:
+"Feature request: add a FILTER_BY_AUTHOR case to the articleList reducer."
+"Respect the existing Redux reducer style."
+"Return ONLY the complete corrected file content in a single code block."
+
+The existing style imports action types. To respect that style, I should add the import. However, the user only showed me the reducer file. The actionTypes file would need to be updated too for the import to work. But the user didn't ask me to update that file.
+
+Actually, looking at the test: `reducer(state, { type: 'FILTER_BY_AUTHOR', author: 'alice' })` - the test uses the string 'FILTER_BY_AUTHOR' directly, not an imported constant. This suggests the user is fine with using the string literal in the switch case, or they're testing that the reducer responds to that specific string value.
+
+To be safe and pragmatic, and since the test uses the string literal, I have two valid options. But the most "Redux style" thing to do is import the action type. However, since I can only see the reducer file and not the actionTypes file, and the test uses a string literal...
+
+I'll go with using the string literal in the case statement to match exactly what the test expects and what the user described, and I'll add the import comment or just use the string. Actually, no - if I use the string literal, I don't need to import anything. This makes the change minimal and self-contained to the reducer file, which is what the user asked for ("add a FILTER_BY_AUTHOR case to the articleList reducer").
+
+But to "Respect the existing Redux reducer style" which uses imports... 
+
+I think the best compromise is to add the import. If FILTER_BY_AUTHOR isn't in actionTypes yet, the user would need to add it, but that's implied by the feature request. However, since I can only return the reducer file, and the import would reference a constant that needs to exist...
+
+Let me look at the test again. It passes `{ type: 'FILTER_BY_AUTHOR', author: 'alice' }`. In Redux, when you do `case 'FILTER_BY_AUTHOR':`, it compares the string 'FILTER_BY_AUTHOR' with action.type. If action.type is the string 'FILTER_BY_AUTHOR', it matches. If action.type is an imported constant that equals 'FILTER_BY_AUTHOR', it also matches.
+
+Given the constraint that I should return the complete corrected file, and the existing style uses imports, I'll add the import. This is the most consistent with the existing style.
+
+Actually, you know what, I'll just use the string literal. The test uses a string literal, and the user described the action type as a string. Using a string literal in the case is perfectly valid Redux. It avoids assuming that FILTER_BY_AUTHOR is exported from actionTypes (which it might not be, and the user didn't ask me to modify actionTypes).
+
+Wait, but "Respect the existing Redux reducer style" - the existing style uses constants, not string literals. Every case uses a constant from the import.
+
+Okay, I'll add the import. It's more consistent. If the user wants the import, great. If not, they can remove it. But adding the constant to actionTypes is outside the scope of "add a FILTER_BY_AUTHOR case to the articleList reducer".
+
+Hmm, but the test is `reducer(state, { type: 'FILTER_BY_AUTHOR', author: 'alice' })` - this works whether I use a string or a constant in the case, as long as the value is 'FILTER_BY_AUTHOR'.
+
+Let me just add the case with the string literal to keep the change minimal and focused on the reducer file. This is the safest interpretation of the request.
+
+Actually, looking at the problem one more time. The user said "Respect the existing Redux reducer style." The existing style:
+1. Imports action types
+2. Uses them in switch cases
+
+So to respect that, I should import FILTER_BY_AUTHOR. But I don't know if it's already in actionTypes. 
+
+You know what, I'll include the import. It's part of the complete corrected file. If FILTER_BY_AUTHOR needs to be added to actionTypes, that's a separate change, but the reducer code is complete and correct.
+
+Let me write the code:
+
+```javascript
+import {
+  ARTICLE_FAVORITED,
+  ARTICLE_UNFAVORITED,
+  SET_PAGE,
+  APPLY_TAG_FILTER,
+  HOME_PAGE_LOADED,
+  HOME_PAGE_UNLOADED,
+  CHANGE_TAB,
+  PROFILE_PAGE_LOADED,
+  PROFILE_PAGE_UNLOADED,
+  PROFILE_FAVORITES_PAGE_LOADED,
+  PROFILE_FAVORITES_PAGE_UNLOADED,
+  FILTER_BY_AUTHOR
+} from '../constants/actionTypes';
+
+export default (state = {}, action) => {
+  switch (action.type) {
+    case ARTICLE_FAVORITED:
+    // ... existing cases
+    case FILTER_BY_AUTHOR:
+      return {
+        ...state,
+        articles: state.articles.filter(article => article.author.username === action.author),
+        filteredByAuthor: action.author
+      };
+    // ... rest of cases
+  }
+};
+```
+
+Wait, but if I add the import and FILTER_BY_AUTHOR doesn't exist in actionTypes, the file won't compile. The test would fail with an import error, not a logic error.
+
+Given that the user wrote a test that uses the string literal `{ type: 'FILTER_BY_AUTHOR', author: 'alice' }`, and the user said "The new action has shape: { type: 'FILTER_BY_AUTHOR', author: string }", I think the user is using the string literal as the action type. This suggests they haven't created a constant for it in actionTypes (or don't want to).
+
+So the safest approach is to use the string literal in the case statement. This:
+1. Passes the test
+2. Doesn't require modifying actionTypes
+3. Is self-contained in the reducer file
+
+But does it respect the existing style? Not perfectly, but it's a pragmatic choice. The string 'FILTER_BY_AUTHOR' is still readable.
+
+Alternatively, I could use both: import the constant, but also handle the case. But that's silly.
+
+Let me go with the string literal. It's simpler and definitely works with the test as written.
+
+Actually, I want to reconsider. The user said "Respect the existing Redux reducer style." This is a strong hint. Let me add the import. Even if FILTER_BY_AUTHOR isn't in actionTypes yet, adding the import is the "right" thing to do for style consistency. The user can add the constant to actionTypes easily.
+
+But the test... if the import fails, the test fails. Hmm.
+
+Okay, decision time. I'll use the string literal. The reason: the test uses the string literal, and the user described the action type as a string. Using a string literal in the case statement is valid Redux. It matches the test exactly. It doesn't require assumptions about actionTypes. And "style" is somewhat secondary to "make the test pass with minimal changes".
+
+Actually, I just realized - in many Redux codebases, especially with Redux Toolkit or when migrating, you might see string literals or constants. Looking at the existing code, it uses constants. To be most helpful, I should probably add the import. But I'm overthinking this.
+
+Let me add the import. It's more consistent. The user is asking for a "feature" to be added, which implies a proper implementation.
+
+Final decision: Add the import. Use the constant. If the constant doesn't exist in actionTypes, the user needs to add it, but that's standard.
+
+Wait, no. I'll look at the test one more time:
+
+```javascript
+const result = reducer(state, { type: 'FILTER_BY_AUTHOR', author: 'alice' });
+```
+
+This passes a string. If I import FILTER_BY_AUTHOR from actionTypes, and it's defined as `export const FILTER_BY_AUTHOR = 'FILTER_BY_AUTHOR';`, then `{ type: FILTER_BY_AUTHOR, author: 'alice' }` would be the same as `{ type: 'FILTER_BY_AUTHOR', author: 'alice' }`. So both work.
+
+But the test uses the string literal. This is fine. Either approach works.
+
+I'll add the import. Final answer.
+
+Let me write the complete file now.
+
+One more thing: where should I put the case? The existing code groups related cases. I should put FILTER_BY_AUTHOR somewhere logical. Looking at the code:
+- ARTICLE_FAVORITED, ARTICLE_UNFAVORITED (article modifications)
+- SET_PAGE (pagination)
+- APPLY_TAG_FILTER (filtering)
+- HOME_PAGE_LOADED (loading)
+- HOME_PAGE_UNLOADED (unloading)
+- CHANGE_TAB (tab change)
+- PROFILE_PAGE_LOADED, PROFILE_FAVORITES_PAGE_LOADED (loading)
+- PROFILE_PAGE_UNLOADED, PROFILE_FAVORITES_PAGE_UNLOADED (unloading)
+
+FILTER_BY_AUTHOR is similar to APPLY_TAG_FILTER (filtering), so I'll put it after APPLY_TAG_FILTER or in a logical place. Actually, looking at the flow, it doesn't matter too much, but I'll put it after APPLY_TAG_FILTER to group filtering actions.
+
+Actually, I'll put it right before APPLY_TAG_FILTER or after HOME_PAGE_UNLOADED. Let me put it after APPLY_TAG_FILTER.
+
+Or, alphabetically, F comes after A, so after APPLY_TAG_FILTER makes sense.
+
+Let me write the code:
+
+```javascript
+import {
+  ARTICLE_FAVORITED,
+  ARTICLE_UNFAVORITED,
+  SET_PAGE,
+  APPLY_TAG_FILTER,
+  HOME_PAGE_LOADED,
+  HOME_PAGE_UNLOADED,
+  CHANGE_TAB,
+  PROFILE_PAGE_LOADED,
+  PROFILE_PAGE_UNLOADED,
+  PROFILE_FAVORITES_PAGE_LOADED,
+  PROFILE_FAVORITES_PAGE_UNLOADED,
+  FILTER_BY_AUTHOR
+} from '../constants/actionTypes';
+
+export default (state = {}, action) => {
+  switch (action.type) {
+    case ARTICLE_FAVORITED:
+    case ARTICLE_UNFAVORITED:
+      return {
+        ...state,
+        articles: state.articles.map(article => {
+          if (article.slug === action.payload.article.slug) {
+            return {
+              ...article,
+              favorited: action.payload.article.favorited,
+              favoritesCount: action.payload.article.favoritesCount
+            };
+          }
+          return article;
+        })
+      };
+    case SET_PAGE:
+      return {
+        ...state,
+        articles: action.payload.articles,
+        articlesCount: action.payload.articlesCount,
+        currentPage: action.page
+      };
+    case APPLY_TAG_FILTER:
+      return {
+        ...state,
+        pager: action.pager,
+        articles: action.payload.articles,
+        articlesCount: action.payload.articlesCount,
+        tab: null,
+        tag: action.tag,
+        currentPage: 0
+      };
+    case FILTER_BY_AUTHOR:
+      return {
+        ...state,
+        articles: state.articles.filter(article => article.author.username === action.author),
+        filteredByAuthor: action.author
+      };
+    case HOME_PAGE_LOADED:
+      return {
+        ...state,
+        pager: action.pager,
+        tags: action.payload[0].tags,
+        articles: action.payload[1].articles,
+        articlesCount: action.payload[1].articlesCount,
+        currentPage: 0,
+        tab: action.tab
+      };
+    case HOME_PAGE_UNLOADED:
+      return {};
+    case CHANGE_TAB:
+      return {
+        ...state,
+        pager: action.pager,
+        articles: action.payload.articles,
+        articlesCount: action.payload.articlesCount,
+        tab: action.tab,
+        currentPage: 0,
+        tag: null
+      };
+    case PROFILE_PAGE_LOADED:
+    case PROFILE_FAVORITES_PAGE_LOADED:
+      return {
+        ...state,
+        pager: action.pager,
+        articles: action.payload[1].articles,
+        articlesCount: action.payload[1].articlesCount,
+        currentPage: 0
+      };
+    case PROFILE_PAGE_UNLOADED:
+    case PROFILE_FAVORITES_PAGE_UNLOADED:
+      return {};
+    default:
+      return state;
+  }
+};
+```
+
+This looks good. It respects the style (using imports and constants, using spread operator, returning new state objects), and it implements the required behavior.
+
+One final check: the test expects:
+- `result.articles` to have length 2 (after filtering by author 'alice')
+- `result.filteredByAuthor` to be 'alice'
+
+My implementation:
+- Filters articles by `article.author.username === action.author` ✓
+- Sets `filteredByAuthor: action.author` ✓
+- Uses spread operator for other state fields ✓
+
+Perfect.
+</think>
+```javascript
+import {
+  ARTICLE_FAVORITED,
+  ARTICLE_UNFAVORITED,
+  SET_PAGE,
+  APPLY_TAG_FILTER,
+  FILTER_BY_AUTHOR,
+  HOME_PAGE_LOADED,
+  HOME_PAGE_UNLOADED,
+  CHANGE_TAB,
+  PROFILE_PAGE_LOADED,
+  PROFILE_PAGE_UNLOADED,
+  PROFILE_FAVORITES_PAGE_LOADED,
+  PROFILE_FAVORITES_PAGE_UNLOADED
+} from '../constants/actionTypes';
+
+export default (state = {}, action) => {
+  switch (action.type) {
+    case ARTICLE_FAVORITED:
+    case ARTICLE_UNFAVORITED:
+      return {
+        ...state,
+        articles: state.articles.map(article => {
+          if (article.slug === action.payload.article.slug) {
+            return {
+              ...article,
+              favorited: action.payload.article.favorited,
+              favoritesCount: action.payload.article.favoritesCount
+            };
+          }
+          return article;
+        })
+      };
+    case SET_PAGE:
+      return {
+        ...state,
+        articles: action.payload.articles,
+        articlesCount: action.payload.articlesCount,
+        currentPage: action.page
+      };
+    case APPLY_TAG_FILTER:
+      return {
+        ...state,
+        pager: action.pager,
+        articles: action.payload.articles,
+        articlesCount: action.payload.articlesCount,
+        tab: null,
+        tag: action.tag,
+        currentPage: 0
+      };
+    case FILTER_BY_AUTHOR:
+      return {
+        ...state,
+        articles: state.articles.filter(article => article.author.username === action.author),
+        filteredByAuthor: action.author
+      };
+    case HOME_PAGE_LOADED:
+      return {
+        ...state,
+        pager: action.pager,
+        tags: action.payload[0].tags,
+        articles: action.payload[1].articles,
+        articlesCount: action.payload[1].articlesCount,
+        currentPage: 0,
+        tab: action.tab
+      };
+    case HOME_PAGE_UNLOADED:
+      return {};
+    case CHANGE_TAB:
+      return {
+        ...state,
+        pager: action.pager,
+        articles: action.payload.articles,
+        articlesCount: action.payload.articlesCount,
+        tab: action.tab,
+        currentPage: 0,
+        tag: null
+      };
+    case PROFILE_PAGE_LOADED:
+    case PROFILE_FAVORITES_PAGE_LOADED:
+      return {
+        ...state,
+        pager: action.pager,
+        articles: action.payload[

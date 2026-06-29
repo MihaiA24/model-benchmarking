@@ -50,7 +50,7 @@ el mapping al final.
 Para cada fila de tu copia:
 1. Abre la ruta en la columna `archivo_respuesta`.
 2. Lee la respuesta cruda o el transcript con los ficheros finales cambiados.
-3. Puntúa los 5 ejes. Si el test automático falló (`test_ok=False`), descuenta en eje 1.
+3. Puntúa los 5 ejes. Si el estado automático justo falló (`test_ok_auto=False` o `fair_status` distinto de `pass` / `posthoc_rescore_pass`), descuenta en eje 1. No uses filas excluidas por infraestructura para juzgar calidad del modelo.
 4. Añade notas libres en la columna `comentarios`.
 
 ### Paso 3 — Reconciliación (dos revisores por tarea)
@@ -95,4 +95,5 @@ de adopción.
 - Las tareas de Angular se verifican **solo con build** (los tests Vitest tienen un problema
   de compatibilidad con zone.js en este entorno). El build en verde es condición necesaria
   pero no suficiente — el eje 1 requiere criterio humano.
-- El fichero `model_mapping.csv` está en `poc-run/results/`. Guárdalo bajo llave hasta el final.
+- La plantilla actual se genera desde `results/full_combined_v3/metrics_fair.csv` y debe traer `automatic_source`, `fair_status` y `fair_included`.
+- El fichero `model_mapping.csv` está en `results/full_combined_v3/`. Guárdalo bajo llave hasta el final.

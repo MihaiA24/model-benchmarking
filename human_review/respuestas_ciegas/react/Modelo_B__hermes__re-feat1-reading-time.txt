@@ -1,0 +1,31 @@
+COMMAND:
+hermes -z <prompt> --provider opencode-go --model minimax-m3 --toolsets terminal,file --yolo --accept-hooks --ignore-rules --ignore-user-config
+
+EXIT: 0
+
+STDOUT:
+Build compiles successfully and all 4 tests pass.
+
+Status summary:
+- Target file: src/utils/readingTime.js
+- Implemented getReadingTime(body): handles null/empty (returns 1), splits on whitespace, divides word count by 200, applies Math.ceil with a minimum of 1.
+- Tests: 4/4 pass (empty/short, 200 words -> 1, 400 words -> 2, 600 words -> 3).
+- Build: `npm run build` compiles successfully.
+
+
+STDERR:
+
+
+=== CHANGED FILES ===
+
+--- src/utils/readingTime.js ---
+/**
+ * Calcula el tiempo de lectura estimado en minutos.
+ * @param {string} body - Texto del artículo
+ * @returns {number} Minutos de lectura (mínimo 1)
+ */
+export default function getReadingTime(body) {
+  if (!body) return 1;
+  const words = body.split(/\s+/).filter(Boolean).length;
+  return Math.max(1, Math.ceil(words / 200));
+}

@@ -1,0 +1,44 @@
+COMMAND:
+hermes -z <prompt> --provider opencode-go --model minimax-m3 --toolsets terminal,file --yolo --accept-hooks --ignore-rules --ignore-user-config
+
+EXIT: 0
+
+STDOUT:
+Status: Fixed.
+
+Bug: line 15 joined Track to InvoiceLine on `t.TrackId = il.InvoiceLineId` — a column from a different table. Since both `Track` and `InvoiceLine` have an `InvoiceLineId` column, this is almost certainly silently coercing the type or matching an entirely unrelated row, producing wrong per-genre counts.
+
+Fix: changed the JOIN condition to `t.TrackId = il.TrackId`, which is the only correct link between Track and InvoiceLine per the schema.
+
+Verification: `py_compile` passes (exit 0). Output columns and format unchanged: still `Genre`, `SalesCount`, top 5, sorted desc.
+
+
+STDERR:
+
+
+=== CHANGED FILES ===
+
+--- bug1_sales_genre.py ---
+"""
+Tarea: devuelve las 5 géneros con más unidades vendidas.
+Columnas esperadas: Genre, SalesCount
+Ordenado descendente por SalesCount.
+"""
+import sqlite3
+import pandas as pd
+
+conn = sqlite3.connect('Chinook.db')
+
+df = pd.read_sql_query("""
+    SELECT g.Name as Genre, SUM(il.Quantity) as SalesCount
+    FROM Genre g
+    JOIN Track t ON g.GenreId = t.GenreId
+    JOIN InvoiceLine il ON t.TrackId = il.TrackId
+    GROUP BY g.Name
+    ORDER BY SalesCount DESC
+    LIMIT 5
+""", conn)
+
+conn.close()
+print(df.to_string(index=False))
+df.to_csv('output_bug1.csv', index=False)

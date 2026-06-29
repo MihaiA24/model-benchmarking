@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
-"""Genera human_review/form_data.json para el Apps Script que crea los Google Forms.
+"""Genera human_review/form_data.json para el Apps Script de Google Forms.
 
-Lee la plantilla (anonimizada) + los ficheros ciegos y produce un JSON con:
-- objetivo + instrucciones + rubrica
-- frameworks -> lista de respuestas {modelo, harness, tarea, tipo, test_ok, codigo}
-
-Ejecutar despues de gen_plantilla.py:
-    python gen_form_data.py
+Lee `human_review/plantilla_puntuacion.csv` generada por `gen_plantilla.py`.
+Si la plantilla viene de `metrics_fair.csv`, propaga `fair_status`,
+`fair_included`, `build_ok_auto`, `test_ok_auto` y `automatic_source` para que
+los revisores vean la misma señal automática que el resumen justo.
 """
-import csv, json, pathlib
+from __future__ import annotations
+
+import csv
+import json
+from pathlib import Path
 from collections import defaultdict
 
-HR = pathlib.Path("human_review")
+REPO_ROOT = Path(__file__).parent.resolve()
+HR = REPO_ROOT / "human_review"
 PLANTILLA = HR / "plantilla_puntuacion.csv"
 OUT = HR / "form_data.json"
 
 OBJETIVO = (
     "Estamos eligiendo qué combinación de modelo y harness de IA adoptará la empresa "
-    "para el desarrollo diario. La capa automática ya midió si el código compila y pasa "
-    "los tests; tú vas a medir lo que los tests NO capturan: calidad, idiomaticidad "
+    "para el desarrollo diario. La capa automática justa ya midió si el código compila "
+    "y pasa los tests tras excluir infraestructura y aplicar rescore local desde artefactos "
+    "guardados; tú vas a medir lo que los tests NO capturan: calidad, idiomaticidad "
     "y seguridad. Tu criterio decide el resultado final."
 )
 
@@ -26,7 +30,7 @@ INSTRUCCIONES = (
     "Cómo puntuar:\n"
     "• Para cada respuesta verás el código o artefacto que generó una combinación modelo+harness.\n"
     "• Puntúa los 5 ejes de 1 (muy malo) a 5 (excelente).\n"
-    "• Si el test automático falló, tenlo en cuenta en el eje 1 (correctitud).\n"
+    "• Usa el estado automático justo (fair_status / test_ok_auto) como contexto del eje 1; no uses métricas brutas excluidas por infraestructura.\n"
     "• No intentes adivinar qué modelo real hay detrás del alias. Sé consistente entre respuestas.\n"
     "• Si algo te chirría, déjalo en el comentario final de cada respuesta."
 )
@@ -56,20 +60,34 @@ TASK_DESC = {
 FRAMEWORK_ORDER = ["Spring Boot", "Angular", "React", "Datos"]
 
 
-def main():
-    rows = list(csv.DictReader(open(PLANTILLA, newline="", encoding="utf-8")))
-    frameworks = defaultdict(list)
+def read_text(path: str) -> str:
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = REPO_ROOT / candidate
+    return candidate.read_text(encoding="utf-8")
+
+
+def main() -> int:
+    rows = list(csv.DictReader(PLANTILLA.open(newline="", encoding="utf-8")))
+    frameworks: dict[str, list[dict[str, str]]] = defaultdict(list)
     for row in rows:
-        code = pathlib.Path(row["archivo_respuesta"]).read_text(encoding="utf-8")
-        frameworks[row["stack"]].append({
-            "modelo": row["modelo"],
-            "harness": row.get("harness", "raw_api"),
-            "tarea": row["tarea"],
-            "tarea_desc": TASK_DESC.get(row["tarea"], ""),
-            "tipo": row["tipo"],
-            "test_ok": row["test_ok_auto"],
-            "codigo": code,
-        })
+        code = read_text(row["archivo_respuesta"])
+        frameworks[row["stack"]].append(
+            {
+                "modelo": row["modelo"],
+                "harness": row.get("harness", "raw_api"),
+                "tarea": row["tarea"],
+                "tarea_desc": TASK_DESC.get(row["tarea"], ""),
+                "tipo": row["tipo"],
+                "build_ok": row.get("build_ok_auto", ""),
+                "test_ok": row.get("test_ok_auto", ""),
+                "fair_status": row.get("fair_status", ""),
+                "fair_included": row.get("fair_included", ""),
+                "automatic_source": row.get("automatic_source", ""),
+                "fair_notes": row.get("fair_notes", ""),
+                "codigo": code,
+            }
+        )
     for framework in frameworks:
         frameworks[framework].sort(key=lambda item: (item["tarea"], item["harness"], item["modelo"]))
 
@@ -81,10 +99,11 @@ def main():
     }
     OUT.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     total = sum(len(items) for items in data["frameworks"].values())
-    print(f"{OUT} generado: {len(data['frameworks'])} frameworks, {total} respuestas")
+    print(f"{OUT.relative_to(REPO_ROOT)} generado: {len(data['frameworks'])} frameworks, {total} respuestas")
     for framework, items in data["frameworks"].items():
         print(f"  {framework}: {len(items)} respuestas")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -1,0 +1,46 @@
+<think>
+The user wants me to fix a bug in a Python/pandas script that queries a SQLite database. The bug is in the JOIN condition between Track and InvoiceLine.
+
+Looking at the schema:
+- Track(TrackId, AlbumId, GenreId, Name, ...)
+- InvoiceLine(InvoiceLineId, InvoiceId, TrackId, UnitPrice, Quantity)
+
+The current JOIN is:
+```sql
+JOIN InvoiceLine il ON t.TrackId = il.InvoiceLineId
+```
+
+This is incorrect because it joins `Track.TrackId` to `InvoiceLine.InvoiceLineId`, but it should join `Track.TrackId` to `InvoiceLine.TrackId`.
+
+The fix is to change `il.InvoiceLineId` to `il.TrackId`:
+```sql
+JOIN InvoiceLine il ON t.TrackId = il.TrackId
+```
+
+I should return the complete corrected Python file in a single code block, without changing the output format or column names.
+</think>
+```python
+"""
+Tarea: devuelve las 5 géneros con más unidades vendidas.
+Columnas esperadas: Genre, SalesCount
+Ordenado descendente por SalesCount.
+"""
+import sqlite3
+import pandas as pd
+
+conn = sqlite3.connect('Chinook.db')
+
+df = pd.read_sql_query("""
+    SELECT g.Name as Genre, SUM(il.Quantity) as SalesCount
+    FROM Genre g
+    JOIN Track t ON g.GenreId = t.GenreId
+    JOIN InvoiceLine il ON t.TrackId = il.TrackId
+    GROUP BY g.Name
+    ORDER BY SalesCount DESC
+    LIMIT 5
+""", conn)
+
+conn.close()
+print(df.to_string(index=False))
+df.to_csv('output_bug1.csv', index=False)
+```

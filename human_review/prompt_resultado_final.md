@@ -45,6 +45,7 @@ Formato: Harness H / Modelo X: eje1=Y, eje2=Y, eje3=Y, eje4=Y, eje5=Y, media_glo
 4. **Coste proyectado a 12 meses** si el equipo hace ~50 tareas/desarrollador/día,
    usando `llamadas medias/tarea` para multiplicar el consumo real del harness:
    - Calcula el coste anual por combinación cuando haya coste y llamadas disponibles.
+   - Si una combinación aparece en `fair_comparison_telemetry_gaps.csv` con coste/tokens ausentes, no inventes coste: márcala como “coste no disponible” y exclúyela del ranking calidad/coste hasta tener telemetría exacta.
    - Calcula el ahorro vs. la combinación más cara.
 
 5. **Recomendación ejecutiva** (máx. 150 palabras): qué modelo(s)/harness(es) adoptar,
@@ -58,7 +59,7 @@ Responde en español, con tablas donde sea útil.
 ## Cómo usar este prompt
 
 1. Abre `results/model_mapping.csv` para saber qué alias corresponde a cada modelo real.
-2. Copia la tabla de datos automáticos de `results/metrics_all.csv` (ya calculada en la presentación).
+2. Copia la tabla de datos automáticos de `results/full_combined_v3/metrics_fair.csv` o el resumen `results/full_combined_v3/fair_comparison_summary.md`. No uses `metrics_all.csv` para calidad: es el merge bruto/auditable. Consulta también `fair_comparison_telemetry_gaps.csv` antes de calcular calidad/coste.
 3. Calcula las medias por eje de `human_review/plantilla_puntuacion_FINAL.csv`.
 4. Pega todo en el prompt y envíalo a un LLM.
 5. La decisión final la tomáis las personas, usando el análisis del LLM como apoyo.

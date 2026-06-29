@@ -1,0 +1,34 @@
+COMMAND:
+hermes -z <prompt> --provider opencode-go --model glm-5.2 --toolsets terminal,file --yolo --accept-hooks --ignore-rules --ignore-user-config
+
+EXIT: 0
+
+STDOUT:
+Build passed.
+
+Implemented `getReadingTime(body)` in `src/utils/readingTime.js`:
+- Returns 1 for null/empty/whitespace-only body
+- Splits on whitespace, counts words, divides by 200 wpm
+- Uses `Math.ceil` with minimum 1 via `Math.max`
+
+`npm run build` compiled successfully.
+
+
+STDERR:
+
+
+=== CHANGED FILES ===
+
+--- src/utils/readingTime.js ---
+/**
+ * Calcula el tiempo de lectura estimado en minutos.
+ * @param {string} body - Texto del artículo
+ * @returns {number} Minutos de lectura (mínimo 1)
+ */
+export default function getReadingTime(body) {
+  if (!body) return 1;
+  const words = body.trim().split(/\s+/).filter(Boolean);
+  const wordCount = words.length;
+  if (wordCount === 0) return 1;
+  return Math.max(1, Math.ceil(wordCount / 200));
+}

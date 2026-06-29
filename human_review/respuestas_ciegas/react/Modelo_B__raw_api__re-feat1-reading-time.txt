@@ -1,0 +1,89 @@
+<think>
+The user wants me to implement a `getReadingTime` function. Let me analyze the requirements:
+
+1. Count words by splitting the body string on whitespace
+2. Divide word count by 200 (average reading speed in wpm)
+3. Use Math.ceil and return minimum 1
+4. Handle empty string or null body (return 1)
+5. The function is exported as default
+6. Return ONLY the complete corrected file content in a single code block
+
+Let me think about the implementation:
+
+- If body is null or empty string, return 1
+- Otherwise, split the body on whitespace, count the words
+- Divide by 200
+- Apply Math.ceil
+- Ensure minimum of 1 (which it would already be for any non-empty body)
+
+For null/empty check: I should handle both cases. Using `!body` would catch both null and empty string.
+
+For splitting on whitespace: `body.split(/\s+/)` would be more robust, but the requirement says "splitting the body string on whitespace" which could mean using `.split(' ')` or `.split(/\s+/)`. I'll use `.split(/\s+/)` to handle multiple whitespaces properly. Actually, let me reconsider - the requirement says "splitting the body string on whitespace" - a simple interpretation is using the whitespace separator. Let me use `.split(/\s+/)` which is the most robust.
+
+Wait, if I split an empty string, I'd get `['']` which has length 1. But I'm already handling empty string before that.
+
+Let me write:
+
+```javascript
+export default function getReadingTime(body) {
+  if (!body) return 1;
+  const wordCount = body.split(/\s+/).filter(Boolean).length;
+  return Math.max(1, Math.ceil(wordCount / 200));
+}
+```
+
+Actually, let me think more carefully. If body is "hello world", split on whitespace gives `["hello", "world"]`, length 2. That's correct.
+
+If body is "  hello  world  ", split on `/\s+/` gives `["", "hello", "world", ""]`. The empty strings at the start and end would be counted as words. So I need to filter them out, or use `.trim().split(/\s+/)` which would give `["hello", "world"]`.
+
+Let me use `.trim().split(/\s+/)` to be safe:
+
+```javascript
+export default function getReadingTime(body) {
+  if (!body) return 1;
+  const wordCount = body.trim().split(/\s+/).length;
+  return Math.max(1, Math.ceil(wordCount / 200));
+}
+```
+
+This should work. Let me trace through some examples:
+- null → 1 ✓
+- "" → 1 ✓ (caught by !body)
+- "hello" → trim→"hello", split→["hello"], length 1, ceil(1/200) = 1, max(1,1) = 1 ✓
+- "hello world" (2 words) → ceil(2/200) = 1, max(1,1) = 1 ✓
+- 400 words → ceil(400/200) = 2 ✓
+- 201 words → ceil(201/200) = 2 ✓
+
+Looks good. The JSDoc comment is already there, I should keep it.
+
+Let me also consider: should I preserve the JSDoc? Yes, it's already in the original file.
+
+Final implementation:
+
+```javascript
+/**
+ * Calcula el tiempo de lectura estimado en minutos.
+ * @param {string} body - Texto del artículo
+ * @returns {number} Minutos de lectura (mínimo 1)
+ */
+export default function getReadingTime(body) {
+  if (!body) return 1;
+  const wordCount = body.trim().split(/\s+/).length;
+  return Math.max(1, Math.ceil(wordCount / 200));
+}
+```
+
+This should satisfy all requirements. Let me return this in a code block.
+</think>
+```javascript
+/**
+ * Calcula el tiempo de lectura estimado en minutos.
+ * @param {string} body - Texto del artículo
+ * @returns {number} Minutos de lectura (mínimo 1)
+ */
+export default function getReadingTime(body) {
+  if (!body) return 1;
+  const wordCount = body.trim().split(/\s+/).length;
+  return Math.max(1, Math.ceil(wordCount / 200));
+}
+```

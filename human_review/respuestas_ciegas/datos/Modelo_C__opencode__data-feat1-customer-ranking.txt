@@ -1,0 +1,120 @@
+COMMAND:
+opencode run --model opencode-go/glm-5.2 --dir /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__data-feat1-customer-ranking__z-ai_glm-5.2__r1 --format json --pure --dangerously-skip-permissions -- <prompt>
+
+EXIT: 0
+
+STDOUT:
+{"type":"step_start","timestamp":1782676294070,"sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","part":{"id":"prt_f0fc989b2001hO0Lt4KXXmUwDL","messageID":"msg_f0fc9800d001LcXRW2YjqTzUt8","sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","type":"step-start"}}
+{"type":"tool_use","timestamp":1782676294671,"sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","part":{"type":"tool","tool":"read","callID":"call_900c","state":{"status":"completed","input":{"filePath":"/Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__data-feat1-customer-ranking__z-ai_glm-5.2__r1/feat1_customer_ranking.py"},"output":"<path>/Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__data-feat1-customer-ranking__z-ai_glm-5.2__r1/feat1_customer_ranking.py</path>\n<type>file</type>\n<content>\n1: \"\"\"\n2: Tarea: rankear clientes por total comprado dentro de su país usando window functions.\n3: Columnas requeridas: Country, CustomerId, FirstName, LastName, TotalPurchases, Rank\n4: - TotalPurchases = suma de Invoice.Total por cliente, redondeada a 2 decimales\n5: - Rank: RANK() dentro del país ordenado por TotalPurchases DESC\n6: - Orden final: Country ASC, Rank ASC\n7: \"\"\"\n8: import sqlite3\n9: import pandas as pd\n10: \n11: conn = sqlite3.connect('Chinook.db')\n12: \n13: # TODO: implementa la query SQL con window function RANK()\n14: df = pd.read_sql_query(\"\"\"\n15:     SELECT '' as Country, 0 as CustomerId, '' as FirstName, '' as LastName,\n16:            0.0 as TotalPurchases, 0 as Rank\n17:     WHERE 1=0\n18: \"\"\", conn)\n19: \n20: conn.close()\n21: print(df.to_string(index=False))\n22: df.to_csv('output_feat1.csv', index=False)\n\n(End of file - total 22 lines)\n</content>","metadata":{"preview":"\"\"\"\nTarea: rankear clientes por total comprado dentro de su país usando window functions.\nColumnas requeridas: Country, CustomerId, FirstName, LastName, TotalPurchases, Rank\n- TotalPurchases = suma de Invoice.Total por cliente, redondeada a 2 decimales\n- Rank: RANK() dentro del país ordenado por TotalPurchases DESC\n- Orden final: Country ASC, Rank ASC\n\"\"\"\nimport sqlite3\nimport pandas as pd\n\nconn = sqlite3.connect('Chinook.db')\n\n# TODO: implementa la query SQL con window function RANK()\ndf = pd.read_sql_query(\"\"\"\n    SELECT '' as Country, 0 as CustomerId, '' as FirstName, '' as LastName,\n           0.0 as TotalPurchases, 0 as Rank\n    WHERE 1=0\n\"\"\", conn)\n\nconn.close()","truncated":false,"loaded":[],"display":{"type":"file","path":"/Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__data-feat1-customer-ranking__z-ai_glm-5.2__r1/feat1_customer_ranking.py","text":"\"\"\"\nTarea: rankear clientes por total comprado dentro de su país usando window functions.\nColumnas requeridas: Country, CustomerId, FirstName, LastName, TotalPurchases, Rank\n- TotalPurchases = suma de Invoice.Total por cliente, redondeada a 2 decimales\n- Rank: RANK() dentro del país ordenado por TotalPurchases DESC\n- Orden final: Country ASC, Rank ASC\n\"\"\"\nimport sqlite3\nimport pandas as pd\n\nconn = sqlite3.connect('Chinook.db')\n\n# TODO: implementa la query SQL con window function RANK()\ndf = pd.read_sql_query(\"\"\"\n    SELECT '' as Country, 0 as CustomerId, '' as FirstName, '' as LastName,\n           0.0 as TotalPurchases, 0 as Rank\n    WHERE 1=0\n\"\"\", conn)\n\nconn.close()\nprint(df.to_string(index=False))\ndf.to_csv('output_feat1.csv', index=False)","lineStart":1,"lineEnd":22,"totalLines":22,"truncated":false}},"title":"results/full_opencode/opencode__data-feat1-customer-ranking__z-ai_glm-5.2__r1/feat1_customer_ranking.py","time":{"start":1782676294653,"end":1782676294667}},"id":"prt_f0fc98bed001cIK0ShJmFJOYGE","sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","messageID":"msg_f0fc9800d001LcXRW2YjqTzUt8"}}
+{"type":"step_finish","timestamp":1782676294751,"sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","part":{"id":"prt_f0fc98c5b001PDY3lBxW5hD54N","reason":"tool-calls","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","messageID":"msg_f0fc9800d001LcXRW2YjqTzUt8","sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","type":"step-finish","tokens":{"total":24195,"input":24003,"output":64,"reasoning":0,"cache":{"write":0,"read":128}},"cost":0.03391908}}
+{"type":"step_start","timestamp":1782676296200,"sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","part":{"id":"prt_f0fc99206001D7XNFbcRw7MOQ7","messageID":"msg_f0fc98c96001mCXe7BtoJH76eK","sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","type":"step-start"}}
+{"type":"tool_use","timestamp":1782676300939,"sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","part":{"type":"tool","tool":"edit","callID":"call_9437","state":{"status":"completed","input":{"filePath":"/Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__data-feat1-customer-ranking__z-ai_glm-5.2__r1/feat1_customer_ranking.py","oldString":"df = pd.read_sql_query(\"\"\"\n    SELECT '' as Country, 0 as CustomerId, '' as FirstName, '' as LastName,\n           0.0 as TotalPurchases, 0 as Rank\n    WHERE 1=0\n\"\"\", conn)","newString":"df = pd.read_sql_query(\"\"\"\n    SELECT c.Country,\n           c.CustomerId,\n           c.FirstName,\n           c.LastName,\n           ROUND(SUM(i.Total), 2) AS TotalPurchases,\n           RANK() OVER (PARTITION BY c.Country ORDER BY SUM(i.Total) DESC) AS Rank\n    FROM Customer c\n    JOIN Invoice i ON i.CustomerId = c.CustomerId\n    GROUP BY c.Country, c.CustomerId, c.FirstName, c.LastName\n    ORDER BY c.Country ASC, Rank ASC\n\"\"\", conn)"},"output":"Edit applied successfully.","metadata":{"diagnostics":{},"diff":"Index: /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__data-feat1-customer-ranking__z-ai_glm-5.2__r1/feat1_customer_ranking.py\n===================================================================\n--- /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__data-feat1-customer-ranking__z-ai_glm-5.2__r1/feat1_customer_ranking.py\n+++ /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__data-feat1-customer-ranking__z-ai_glm-5.2__r1/feat1_customer_ranking.py\n@@ -11,11 +11,18 @@\n conn = sqlite3.connect('Chinook.db')\n \n # TODO: implementa la query SQL con window function RANK()\n df = pd.read_sql_query(\"\"\"\n-    SELECT '' as Country, 0 as CustomerId, '' as FirstName, '' as LastName,\n-           0.0 as TotalPurchases, 0 as Rank\n-    WHERE 1=0\n+    SELECT c.Country,\n+           c.CustomerId,\n+           c.FirstName,\n+           c.LastName,\n+           ROUND(SUM(i.Total), 2) AS TotalPurchases,\n+           RANK() OVER (PARTITION BY c.Country ORDER BY SUM(i.Total) DESC) AS Rank\n+    FROM Customer c\n+    JOIN Invoice i ON i.CustomerId = c.CustomerId\n+    GROUP BY c.Country, c.CustomerId, c.FirstName, c.LastName\n+    ORDER BY c.Country ASC, Rank ASC\n \"\"\", conn)\n \n conn.close()\n print(df.to_string(index=False))\n","filediff":{"file":"/Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__data-feat1-customer-ranking__z-ai_glm-5.2__r1/feat1_customer_ranking.py","patch":"Index: /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__data-feat1-customer-ranking__z-ai_glm-5.2__r1/feat1_customer_ranking.py\n===================================================================\n--- /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__data-feat1-customer-ranking__z-ai_glm-5.2__r1/feat1_customer_ranking.py\n+++ /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__data-feat1-customer-ranking__z-ai_glm-5.2__r1/feat1_customer_ranking.py\n@@ -11,11 +11,18 @@\n conn = sqlite3.connect('Chinook.db')\n \n # TODO: implementa la query SQL con window function RANK()\n df = pd.read_sql_query(\"\"\"\n-    SELECT '' as Country, 0 as CustomerId, '' as FirstName, '' as LastName,\n-           0.0 as TotalPurchases, 0 as Rank\n-    WHERE 1=0\n+    SELECT c.Country,\n+           c.CustomerId,\n+           c.FirstName,\n+           c.LastName,\n+           ROUND(SUM(i.Total), 2) AS TotalPurchases,\n+           RANK() OVER (PARTITION BY c.Country ORDER BY SUM(i.Total) DESC) AS Rank\n+    FROM Customer c\n+    JOIN Invoice i ON i.CustomerId = c.CustomerId\n+    GROUP BY c.Country, c.CustomerId, c.FirstName, c.LastName\n+    ORDER BY c.Country ASC, Rank ASC\n \"\"\", conn)\n \n conn.close()\n print(df.to_string(index=False))\n","additions":10,"deletions":3},"truncated":false},"title":"results/full_opencode/opencode__data-feat1-customer-ranking__z-ai_glm-5.2__r1/feat1_customer_ranking.py","time":{"start":1782676300934,"end":1782676300937}},"id":"prt_f0fc9a47e001RckJAV9Xn2nHE7","sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","messageID":"msg_f0fc98c96001mCXe7BtoJH76eK"}}
+{"type":"step_finish","timestamp":1782676301139,"sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","part":{"id":"prt_f0fc9a550001MWAsVRFndwQlFD","reason":"tool-calls","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","messageID":"msg_f0fc98c96001mCXe7BtoJH76eK","sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","type":"step-finish","tokens":{"total":24749,"input":24390,"output":231,"reasoning":0,"cache":{"write":0,"read":128}},"cost":0.03519568}}
+{"type":"step_start","timestamp":1782676303522,"sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","part":{"id":"prt_f0fc9ae920015EASArDdZFNHIf","messageID":"msg_f0fc9a592001pnShPHfOQGQZ5E","sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","type":"step-start"}}
+{"type":"tool_use","timestamp":1782676303588,"sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","part":{"type":"tool","tool":"bash","callID":"call_84c9","state":{"status":"completed","input":{"command":"/Users/mihai/code/nter/model-benchmarking/.venv/bin/python -m py_compile feat1_customer_ranking.py","description":"Compile check"},"output":"(no output)","metadata":{"output":"(no output)","exit":0,"description":"Compile check","truncated":false},"title":"Compile check","time":{"start":1782676303538,"end":1782676303586}},"id":"prt_f0fc9ae96001mPK6codSZAUifs","sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","messageID":"msg_f0fc9a592001pnShPHfOQGQZ5E"}}
+{"type":"step_finish","timestamp":1782676303650,"sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","part":{"id":"prt_f0fc9af1e001AWVvBpm49AGYsY","reason":"tool-calls","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","messageID":"msg_f0fc9a592001pnShPHfOQGQZ5E","sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","type":"step-finish","tokens":{"total":24801,"input":24693,"output":44,"reasoning":0,"cache":{"write":0,"read":64}},"cost":0.03478044}}
+{"type":"step_start","timestamp":1782676304963,"sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","part":{"id":"prt_f0fc9b440001gQt4LfvqQZoTbC","messageID":"msg_f0fc9af67001iLlz0BkHBD0yRG","sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","type":"step-start"}}
+{"type":"tool_use","timestamp":1782676306115,"sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","part":{"type":"tool","tool":"bash","callID":"call_8b01","state":{"status":"completed","input":{"command":"ls *.db 2>/dev/null; /Users/mihai/code/nter/model-benchmarking/.venv/bin/python feat1_customer_ranking.py 2>&1 | head -20","description":"Run script if db present"},"output":"Chinook.db\n       Country  CustomerId FirstName     LastName  TotalPurchases  Rank\n     Argentina          56     Diego    Gutiérrez           37.62     1\n     Australia          55      Mark       Taylor           37.62     1\n       Austria           7    Astrid       Gruber           42.62     1\n       Belgium           8      Daan      Peeters           37.62     1\n        Brazil           1      Luís    Gonçalves           39.62     1\n        Brazil          10   Eduardo      Martins           37.62     2\n        Brazil          11 Alexandre        Rocha           37.62     2\n        Brazil          13  Fernanda        Ramos           37.62     2\n        Brazil          12   Roberto      Almeida           37.62     5\n        Canada           3  François     Tremblay           39.62     1\n        Canada          15  Jennifer     Peterson           38.62     2\n        Canada          14      Mark      Philips           37.62     3\n        Canada          30    Edward      Francis           37.62     3\n        Canada          31    Martha         Silk           37.62     3\n        Canada          32     Aaron     Mitchell           37.62     3\n        Canada          29    Robert        Brown           37.62     7\n        Canada          33     Ellie     Sullivan           37.62     7\n         Chile          57      Luis        Rojas           46.62     1\nCzech Republic           6    Helena         Holý           49.62     1\n","metadata":{"output":"Chinook.db\n       Country  CustomerId FirstName     LastName  TotalPurchases  Rank\n     Argentina          56     Diego    Gutiérrez           37.62     1\n     Australia          55      Mark       Taylor           37.62     1\n       Austria           7    Astrid       Gruber           42.62     1\n       Belgium           8      Daan      Peeters           37.62     1\n        Brazil           1      Luís    Gonçalves           39.62     1\n        Brazil          10   Eduardo      Martins           37.62     2\n        Brazil          11 Alexandre        Rocha           37.62     2\n        Brazil          13  Fernanda        Ramos           37.62     2\n        Brazil          12   Roberto      Almeida           37.62     5\n        Canada           3  François     Tremblay           39.62     1\n        Canada          15  Jennifer     Peterson           38.62     2\n        Canada          14      Mark      Philips           37.62     3\n        Canada          30    Edward      Francis           37.62     3\n        Canada          31    Martha         Silk           37.62     3\n        Canada          32     Aaron     Mitchell           37.62     3\n        Canada          29    Robert        Brown           37.62     7\n        Canada          33     Ellie     Sullivan           37.62     7\n         Chile          57      Luis        Rojas           46.62     1\nCzech Republic           6    Helena         Holý           49.62     1\n","exit":0,"description":"Run script if db present","truncated":false},"title":"Run script if db present","time":{"start":1782676306089,"end":1782676306114}},"id":"prt_f0fc9b712001V1U5ggaiqydb15","sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","messageID":"msg_f0fc9af67001iLlz0BkHBD0yRG"}}
+{"type":"step_finish","timestamp":1782676306170,"sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","part":{"id":"prt_f0fc9b8f8001kKvN7bK3TrtH45","reason":"tool-calls","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","messageID":"msg_f0fc9af67001iLlz0BkHBD0yRG","sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","type":"step-finish","tokens":{"total":24883,"input":104,"output":75,"reasoning":0,"cache":{"write":0,"read":24704}},"cost":0.00689864}}
+{"type":"step_start","timestamp":1782676308903,"sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","part":{"id":"prt_f0fc9c3a6001nu6gEPlouYJF62","messageID":"msg_f0fc9b92d001NFXG8RUZ04IzOu","sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","type":"step-start"}}
+{"type":"text","timestamp":1782676309649,"sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","part":{"id":"prt_f0fc9c3ba001zq4j6rUnUGftUR","messageID":"msg_f0fc9b92d001NFXG8RUZ04IzOu","sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","type":"text","text":"Done. Query implemented with `RANK() OVER (PARTITION BY Country ORDER BY SUM(Total) DESC)`, grouped per customer with `ROUND(SUM, 2)`, ordered by `Country ASC, Rank ASC`. Build passes and output written to `output_feat1.csv`.","time":{"start":1782676308922,"end":1782676309648}}}
+{"type":"step_finish","timestamp":1782676309710,"sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","part":{"id":"prt_f0fc9c6cc001urXVGGbITtu2PL","reason":"stop","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","messageID":"msg_f0fc9b92d001NFXG8RUZ04IzOu","sessionID":"ses_0f0368071ffe5iqi7HAwf2NBl5","type":"step-finish","tokens":{"total":25328,"input":436,"output":60,"reasoning":0,"cache":{"write":0,"read":24832}},"cost":0.00733072}}
+
+
+STDERR:
+
+
+=== CHANGED FILES ===
+
+--- feat1_customer_ranking.py ---
+"""
+Tarea: rankear clientes por total comprado dentro de su país usando window functions.
+Columnas requeridas: Country, CustomerId, FirstName, LastName, TotalPurchases, Rank
+- TotalPurchases = suma de Invoice.Total por cliente, redondeada a 2 decimales
+- Rank: RANK() dentro del país ordenado por TotalPurchases DESC
+- Orden final: Country ASC, Rank ASC
+"""
+import sqlite3
+import pandas as pd
+
+conn = sqlite3.connect('Chinook.db')
+
+# TODO: implementa la query SQL con window function RANK()
+df = pd.read_sql_query("""
+    SELECT c.Country,
+           c.CustomerId,
+           c.FirstName,
+           c.LastName,
+           ROUND(SUM(i.Total), 2) AS TotalPurchases,
+           RANK() OVER (PARTITION BY c.Country ORDER BY SUM(i.Total) DESC) AS Rank
+    FROM Customer c
+    JOIN Invoice i ON i.CustomerId = c.CustomerId
+    GROUP BY c.Country, c.CustomerId, c.FirstName, c.LastName
+    ORDER BY c.Country ASC, Rank ASC
+""", conn)
+
+conn.close()
+print(df.to_string(index=False))
+df.to_csv('output_feat1.csv', index=False)
+
+--- output_feat1.csv ---
+Country,CustomerId,FirstName,LastName,TotalPurchases,Rank
+Argentina,56,Diego,Gutiérrez,37.62,1
+Australia,55,Mark,Taylor,37.62,1
+Austria,7,Astrid,Gruber,42.62,1
+Belgium,8,Daan,Peeters,37.62,1
+Brazil,1,Luís,Gonçalves,39.62,1
+Brazil,10,Eduardo,Martins,37.62,2
+Brazil,11,Alexandre,Rocha,37.62,2
+Brazil,13,Fernanda,Ramos,37.62,2
+Brazil,12,Roberto,Almeida,37.62,5
+Canada,3,François,Tremblay,39.62,1
+Canada,15,Jennifer,Peterson,38.62,2
+Canada,14,Mark,Philips,37.62,3
+Canada,30,Edward,Francis,37.62,3
+Canada,31,Martha,Silk,37.62,3
+Canada,32,Aaron,Mitchell,37.62,3
+Canada,29,Robert,Brown,37.62,7
+Canada,33,Ellie,Sullivan,37.62,7
+Chile,57,Luis,Rojas,46.62,1
+Czech Republic,6,Helena,Holý,49.62,1
+Czech Republic,5,František,Wichterlová,40.62,2
+Denmark,9,Kara,Nielsen,37.62,1
+Finland,44,Terhi,Hämäläinen,41.62,1
+France,43,Isabelle,Mercier,40.62,1
+France,42,Wyatt,Girard,39.62,2
+France,39,Camille,Bernard,38.62,3
+France,40,Dominique,Lefebvre,38.62,3
+France,41,Marc,Dubois,37.62,5
+Germany,37,Fynn,Zimmermann,43.62,1
+Germany,2,Leonie,Köhler,37.62,2
+Germany,36,Hannah,Schneider,37.62,2
+Germany,38,Niklas,Schröder,37.62,2
+Hungary,45,Ladislav,Kovács,45.62,1
+India,58,Manoj,Pareek,38.62,1
+India,59,Puja,Srivastava,36.64,2
+Ireland,46,Hugh,O'Reilly,45.62,1
+Italy,47,Lucas,Mancini,37.62,1
+Netherlands,48,Johannes,Van der Berg,40.62,1
+Norway,4,Bjørn,Hansen,39.62,1
+Poland,49,Stanisław,Wójcik,37.62,1
+Portugal,34,João,Fernandes,39.62,1
+Portugal,35,Madalena,Sampaio,37.62,2
+Spain,50,Enrique,Muñoz,37.62,1
+Sweden,51,Joakim,Johansson,38.62,1
+USA,26,Richard,Cunningham,47.62,1
+USA,28,Julia,Barnett,43.62,2
+USA,24,Frank,Ralston,43.62,3
+USA,25,Victor,Stevens,42.62,4
+USA,17,Jack,Smith,39.62,5
+USA,20,Dan,Miller,39.62,6
+USA,22,Heather,Leacock,39.62,6
+USA,19,Tim,Goyer,38.62,8
+USA,18,Michelle,Brooks,37.62,9
+USA,27,Patrick,Gray,37.62,9
+USA,16,Frank,Harris,37.62,11
+USA,21,Kathy,Chase,37.62,11
+USA,23,John,Gordon,37.62,11
+United Kingdom,52,Emma,Jones,37.62,1
+United Kingdom,53,Phil,Hughes,37.62,1
+United Kingdom,54,Steve,Murray,37.62,3

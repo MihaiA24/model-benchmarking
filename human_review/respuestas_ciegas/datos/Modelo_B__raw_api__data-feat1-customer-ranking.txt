@@ -1,0 +1,97 @@
+<think>
+The user wants me to implement a SQL query using window functions to rank customers by total purchase amount within their country. Let me analyze the requirements:
+
+1. Join Customer and Invoice tables
+2. Calculate TotalPurchases = SUM(Invoice.Total) per customer, rounded to 2 decimals
+3. Use RANK() OVER (PARTITION BY Country ORDER BY TotalPurchases DESC)
+4. Output columns: Country, CustomerId, FirstName, LastName, TotalPurchases, Rank
+5. Order by Country ASC, Rank ASC
+
+The schema is:
+- Customer(CustomerId, FirstName, LastName, Country, ...)
+- Invoice(InvoiceId, CustomerId, InvoiceDate, Total)
+
+I need to write a SQL query that:
+1. Joins Customer and Invoice on CustomerId
+2. Groups by customer info
+3. Calculates SUM(Total) and rounds to 2 decimals
+4. Uses RANK() window function partitioned by Country, ordered by TotalPurchases DESC
+5. Orders final result by Country ASC, Rank ASC
+
+Note: SQLite supports window functions since version 3.25.0 (2018).
+
+Here's my approach using a CTE or subquery:
+
+```sql
+WITH CustomerTotals AS (
+    SELECT 
+        c.Country,
+        c.CustomerId,
+        c.FirstName,
+        c.LastName,
+        ROUND(SUM(i.Total), 2) AS TotalPurchases
+    FROM Customer c
+    JOIN Invoice i ON c.CustomerId = i.CustomerId
+    GROUP BY c.Country, c.CustomerId, c.FirstName, c.LastName
+)
+SELECT 
+    Country,
+    CustomerId,
+    FirstName,
+    LastName,
+    TotalPurchases,
+    RANK() OVER (PARTITION BY Country ORDER BY TotalPurchases DESC) AS Rank
+FROM CustomerTotals
+ORDER BY Country ASC, Rank ASC
+```
+
+This should work. Let me put it into the template.
+
+Let me also double-check the column order in the SELECT. The output columns should be: Country, CustomerId, FirstName, LastName, TotalPurchases, Rank. Yes, that matches.
+
+The order is Country ASC, Rank ASC. Yes, that matches.
+
+Let me return only the complete corrected Python file in a single code block.
+</think>
+```python
+"""
+Tarea: rankear clientes por total comprado dentro de su país usando window functions.
+Columnas requeridas: Country, CustomerId, FirstName, LastName, TotalPurchases, Rank
+- TotalPurchases = suma de Invoice.Total por cliente, redondeada a 2 decimales
+- Rank: RANK() dentro del país ordenado por TotalPurchases DESC
+- Orden final: Country ASC, Rank ASC
+"""
+import sqlite3
+import pandas as pd
+
+conn = sqlite3.connect('Chinook.db')
+
+# Query con window function RANK(): se calcula primero la suma por cliente
+# y luego se aplica RANK() particionado por país, ordenado por TotalPurchases DESC
+df = pd.read_sql_query("""
+    WITH CustomerTotals AS (
+        SELECT
+            c.Country,
+            c.CustomerId,
+            c.FirstName,
+            c.LastName,
+            ROUND(SUM(i.Total), 2) AS TotalPurchases
+        FROM Customer c
+        JOIN Invoice i ON c.CustomerId = i.CustomerId
+        GROUP BY c.Country, c.CustomerId, c.FirstName, c.LastName
+    )
+    SELECT
+        Country,
+        CustomerId,
+        FirstName,
+        LastName,
+        TotalPurchases,
+        RANK() OVER (PARTITION BY Country ORDER BY TotalPurchases DESC) AS Rank
+    FROM CustomerTotals
+    ORDER BY Country ASC, Rank ASC
+""", conn)
+
+conn.close()
+print(df.to_string(index=False))
+df.to_csv('output_feat1.csv', index=False)
+```

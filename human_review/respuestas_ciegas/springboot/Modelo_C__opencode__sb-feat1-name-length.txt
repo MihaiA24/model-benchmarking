@@ -1,0 +1,352 @@
+COMMAND:
+opencode run --model opencode-go/glm-5.2 --dir /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1 --format json --pure --dangerously-skip-permissions -- <prompt>
+
+EXIT: 0
+
+STDOUT:
+{"type":"step_start","timestamp":1782673972812,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"id":"prt_f0fa61e48001ywE9H2fxynpldl","messageID":"msg_f0fa614e1001z4ue0njd7eQiid","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","type":"step-start"}}
+{"type":"tool_use","timestamp":1782673973375,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"type":"tool","tool":"read","callID":"call_5547","state":{"status":"completed","input":{"filePath":"/Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1/src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java"},"output":"<path>/Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1/src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java</path>\n<type>file</type>\n<content>\n1: /*\n2:  * Copyright 2012-2025 the original author or authors.\n3:  *\n4:  * Licensed under the Apache License, Version 2.0 (the \"License\");\n5:  * you may not use this file except in compliance with the License.\n6:  * You may obtain a copy of the License at\n7:  *\n8:  *      https://www.apache.org/licenses/LICENSE-2.0\n9:  *\n10:  * Unless required by applicable law or agreed to in writing, software\n11:  * distributed under the License is distributed on an \"AS IS\" BASIS,\n12:  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n13:  * See the License for the specific language governing permissions and\n14:  * limitations under the License.\n15:  */\n16: package org.springframework.samples.petclinic.owner;\n17: \n18: import org.springframework.util.StringUtils;\n19: import org.springframework.validation.Errors;\n20: import org.springframework.validation.Validator;\n21: \n22: /**\n23:  * <code>Validator</code> for <code>Pet</code> forms.\n24:  * <p>\n25:  * We're not using Bean Validation annotations here because it is easier to define such\n26:  * validation rule in Java.\n27:  * </p>\n28:  *\n29:  * @author Ken Krebs\n30:  * @author Juergen Hoeller\n31:  */\n32: public class PetValidator implements Validator {\n33: \n34: \tprivate static final String REQUIRED = \"required\";\n35: \n36: \t@Override\n37: \tpublic void validate(Object obj, Errors errors) {\n38: \t\tPet pet = (Pet) obj;\n39: \t\tString name = pet.getName();\n40: \t\t// name validation\n41: \t\tif (!StringUtils.hasText(name)) {\n42: \t\t\terrors.rejectValue(\"name\", REQUIRED, REQUIRED);\n43: \t\t}\n44: \n45: \t\t// type validation\n46: \t\tif (pet.isNew() && pet.getType() == null) {\n47: \t\t\terrors.rejectValue(\"type\", REQUIRED, REQUIRED);\n48: \t\t}\n49: \n50: \t\t// birth date validation\n51: \t\tif (pet.getBirthDate() == null) {\n52: \t\t\terrors.rejectValue(\"birthDate\", REQUIRED, REQUIRED);\n53: \t\t}\n54: \t}\n55: \n56: \t/**\n57: \t * This Validator validates *just* Pet instances\n58: \t */\n59: \t@Override\n60: \tpublic boolean supports(Class<?> clazz) {\n61: \t\treturn Pet.class.isAssignableFrom(clazz);\n62: \t}\n63: \n64: }\n\n(End of file - total 64 lines)\n</content>","metadata":{"preview":"/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file except in compliance with the License.\n * You may obtain a copy of the License at\n *\n *      https://www.apache.org/licenses/LICENSE-2.0\n *\n * Unless required by applicable law or agreed to in writing, software\n * distributed under the License is distributed on an \"AS IS\" BASIS,\n * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n * See the License for the specific language governing permissions and\n * limitations under the License.\n */\npackage org.springframework.samples.petclinic.owner;\n\nimport org.springframework.util.StringUtils;\nimport org.springframework.validation.Errors;\nimport org.springframework.validation.Validator;","truncated":false,"loaded":[],"display":{"type":"file","path":"/Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1/src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java","text":"/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file except in compliance with the License.\n * You may obtain a copy of the License at\n *\n *      https://www.apache.org/licenses/LICENSE-2.0\n *\n * Unless required by applicable law or agreed to in writing, software\n * distributed under the License is distributed on an \"AS IS\" BASIS,\n * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n * See the License for the specific language governing permissions and\n * limitations under the License.\n */\npackage org.springframework.samples.petclinic.owner;\n\nimport org.springframework.util.StringUtils;\nimport org.springframework.validation.Errors;\nimport org.springframework.validation.Validator;\n\n/**\n * <code>Validator</code> for <code>Pet</code> forms.\n * <p>\n * We're not using Bean Validation annotations here because it is easier to define such\n * validation rule in Java.\n * </p>\n *\n * @author Ken Krebs\n * @author Juergen Hoeller\n */\npublic class PetValidator implements Validator {\n\n\tprivate static final String REQUIRED = \"required\";\n\n\t@Override\n\tpublic void validate(Object obj, Errors errors) {\n\t\tPet pet = (Pet) obj;\n\t\tString name = pet.getName();\n\t\t// name validation\n\t\tif (!StringUtils.hasText(name)) {\n\t\t\terrors.rejectValue(\"name\", REQUIRED, REQUIRED);\n\t\t}\n\n\t\t// type validation\n\t\tif (pet.isNew() && pet.getType() == null) {\n\t\t\terrors.rejectValue(\"type\", REQUIRED, REQUIRED);\n\t\t}\n\n\t\t// birth date validation\n\t\tif (pet.getBirthDate() == null) {\n\t\t\terrors.rejectValue(\"birthDate\", REQUIRED, REQUIRED);\n\t\t}\n\t}\n\n\t/**\n\t * This Validator validates *just* Pet instances\n\t */\n\t@Override\n\tpublic boolean supports(Class<?> clazz) {\n\t\treturn Pet.class.isAssignableFrom(clazz);\n\t}\n\n}","lineStart":1,"lineEnd":64,"totalLines":64,"truncated":false}},"title":"results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1/src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java","time":{"start":1782673973363,"end":1782673973373}},"id":"prt_f0fa6206e001DGhc6iYWwCpqhh","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","messageID":"msg_f0fa614e1001z4ue0njd7eQiid"}}
+{"type":"step_finish","timestamp":1782673973476,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"id":"prt_f0fa620df001Z0J9b618iAdhEC","reason":"tool-calls","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","messageID":"msg_f0fa614e1001z4ue0njd7eQiid","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","type":"step-finish","tokens":{"total":24169,"input":23966,"output":75,"reasoning":0,"cache":{"write":0,"read":128}},"cost":0.03391568}}
+{"type":"step_start","timestamp":1782673975091,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"id":"prt_f0fa627310011eSQkd3a9wGOaZ","messageID":"msg_f0fa62120001SF4DfnDiByUfoJ","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","type":"step-start"}}
+{"type":"tool_use","timestamp":1782673976515,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"type":"tool","tool":"edit","callID":"call_8d33","state":{"status":"completed","input":{"filePath":"/Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1/src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java","oldString":"// name validation\n\t\tif (!StringUtils.hasText(name)) {\n\t\t\terrors.rejectValue(\"name\", REQUIRED, REQUIRED);\n\t\t}","newString":"// name validation\n\t\tif (!StringUtils.hasText(name)) {\n\t\t\terrors.rejectValue(\"name\", REQUIRED, REQUIRED);\n\t\t}\n\t\telse if (name != null && name.length() > 50) {\n\t\t\terrors.rejectValue(\"name\", \"tooLong\", \"tooLong\");\n\t\t}"},"output":"Edit applied successfully.","metadata":{"diagnostics":{},"diff":"Index: /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1/src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java\n===================================================================\n--- /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1/src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java\n+++ /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1/src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java\n@@ -40,8 +40,11 @@\n // name validation\n if (!StringUtils.hasText(name)) {\n \terrors.rejectValue(\"name\", REQUIRED, REQUIRED);\n }\n+else if (name != null && name.length() > 50) {\n+\terrors.rejectValue(\"name\", \"tooLong\", \"tooLong\");\n+}\n \n // type validation\n if (pet.isNew() && pet.getType() == null) {\n \terrors.rejectValue(\"type\", REQUIRED, REQUIRED);\n","filediff":{"file":"/Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1/src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java","patch":"Index: /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1/src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java\n===================================================================\n--- /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1/src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java\n+++ /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1/src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java\n@@ -40,8 +40,11 @@\n // name validation\n if (!StringUtils.hasText(name)) {\n \terrors.rejectValue(\"name\", REQUIRED, REQUIRED);\n }\n+else if (name != null && name.length() > 50) {\n+\terrors.rejectValue(\"name\", \"tooLong\", \"tooLong\");\n+}\n \n // type validation\n if (pet.isNew() && pet.getType() == null) {\n \terrors.rejectValue(\"type\", REQUIRED, REQUIRED);\n","additions":3,"deletions":0},"truncated":false},"title":"results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1/src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java","time":{"start":1782673976511,"end":1782673976514}},"id":"prt_f0fa62caf001KBDjqFy69kNuZW","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","messageID":"msg_f0fa62120001SF4DfnDiByUfoJ"}}
+{"type":"step_finish","timestamp":1782673976621,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"id":"prt_f0fa62d240014vh5y6emrftvag","reason":"tool-calls","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","messageID":"msg_f0fa62120001SF4DfnDiByUfoJ","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","type":"step-finish","tokens":{"total":25008,"input":24710,"output":170,"reasoning":0,"cache":{"write":0,"read":128}},"cost":0.03537528}}
+{"type":"step_start","timestamp":1782673977496,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"id":"prt_f0fa63095001UTB0NoQiDVZW29","messageID":"msg_f0fa62d7e001EdZefZZhIjWOfM","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","type":"step-start"}}
+{"type":"tool_use","timestamp":1782673980203,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"type":"tool","tool":"bash","callID":"call_70e9","state":{"status":"completed","input":{"command":"mvn -q -DskipTests compile","description":"Compile the project"},"output":"[ERROR] Failed to execute goal io.spring.javaformat:spring-javaformat-maven-plugin:0.0.47:validate (default) on project spring-petclinic: Formatting violations found in the following files:\n[ERROR]  * /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1/src/test/java/org/springframework/samples/petclinic/owner/PetControllerTests.java\n[ERROR] \n[ERROR] Run `spring-javaformat:apply` to fix.\n[ERROR] -> [Help 1]\n[ERROR] \n[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.\n[ERROR] Re-run Maven using the -X switch to enable full debug logging.\n[ERROR] \n[ERROR] For more information about the errors and possible solutions, please read the following articles:\n[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException\n","metadata":{"output":"[ERROR] Failed to execute goal io.spring.javaformat:spring-javaformat-maven-plugin:0.0.47:validate (default) on project spring-petclinic: Formatting violations found in the following files:\n[ERROR]  * /Users/mihai/code/nter/model-benchmarking/results/full_opencode/opencode__sb-feat1-name-length__z-ai_glm-5.2__r1/src/test/java/org/springframework/samples/petclinic/owner/PetControllerTests.java\n[ERROR] \n[ERROR] Run `spring-javaformat:apply` to fix.\n[ERROR] -> [Help 1]\n[ERROR] \n[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.\n[ERROR] Re-run Maven using the -X switch to enable full debug logging.\n[ERROR] \n[ERROR] For more information about the errors and possible solutions, please read the following articles:\n[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException\n","exit":1,"description":"Compile the project","truncated":false},"title":"Compile the project","time":{"start":1782673980176,"end":1782673980201}},"id":"prt_f0fa632cf0016FVzFOULaBCUqa","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","messageID":"msg_f0fa62d7e001EdZefZZhIjWOfM"}}
+{"type":"step_finish","timestamp":1782673980305,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"id":"prt_f0fa63b8d001SwO49i7v3SvMWU","reason":"tool-calls","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","messageID":"msg_f0fa62d7e001EdZefZZhIjWOfM","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","type":"step-finish","tokens":{"total":25039,"input":116,"output":27,"reasoning":0,"cache":{"write":0,"read":24896}},"cost":0.00675416}}
+{"type":"step_start","timestamp":1782673983109,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"id":"prt_f0fa64682001F40PhkaQZlKgR6","messageID":"msg_f0fa63bd600100q2SWahvD9om3","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","type":"step-start"}}
+{"type":"tool_use","timestamp":1782673988950,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"type":"tool","tool":"bash","callID":"call_b7f2","state":{"status":"completed","input":{"command":"mvn -q spring-javaformat:apply 2>&1 | tail -20","description":"Apply spring-javaformat to fix formatting"},"output":"(no output)","metadata":{"output":"(no output)","exit":0,"description":"Apply spring-javaformat to fix formatting","truncated":false},"title":"Apply spring-javaformat to fix formatting","time":{"start":1782673987569,"end":1782673988948}},"id":"prt_f0fa657ed001yWgPnLpV3s4mWn","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","messageID":"msg_f0fa63bd600100q2SWahvD9om3"}}
+{"type":"step_finish","timestamp":1782673989009,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"id":"prt_f0fa65d8d001C3KV5TW3CCz4MY","reason":"tool-calls","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","messageID":"msg_f0fa63bd600100q2SWahvD9om3","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","type":"step-finish","tokens":{"total":25493,"input":25142,"output":223,"reasoning":0,"cache":{"write":0,"read":128}},"cost":0.03621328}}
+{"type":"step_start","timestamp":1782673990476,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"id":"prt_f0fa6634a001FGrUHHf9vtE3WX","messageID":"msg_f0fa65dcb001vbgviv9bIU34jV","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","type":"step-start"}}
+{"type":"tool_use","timestamp":1782673990744,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"type":"tool","tool":"bash","callID":"call_46f4","state":{"status":"completed","input":{"command":"git status && git diff --stat","description":"Check what files changed"},"output":"On branch feat/agent-harness-impl\nYour branch is ahead of 'origin/feat/agent-harness-impl' by 1 commit.\n  (use \"git push\" to publish your local commits)\n\nChanges not staged for commit:\n  (use \"git add <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   ../../../README.md\n\tmodified:   ../../../RUNBOOK.md\n\tmodified:   ../../../benchmark/adapters/raw_api.py\n\tmodified:   ../../../benchmark/models.py\n\tmodified:   ../../../benchmark/runner.py\n\tmodified:   ../../../benchmark_comparison.ipynb\n\tmodified:   ../../../docs/adr/0001-agent-harness-queues.md\n\tmodified:   ../../../merge_metrics.py\n\tmodified:   ../../metrics_all.csv\n\tmodified:   ../../metrics_angular.csv\n\tmodified:   ../../metrics_anon.csv\n\tmodified:   ../../metrics_data.csv\n\tmodified:   ../../metrics_react.csv\n\tmodified:   ../../metrics_springboot.csv\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\t../../../.python-version\n\t../../../.serena/\n\t../../../pyproject.toml\n\t../../../test_env_fallbacks.py\n\t../../../uv.lock\n\nno changes added to commit (use \"git add\" and/or \"git commit -a\")\nwarning: in the working copy of 'results/metrics_all.csv', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'results/metrics_angular.csv', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'results/metrics_anon.csv', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'results/metrics_data.csv', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'results/metrics_react.csv', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'results/metrics_springboot.csv', CRLF will be replaced by LF the next time Git touches it\n README.md                             |   4 +-\n RUNBOOK.md                            |   7 +-\n benchmark/adapters/raw_api.py         | 146 ++++++-\n benchmark/models.py                   |  21 +\n benchmark/runner.py                   |  29 +-\n benchmark_comparison.ipynb            | 361 ++++++++++++++--\n docs/adr/0001-agent-harness-queues.md |   2 +-\n merge_metrics.py                      |  55 ++-\n results/metrics_all.csv               |  39 ++\n results/metrics_angular.csv           | 209 +++++-----\n results/metrics_anon.csv              | 763 ++++++++++++++++++----------------\n results/metrics_data.csv              | 140 ++++---\n results/metrics_react.csv             | 209 +++++-----\n results/metrics_springboot.csv        | 179 ++++----\n 14 files changed, 1371 insertions(+), 793 deletions(-)\n","metadata":{"output":"On branch feat/agent-harness-impl\nYour branch is ahead of 'origin/feat/agent-harness-impl' by 1 commit.\n  (use \"git push\" to publish your local commits)\n\nChanges not staged for commit:\n  (use \"git add <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   ../../../README.md\n\tmodified:   ../../../RUNBOOK.md\n\tmodified:   ../../../benchmark/adapters/raw_api.py\n\tmodified:   ../../../benchmark/models.py\n\tmodified:   ../../../benchmark/runner.py\n\tmodified:   ../../../benchmark_comparison.ipynb\n\tmodified:   ../../../docs/adr/0001-agent-harness-queues.md\n\tmodified:   ../../../merge_metrics.py\n\tmodified:   ../../metrics_all.csv\n\tmodified:   ../../metrics_angular.csv\n\tmodified:   ../../metrics_anon.csv\n\tmodified:   ../../metrics_data.csv\n\tmodified:   ../../metrics_react.csv\n\tmodified:   ../../metrics_springboot.csv\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\t../../../.python-version\n\t../../../.serena/\n\t../../../pyproject.toml\n\t../../../test_env_fallbacks.py\n\t../../../uv.lock\n\nno changes added to commit (use \"git add\" and/or \"git commit -a\")\nwarning: in the working copy of 'results/metrics_all.csv', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'results/metrics_angular.csv', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'results/metrics_anon.csv', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'results/metrics_data.csv', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'results/metrics_react.csv', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'results/metrics_springboot.csv', CRLF will be replaced by LF the next time Git touches it\n README.md                             |   4 +-\n RUNBOOK.md                            |   7 +-\n benchmark/adapters/raw_api.py         | 146 ++++++-\n benchmark/models.py                   |  21 +\n benchmark/runner.py                   |  29 +-\n benchmark_comparison.ipynb            | 361 ++++++++++++++--\n docs/adr/0001-agent-harness-queues.md |   2 +-\n merge_metrics.py                      |  55 ++-\n results/metrics_all.csv               |  39 ++\n results/metrics_angular.csv           | 209 +++++-----\n results/metrics_anon.csv              | 763 ++++++++++++++++++----------------\n results/metrics_data.csv              | 140 ++++---\n results/metrics_react.csv             | 209 +++++-----\n results/metrics_springboot.csv        | 179 ++++----\n 14 files changed, 1371 insertions(+), 793 deletions(-)\n","exit":0,"description":"Check what files changed","truncated":false},"title":"Check what files changed","time":{"start":1782673990742,"end":1782673990743}},"id":"prt_f0fa6641b001VT4tOBRWtTWD4X","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","messageID":"msg_f0fa65dcb001vbgviv9bIU34jV"}}
+{"type":"step_finish","timestamp":1782673990819,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"id":"prt_f0fa664a0001jP14JwdhN93XNM","reason":"tool-calls","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","messageID":"msg_f0fa65dcb001vbgviv9bIU34jV","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","type":"step-finish","tokens":{"total":25526,"input":1436,"output":26,"reasoning":0,"cache":{"write":0,"read":24064}},"cost":0.00838144}}
+{"type":"step_start","timestamp":1782673992533,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"id":"prt_f0fa66b52001bsKBx8QCGenFrA","messageID":"msg_f0fa664e00011YxCa1oqwxw4a3","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","type":"step-start"}}
+{"type":"tool_use","timestamp":1782673999060,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"type":"tool","tool":"bash","callID":"call_40ac","state":{"status":"completed","input":{"command":"mvn -q -DskipTests compile 2>&1 | tail -20","description":"Recompile"},"output":"(no output)","metadata":{"output":"(no output)","exit":0,"description":"Recompile","truncated":false},"title":"Recompile","time":{"start":1782673993630,"end":1782673999058}},"id":"prt_f0fa66f9c001ZIFTRg9lhp8gWv","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","messageID":"msg_f0fa664e00011YxCa1oqwxw4a3"}}
+{"type":"step_finish","timestamp":1782673999117,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"id":"prt_f0fa6850a001Db62xLmD06ihAs","reason":"tool-calls","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","messageID":"msg_f0fa664e00011YxCa1oqwxw4a3","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","type":"step-finish","tokens":{"total":26292,"input":728,"output":92,"reasoning":0,"cache":{"write":0,"read":25472}},"cost":0.00804672}}
+{"type":"step_start","timestamp":1782674000103,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"id":"prt_f0fa688e4001KtkPZctR61i1Qm","messageID":"msg_f0fa68547001jNey0tSAPw2i6p","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","type":"step-start"}}
+{"type":"text","timestamp":1782674001261,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"id":"prt_f0fa688e6001Zojk4Rnxt7ImiQ","messageID":"msg_f0fa68547001jNey0tSAPw2i6p","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","type":"text","text":"Build passes.\n\nSummary: Added a length check in `PetValidator.validate()` — when `name` is non-blank and exceeds 50 characters, it calls `errors.rejectValue(\"name\", \"tooLong\", \"tooLong\")`, matching the existing code style. Ran `spring-javaformat:apply` to fix formatting of a test file flagged by the format plugin, then `mvn -q -DskipTests compile` succeeds.","time":{"start":1782674000102,"end":1782674001257}}}
+{"type":"step_finish","timestamp":1782674001328,"sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","part":{"id":"prt_f0fa68da70010GoXVjHd6qK42K","reason":"stop","snapshot":"a48b6bea94f7bbdf45ddfbde4f03c5989e9e1509","messageID":"msg_f0fa68547001jNey0tSAPw2i6p","sessionID":"ses_0f059ebd0ffe8yToaRfSe0AXin","type":"step-finish","tokens":{"total":26390,"input":1275,"output":91,"reasoning":0,"cache":{"write":0,"read":25024}},"cost":0.00869164}}
+
+
+STDERR:
+
+
+=== CHANGED FILES ===
+
+--- src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java ---
+/*
+ * Copyright 2012-2025 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.springframework.samples.petclinic.owner;
+
+import org.springframework.util.StringUtils;
+import org.springframework.validation.Errors;
+import org.springframework.validation.Validator;
+
+/**
+ * <code>Validator</code> for <code>Pet</code> forms.
+ * <p>
+ * We're not using Bean Validation annotations here because it is easier to define such
+ * validation rule in Java.
+ * </p>
+ *
+ * @author Ken Krebs
+ * @author Juergen Hoeller
+ */
+public class PetValidator implements Validator {
+
+	private static final String REQUIRED = "required";
+
+	@Override
+	public void validate(Object obj, Errors errors) {
+		Pet pet = (Pet) obj;
+		String name = pet.getName();
+		// name validation
+		if (!StringUtils.hasText(name)) {
+			errors.rejectValue("name", REQUIRED, REQUIRED);
+		}
+		else if (name != null && name.length() > 50) {
+			errors.rejectValue("name", "tooLong", "tooLong");
+		}
+
+		// type validation
+		if (pet.isNew() && pet.getType() == null) {
+			errors.rejectValue("type", REQUIRED, REQUIRED);
+		}
+
+		// birth date validation
+		if (pet.getBirthDate() == null) {
+			errors.rejectValue("birthDate", REQUIRED, REQUIRED);
+		}
+	}
+
+	/**
+	 * This Validator validates *just* Pet instances
+	 */
+	@Override
+	public boolean supports(Class<?> clazz) {
+		return Pet.class.isAssignableFrom(clazz);
+	}
+
+}
+
+--- src/test/java/org/springframework/samples/petclinic/owner/PetControllerTests.java ---
+/*
+ * Copyright 2012-2025 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.springframework.samples.petclinic.owner;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledInNativeImage;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.FilterType;
+import org.springframework.test.context.aot.DisabledInAotMode;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Optional;
+
+import static org.mockito.BDDMockito.given;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.view;
+
+/**
+ * Test class for the {@link PetController}
+ *
+ * @author Colin But
+ * @author Wick Dynex
+ */
+@WebMvcTest(value = PetController.class,
+		includeFilters = @ComponentScan.Filter(value = PetTypeFormatter.class, type = FilterType.ASSIGNABLE_TYPE))
+@DisabledInNativeImage
+@DisabledInAotMode
+class PetControllerTests {
+
+	private static final int TEST_OWNER_ID = 1;
+
+	private static final int TEST_PET_ID = 1;
+
+	@Autowired
+	private MockMvc mockMvc;
+
+	@MockitoBean
+	private OwnerRepository owners;
+
+	@MockitoBean
+	private PetTypeRepository types;
+
+	@BeforeEach
+	void setup() {
+		PetType cat = new PetType();
+		cat.setId(3);
+		cat.setName("hamster");
+		given(this.types.findPetTypes()).willReturn(List.of(cat));
+
+		Owner owner = new Owner();
+		Pet pet = new Pet();
+		Pet dog = new Pet();
+		owner.addPet(pet);
+		owner.addPet(dog);
+		pet.setId(TEST_PET_ID);
+		dog.setId(TEST_PET_ID + 1);
+		pet.setName("petty");
+		dog.setName("doggy");
+		given(this.owners.findById(TEST_OWNER_ID)).willReturn(Optional.of(owner));
+	}
+
+	@Test
+	void initCreationForm() throws Exception {
+		mockMvc.perform(get("/owners/{ownerId}/pets/new", TEST_OWNER_ID))
+			.andExpect(status().isOk())
+			.andExpect(view().name("pets/createOrUpdatePetForm"))
+			.andExpect(model().attributeExists("pet"));
+	}
+
+	@Test
+	void processCreationFormSuccess() throws Exception {
+		mockMvc
+			.perform(post("/owners/{ownerId}/pets/new", TEST_OWNER_ID).param("name", "Betty")
+				.param("type", "hamster")
+				.param("birthDate", "2015-02-12"))
+			.andExpect(status().is3xxRedirection())
+			.andExpect(view().name("redirect:/owners/{ownerId}"));
+	}
+
+	@Nested
+	class ProcessCreationFormHasErrors {
+
+		@Test
+		void processCreationFormWithBlankName() throws Exception {
+			mockMvc
+				.perform(post("/owners/{ownerId}/pets/new", TEST_OWNER_ID).param("name", "\t \n")
+					.param("birthDate", "2015-02-12"))
+				.andExpect(model().attributeHasNoErrors("owner"))
+				.andExpect(model().attributeHasErrors("pet"))
+				.andExpect(model().attributeHasFieldErrors("pet", "name"))
+				.andExpect(model().attributeHasFieldErrorCode("pet", "name", "required"))
+				.andExpect(status().isOk())
+				.andExpect(view().name("pets/createOrUpdatePetForm"));
+		}
+
+		@Test
+		void processCreationFormWithDuplicateName() throws Exception {
+			mockMvc
+				.perform(post("/owners/{ownerId}/pets/new", TEST_OWNER_ID).param("name", "petty")
+					.param("birthDate", "2015-02-12"))
+				.andExpect(model().attributeHasNoErrors("owner"))
+				.andExpect(model().attributeHasErrors("pet"))
+				.andExpect(model().attributeHasFieldErrors("pet", "name"))
+				.andExpect(model().attributeHasFieldErrorCode("pet", "name", "duplicate"))
+				.andExpect(status().isOk())
+				.andExpect(view().name("pets/createOrUpdatePetForm"));
+		}
+
+		@Test
+		void processCreationFormWithMissingPetType() throws Exception {
+			mockMvc
+				.perform(post("/owners/{ownerId}/pets/new", TEST_OWNER_ID).param("name", "Betty")
+					.param("birthDate", "2015-02-12"))
+				.andExpect(model().attributeHasNoErrors("owner"))
+				.andExpect(model().attributeHasErrors("pet"))
+				.andExpect(model().attributeHasFieldErrors("pet", "type"))
+				.andExpect(model().attributeHasFieldErrorCode("pet", "type", "required"))
+				.andExpect(status().isOk())
+				.andExpect(view().name("pets/createOrUpdatePetForm"));
+		}
+
+		@Test
+		void processCreationFormWithInvalidBirthDate() throws Exception {
+			LocalDate currentDate = LocalDate.now();
+			String futureBirthDate = currentDate.plusMonths(1).toString();
+
+			mockMvc
+				.perform(post("/owners/{ownerId}/pets/new", TEST_OWNER_ID).param("name", "Betty")
+					.param("birthDate", futureBirthDate))
+				.andExpect(model().attributeHasNoErrors("owner"))
+				.andExpect(model().attributeHasErrors("pet"))
+				.andExpect(model().attributeHasFieldErrors("pet", "birthDate"))
+				.andExpect(model().attributeHasFieldErrorCode("pet", "birthDate", "typeMismatch.birthDate"))
+				.andExpect(status().isOk())
+				.andExpect(view().name("pets/createOrUpdatePetForm"));
+		}
+
+		@Test
+		void initUpdateForm() throws Exception {
+			mockMvc.perform(get("/owners/{ownerId}/pets/{petId}/edit", TEST_OWNER_ID, TEST_PET_ID))
+				.andExpect(status().isOk())
+				.andExpect(model().attributeExists("pet"))
+				.andExpect(view().name("pets/createOrUpdatePetForm"));
+		}
+
+	}
+
+	@Test
+	void processUpdateFormSuccess() throws Exception {
+		mockMvc
+			.perform(post("/owners/{ownerId}/pets/{petId}/edit", TEST_OWNER_ID, TEST_PET_ID).param("name", "Betty")
+				.param("type", "hamster")
+				.param("birthDate", "2015-02-12"))
+			.andExpect(status().is3xxRedirection())
+			.andExpect(view().name("redirect:/owners/{ownerId}"));
+	}
+
+	@Test
+	void processUpdateFormWithSameName() throws Exception {
+		mockMvc.perform(post("/owners/{ownerId}/pets/{petId}/edit", TEST_OWNER_ID, TEST_PET_ID).param("name", "petty") // same
+																														// name
+																														// as
+																														// existing
+																														// pet
+			.param("type", "hamster")
+			.param("birthDate", "2015-02-12"))
+			.andExpect(status().is3xxRedirection())
+			.andExpect(view().name("redirect:/owners/{ownerId}"));
+	}
+
+	@Nested
+	class ProcessUpdateFormHasErrors {
+
+		@Test
+		void processUpdateFormWithDuplicateName() throws Exception {
+			mockMvc
+				.perform(post("/owners/{ownerId}/pets/{petId}/edit", TEST_OWNER_ID, TEST_PET_ID + 1)
+					.param("name", "petty")
+					.param("type", "hamster")
+					.param("birthDate", "2015-02-12"))
+				.andExpect(model().attributeHasNoErrors("owner"))
+				.andExpect(model().attributeHasErrors("pet"))
+				.andExpect(model().attributeHasFieldErrors("pet", "name"))
+				.andExpect(model().attributeHasFieldErrorCode("pet", "name", "duplicate"))
+				.andExpect(status().isOk())
+				.andExpect(view().name("pets/createOrUpdatePetForm"));
+		}
+
+		@Test
+		void processUpdateFormWithInvalidBirthDate() throws Exception {
+			mockMvc
+				.perform(post("/owners/{ownerId}/pets/{petId}/edit", TEST_OWNER_ID, TEST_PET_ID).param("name", " ")
+					.param("birthDate", "2015/02/12"))
+				.andExpect(model().attributeHasNoErrors("owner"))
+				.andExpect(model().attributeHasErrors("pet"))
+				.andExpect(model().attributeHasFieldErrors("pet", "birthDate"))
+				.andExpect(model().attributeHasFieldErrorCode("pet", "birthDate", "typeMismatch"))
+				.andExpect(view().name("pets/createOrUpdatePetForm"));
+		}
+
+		@Test
+		void processUpdateFormWithBlankName() throws Exception {
+			mockMvc
+				.perform(post("/owners/{ownerId}/pets/{petId}/edit", TEST_OWNER_ID, TEST_PET_ID).param("name", "  ")
+					.param("birthDate", "2015-02-12"))
+				.andExpect(model().attributeHasNoErrors("owner"))
+				.andExpect(model().attributeHasErrors("pet"))
+				.andExpect(model().attributeHasFieldErrors("pet", "name"))
+				.andExpect(model().attributeHasFieldErrorCode("pet", "name", "required"))
+				.andExpect(view().name("pets/createOrUpdatePetForm"));
+		}
+
+	}
+
+	@Test
+	void processCreationFormWithTooLongName() throws Exception {
+		mockMvc
+			.perform(post("/owners/{ownerId}/pets/new", TEST_OWNER_ID).param("name", "A".repeat(51))
+				.param("type", "hamster")
+				.param("birthDate", "2015-02-12"))
+			.andExpect(model().attributeHasFieldErrorCode("pet", "name", "tooLong"));
+	}
+
+}

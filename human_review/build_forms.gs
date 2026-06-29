@@ -71,9 +71,14 @@ function buildForm(fw, d, ssId) {
     var it = items[n];
     var header = 'Respuesta ' + (n + 1) + ' / ' + items.length +
                  '  ·  ' + it.modelo + '  ·  ' + it.harness + '  ·  ' + it.tarea;
+    var fairStatus = it.fair_status || '';
+    var fairNotes = it.fair_notes ? ('\nNotas automáticas: ' + it.fair_notes) : '';
+    var source = it.automatic_source ? ('\nFuente automática: ' + it.automatic_source) : '';
     var ctx = 'Harness: ' + it.harness + '\n' +
               'Tarea (' + it.tipo + '): ' + it.tarea_desc +
-              '\nTest automático: ' + (String(it.test_ok) === 'True' ? 'PASA' : 'FALLA');
+              '\nBuild automático justo: ' + (String(it.build_ok) === 'True' ? 'PASA' : 'FALLA') +
+              '\nTest automático justo: ' + (String(it.test_ok) === 'True' ? 'PASA' : 'FALLA') +
+              '\nFair status: ' + fairStatus + source + fairNotes;
     form.addPageBreakItem().setTitle(header).setHelpText(ctx);
 
     // Código troceado en bloques (cada uno como cabecera de sección, solo lectura).

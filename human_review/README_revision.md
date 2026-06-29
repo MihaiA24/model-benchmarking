@@ -43,7 +43,7 @@ Cada revisor solo recibe el link de **su** formulario.
 
 - Puntúa cada eje **1 (muy malo) – 5 (excelente)**. Los 5 ejes están en la rúbrica del formulario.
 - **No intentes adivinar** qué modelo real hay detrás del alias. Sé consistente entre respuestas.
-- Si el **test automático falla** (lo indica cada sección), refléjalo en el eje 1 (correctitud).
+- Si el **estado automático justo** (`fair_status` / `test_ok_auto`) falla, refléjalo en el eje 1 (correctitud). Las filas excluidas por infraestructura no deberían estar en este paquete salvo que el coordinador las haya incluido explícitamente.
 - Dudas o algo que chirríe → al comentario de esa respuesta.
 
 ---
@@ -54,8 +54,10 @@ Cada revisor solo recibe el link de **su** formulario.
 2. Donde difieran **> 1 punto** en algún eje, que lo discutan y fijen una nota consensuada.
 3. Solo cuando TODO esté puntuado y reconciliado, revela el mapping real:
    **`results/model_mapping.csv`** (alias → modelo real). **No lo abras antes.**
-4. Resultado final = combinar **% tests verdes (auto)** + **media de calidad (humana)** +
-   **coste/tarea** + **latencia**. Fija un umbral mínimo de calidad y luego mira el precio.
+4. Resultado final = combinar **% tests verdes (auto)** desde
+   `results/full_combined_v3/metrics_fair.csv` / `fair_comparison_summary.md` +
+   **media de calidad (humana)** + **coste/tarea** + **latencia**.
+   No uses `metrics_all.csv` para calidad: es el merge bruto/auditable. Usa `fair_comparison_telemetry_gaps.csv` para detectar combinaciones sin coste/tokens exactos antes de calcular calidad/coste. Fija un umbral mínimo de calidad y luego mira el precio.
    Lo normal no es un único ganador, sino **routing**: modelo barato por defecto + uno potente
    para el % de tareas difíciles.
 
@@ -66,6 +68,6 @@ Cada revisor solo recibe el link de **su** formulario.
 - `form_data.json` — datos para el Apps Script (respuestas + objetivo/instrucciones/rúbrica).
 - `build_forms.gs` — script que crea los 4 formularios + la hoja.
 - `respuestas_ciegas/<framework>/` — el código ciego, por si se quiere revisar fuera del formulario.
-- `plantilla_puntuacion.csv` — alternativa en CSV (mismo contenido) si no se usan los formularios.
+- `plantilla_puntuacion.csv` — alternativa en CSV (mismo contenido) si no se usan los formularios; debe traer `automatic_source=results/full_combined_v3/metrics_fair.csv` y columnas `fair_status` / `fair_included`.
 - `INDICE_por_framework.md` — qué fichero pertenece a qué framework.
 - `instrucciones.md` — rúbrica detallada.
