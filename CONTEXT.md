@@ -48,6 +48,10 @@ _Avoid_: Test failure, harness failure
 A host-controlled, content-addressed store of immutable trial inputs that may be reused without sharing writable state between trials.
 _Avoid_: Shared trial cache, persistent workspace
 
+**Stock profile**:
+One pinned harness release or commit plus its versioned minimal configuration, preserving that harness's native autonomous behavior while varying only declared experimental controls.
+_Avoid_: Shared agent profile, normalized harness
+
 **Credential proxy**:
 A benchmark-controlled boundary that holds provider credentials and gives a trial only narrowly scoped access to its declared model route.
 _Avoid_: Shared API key, secret mount

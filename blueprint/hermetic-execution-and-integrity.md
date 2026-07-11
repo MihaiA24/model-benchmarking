@@ -3,6 +3,7 @@
 **Status:** Final decision
 **Map:** [Design a real-world CLI benchmark for coding-agent harnesses](https://github.com/MihaiA24/model-benchmarking/issues/13)
 **Ticket:** [Define the hermetic execution and integrity model](https://github.com/MihaiA24/model-benchmarking/issues/17)
+**Amended by:** [Define the harness adapter and launch contract](https://github.com/MihaiA24/model-benchmarking/issues/18) — elapsed time became observational rather than a terminating budget.
 
 ## Accepted decisions
 
@@ -55,9 +56,11 @@ No container, writable volume, home directory, process, network namespace, or mu
 
 ### Resource controls
 
-Each scenario declares one hard budget vector that applies unchanged to every harness condition: wall-clock deadline, CPU quota and core count, memory, process count, writable storage, and provider request, token, and monetary ceilings. Enforce provider-side ceilings at the credential proxy and environment limits through runtime capabilities qualified during preflight.
+Each scenario declares one hard safety and resource budget vector that applies unchanged to every harness condition: CPU quota and core count, memory, process count, writable storage, and provider request, token, and monetary ceilings. Enforce provider-side ceilings at the credential proxy and environment limits through runtime capabilities qualified during preflight.
 
-Do not oversubscribe a worker host during measured execution; run one measured trial at a time per worker in the initial benchmark. Crossing a limit terminates the complete process tree and records the specific exhausted budget as a valid experimental outcome, not as an infrastructure retry. Reject a configuration before launch when the selected runtime cannot enforce a declared limit rather than silently weakening the policy.
+Elapsed time is observational rather than a terminating budget. Impose no benchmark wall-clock deadline; measure duration monotonically from launch through complete process-tree exit for comparison. A suspected hang requires an explicit operator abort, is recorded as `aborted_operator`, is excluded from comparative analysis, and is not silently replaced or reclassified as a harness failure.
+
+Do not oversubscribe a worker host during measured execution; run one measured trial at a time per worker in the initial benchmark. Crossing a hard safety, resource, integrity, or provider-spend limit terminates the complete process tree and records the specific cause under the applicable disposition, not as an infrastructure retry. Reject a configuration before launch when the selected runtime cannot enforce a declared hard limit rather than silently weakening the policy.
 
 ### Submission handoff and hidden checks
 
@@ -95,7 +98,7 @@ Assign every planned trial exactly one top-level disposition:
 - `valid_limit_outcome`: a declared agent, provider, handoff, or verifier budget was exhausted.
 - `invalid_infrastructure`: the host, Harbor, credential proxy, verifier infrastructure, evidence collection, teardown, or sealing failed independently of the submission.
 - `invalid_integrity`: tampering, a boundary breach, hidden-evidence exposure, or contaminated inputs invalidated the observation.
-- `aborted_operator`: an operator stopped the trial for an external reason.
+- `aborted_operator`: an operator stopped the trial for an external reason, including intervention in a suspected hang; the observation is excluded from comparative analysis and receives no automatic replacement.
 
 Every disposition records the terminal phase, precise reason code, timestamps, raw supporting evidence, analysis eligibility, and retry disposition. Only `not_started` and `invalid_infrastructure` may receive a new linked replacement trial under a predeclared retry policy. Never silently replace a valid harness or limit outcome. Preserve every original record. Pause the affected batch after `invalid_integrity` and require investigation before resuming.
 
@@ -143,7 +146,7 @@ Before this profile may produce publishable benchmark results, a qualification s
 2. Repeated trials receive fresh containers, volumes, networks, homes, and sidecars.
 3. Harnesses run unprivileged and cannot reach host control surfaces or protected paths.
 4. Only the credential proxy is reachable, and provider credentials never enter persisted evidence.
-5. Wall-time, memory, storage, process, and provider-budget limits terminate and classify correctly.
+5. Duration is measured monotonically without terminating the trial, while memory, storage, process, integrity, and provider-budget limits terminate and classify correctly.
 6. A hidden marker is absent during the agent phase, the agent stops before verification, and only declared artifacts cross the boundary.
 7. A normal patch verifies, while malicious paths, symlinks, special files, and oversized handoffs are rejected.
 8. Sidecar state can be exported, sealed, verified, and destroyed without becoming future trial state.
