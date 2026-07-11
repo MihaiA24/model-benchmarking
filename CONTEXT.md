@@ -31,3 +31,23 @@ _Avoid_: Run, experiment
 **Result bundle**:
 A content-addressed, write-once collection of a trial's declared identities, raw outputs, verification evidence, operational records, and file digests.
 _Avoid_: Report, score
+
+**Agent environment**:
+The disposable trial boundary in which one harness and its model-controlled processes may inspect and modify the evaluated repository. Everything inside it is presumed visible and mutable to the harness.
+_Avoid_: Sandbox, workspace
+
+**Verifier environment**:
+The separate post-trial boundary that holds acceptance evidence and receives only declared submission artifacts after the agent environment has stopped.
+_Avoid_: Test container, grader workspace
+
+**Integrity violation**:
+An attempted or successful crossing of a declared benchmark boundary that invalidates the trial independently of task quality.
+_Avoid_: Test failure, harness failure
+
+**Provisioning cache**:
+A host-controlled, content-addressed store of immutable trial inputs that may be reused without sharing writable state between trials.
+_Avoid_: Shared trial cache, persistent workspace
+
+**Credential proxy**:
+A benchmark-controlled boundary that holds provider credentials and gives a trial only narrowly scoped access to its declared model route.
+_Avoid_: Shared API key, secret mount
