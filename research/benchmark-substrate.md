@@ -10,17 +10,15 @@ Adapt **Harbor v0.18.0**, pinned to commit [`527d50deb63a5d279e8c20593c18a2cbc7f
 
 Harbor is the only reviewed candidate that currently combines all of the following in one locally runnable open-source substrate:
 
-- a fresh, deleted container environment for each trial;
-- a **separate verifier environment** in which the agent container is stopped before hidden tests start and only declared artifacts cross the boundary;
-- first-class task and dataset locking, repeat attempts, time/resource/network controls, and machine-readable trial results;
-- installed-agent and external-agent extension points capable of wrapping an opaque headless CLI; and
-- first-class result, trajectory, verifier-log, and filesystem-artifact collection.
-
-Those are evidenced by Harbor's release-pinned [task contract](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/docs/content/docs/tasks/index.mdx), [trial lifecycle](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/trial/trial.py), [job expansion](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/job.py), [dataset locking](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/models/job/lock.py), [agent extension API](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/docs/content/docs/agents/index.mdx), and [result/artifact contract](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/docs/content/docs/run-jobs/results-and-artifacts.mdx).
+- a fresh container environment created for each trial and deleted during teardown ([agent-environment construction, lines 766–784](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/trial/trial.py#L766-L784), [startup, lines 1101–1108](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/trial/trial.py#L1101-L1108), and [teardown, lines 1140–1147](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/trial/trial.py#L1140-L1147));
+- a **separate verifier environment** in which the agent container is stopped before hidden tests start and only declared artifacts cross the boundary ([task contract, lines 490–530](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/docs/content/docs/tasks/index.mdx#L490-L530) and [verifier lifecycle, lines 620–641](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/trial/trial.py#L620-L641));
+- first-class task and dataset locking, repeat attempts, time/resource/network controls, and machine-readable trial results ([task controls, lines 103–159](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/docs/content/docs/tasks/index.mdx#L103-L159), [repeat expansion, lines 374–388](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/job.py#L374-L388), [dataset locking](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/docs/content/docs/datasets/git-repos.mdx), and [result contract](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/docs/content/docs/run-jobs/run-evals.mdx));
+- installed-agent and external-agent extension points capable of wrapping an opaque headless CLI ([agent extension API, lines 24–88](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/docs/content/docs/agents/index.mdx#L24-L88)); and
+- first-class result, trajectory, verifier-log, and filesystem-artifact collection ([result contract](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/docs/content/docs/run-jobs/run-evals.mdx) and [artifact manifest, lines 96–120](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/docs/content/docs/run-jobs/results-and-artifacts.mdx#L96-L120)).
 
 Harbor does **not** natively define the complete experiment. Retain a small project-owned **experiment coordinator** for four missing contracts only:
 
-1. immutable identity of the **repository under test** and its OCI image/build inputs;
+1. immutable identity of the **evaluated repository** and its OCI image/build inputs;
 2. exact CLI launch adapters for OMP, OpenCode, and Hermes;
 3. repeated matched-pair assignment and exact-model metadata; and
 4. content-addressed sealing of the complete result bundle.
@@ -29,7 +27,7 @@ Do not fork Harbor, build a second task lifecycle, replace its verifier, or put 
 
 ## Question and non-negotiable criteria
 
-The substrate must run locally against arbitrary immutable repository snapshots. Every trial must start from the same hermetic baseline, execute one autonomous CLI as a black box, and end before hidden checks run outside the agent workspace. The experiment must repeat matched conditions using the exact same model configuration, enforce time/resource/network/secret policy, and leave immutable machine-readable evidence. Evaluated repository language and agent implementation language must not be constrained by the substrate.
+The substrate must run locally against arbitrary immutable evaluated-repository snapshots. Every trial must start from the same hermetic baseline, execute one autonomous CLI as a black box, and end before hidden checks run outside the agent workspace. The experiment must repeat matched conditions using the exact same model configuration, enforce time/resource/network/secret policy, and leave immutable machine-readable evidence. Evaluated-repository language and agent implementation language must not be constrained by the substrate.
 
 The comparison uses the following meanings:
 
@@ -38,7 +36,7 @@ The comparison uses the following meanings:
 - **Gap (G):** requires a project-owned contract or orchestration step.
 - **Reject (R):** the candidate's intended abstraction conflicts with the requirement.
 
-“Arbitrary repository pinning” means the repository being edited, not merely the Git repository containing benchmark tasks. “Hidden evaluator” means the evaluator and private assets are absent from the agent-visible filesystem for the entire agent phase; copying tests into that same writable container after the agent exits is weaker than a new verifier environment. “Offline” means no hosted control plane and no network after images, packages, model weights/endpoints, and task inputs have been provisioned locally.
+“Arbitrary evaluated-repository pinning” means pinning the codebase snapshot a harness may modify, not merely the Git repository containing benchmark tasks. “Hidden evaluator” means the evaluator and private assets are absent from the agent-visible filesystem for the entire agent phase; copying tests into that same writable container after the agent exits is weaker than a new verifier environment. “Offline” means no hosted control plane and no network after images, packages, model weights/endpoints, and task inputs have been provisioned locally.
 
 All factual claims below cite first-party documentation, source, schemas, licenses, or release records. Commit-pinned links are frozen evidence. Rolling official documentation is identified as such. **Assessment** and **inference** denote conclusions drawn from that primary evidence rather than vendor claims.
 
@@ -60,7 +58,7 @@ Native strengths:
 
 Material gaps:
 
-- Harbor pins the task package, not automatically the repository being edited. **Assessment:** the benchmark must place a verified snapshot into a digest-pinned task image or build context and record both repository commit and image digest. A mutable image tag or a `git clone` in an unpinned Dockerfile is insufficient.
+- Harbor pins the task package, not automatically the evaluated repository. **Assessment:** the benchmark must place a verified evaluated-repository snapshot into a digest-pinned task image or build context and record both repository commit and image digest. A mutable image tag or a `git clone` in an unpinned Dockerfile is insufficient.
 - `BaseInstalledAgent` and `BaseAgent` are supported extension points, but there is no generic task field containing agent argv/stdin/stdout semantics ([agent integration documentation](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/docs/content/docs/agents/index.mdx), [agent configuration model](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/models/trial/config.py)). Each CLI therefore needs a thin adapter.
 - Results preserve trial UUID, task checksum/source, agent/model/config, timing, and reward, but the result schema has no explicit `pair_id`, treatment arm, repetition ordinal, or randomization block ([trial result model](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/models/trial/result.py)). Pair assignment must be project-owned.
 - Harbor's local files are rich and machine-readable but are not, solely by being written, an immutable evidence store. **Assessment:** seal them by content digest after completion.
@@ -102,9 +100,9 @@ This matrix is a comparative assessment of the cited current revisions, not a cl
 
 | Criterion | Harbor v0.18.0 | Inspect AI 0.3.245 | BenchFlow v0.6.4/current reviewed | Vivaria + Task Standard |
 |---|---|---|---|---|
-| Arbitrary evaluated repositories | **A** — arbitrary task environment; project pins subject repo | **A** — generic sample/sandbox; project defines subject repo | **A** — generic task package; project defines subject repo | **A** — task assets/install step; project defines subject repo |
+| Arbitrary evaluated repositories | **A** — arbitrary task environment; project pins the evaluated repository | **A** — generic sample/sandbox; project defines the evaluated repository | **A** — generic task package; project defines the evaluated repository | **A** — task assets/install step; project defines the evaluated repository |
 | Immutable task-source pin | **N** — resolved Git commit, task digest, `lock.json` | **A** — eval-source revision and arbitrary metadata | **N** — source commit and task SHA-256 | **N** — task/agent commit or upload hash |
-| Immutable evaluated-repo/image pin | **G** — must enforce commit + OCI digest | **G** — no typed subject/image identity | **G** — task-source pin is not subject-repo pin | **G** — no typed subject-repo identity |
+| Immutable evaluated-repository/image pin | **G** — must enforce commit + OCI digest | **G** — no typed evaluated-repository/image identity | **G** — task-source pin is not an evaluated-repository pin | **G** — no typed evaluated-repository identity |
 | Fresh reset per trial | **N** — unique environment, delete in `finally` | **N** — distinct Compose project per sample/epoch | **N** — rollout lifecycle cleans container | **N** — fresh per-run container |
 | Hidden checks outside agent workspace | **N** — separate verifier environment + declared handoff | **A** — host-side scorer can inject after agent; no declarative verifier container | **A/G** — same-environment hardening; separate environment incomplete | **A** — root/aux-VM hiding, not a verifier-container contract |
 | Arbitrary black-box CLI | **A** — installed/external agent wrapper | **A** — documented any-language bridge + command wrapper | **A/G** — launch registry exists; non-ACP path under-documented | **A** — mandatory `main.py` shim |
@@ -145,10 +143,10 @@ The experiment coordinator is deliberately smaller than a new runner. It owns de
 
 Before a trial can run, one immutable manifest row must identify:
 
-- experiment, suite visibility (`public` or `private`), task, pair/block, condition/CLI, and repetition ordinal;
-- repository origin, exact commit, source-tree/archive digest, checkout path, and clean-baseline assertion;
+- experiment, suite visibility (`public` or `private`), scenario ID, pair/block, condition/CLI, and repetition ordinal;
+- evaluated-repository origin, exact commit, source-tree/archive digest, checkout path, and clean-baseline assertion;
 - OCI image digest or reproducible build-input digest; mutable tags are invalid as evidence;
-- Harbor version/commit, task package digest/resolved commit, verifier revision/digest, and Harbor `lock.json` identity;
+- Harbor version/commit, Harbor task ID, task package digest/resolved commit, verifier revision/digest, and Harbor `lock.json` identity;
 - CLI name, exact release/commit or binary/package digest, adapter revision, argv/cwd, non-interactive mode, configuration digest, and allowed environment variable names;
 - provider, exact model identifier/version, endpoint identity, sampling/tool settings, context limits, and seed when the provider actually supports one;
 - time/resource/network policy and the names—not values—of secrets granted to each phase; and
@@ -170,7 +168,7 @@ The adapters may normalize invocation and capture, but must not normalize agent 
 
 ### Repository materialization
 
-A task package must contain or build exactly one verified repository snapshot. The agent receives a writable copy at the declared checkout path. Trial setup must fail closed if the tree identity differs from the manifest. Build-time downloads, mutable base-image tags, named writable volumes, host bind mounts, and unversioned package installs are outside the reproducible profile unless separately digested and recorded.
+One project scenario is materialized as one Harbor task whose package contains or builds exactly one verified evaluated-repository snapshot. The agent receives a writable copy at the declared checkout path. Trial setup must fail closed if the tree identity differs from the manifest. Build-time downloads, mutable base-image tags, named writable volumes, host bind mounts, and unversioned package installs are outside the reproducible profile unless separately digested and recorded.
 
 This is a project policy implemented around Harbor task/image preparation, not a second sandbox lifecycle. Harbor remains responsible for creating and deleting the writable trial environment.
 

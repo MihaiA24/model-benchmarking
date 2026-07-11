@@ -16,8 +16,12 @@ _Avoid_: Harness, experiment coordinator
 The project-owned layer that declares comparable conditions, binds harness adapters to scenarios, preserves paired-trial identity, and seals result evidence while delegating execution to the benchmark substrate.
 _Avoid_: Runner, harness
 
+**Evaluated repository**:
+The immutable codebase snapshot that a harness may modify while attempting a scenario.
+_Avoid_: Repository under test, subject repository, repository being edited
+
 **Scenario**:
-A versioned real-code challenge presented to every compared harness under the same repository baseline, instruction, environment policy, and verification contract.
+A versioned real-code challenge presented to every compared harness under the same evaluated-repository baseline, instruction, environment policy, and verification contract. Each scenario is materialized as one benchmark-substrate task while retaining its own substrate-independent identity.
 _Avoid_: Prompt, test case
 
 **Trial**:
