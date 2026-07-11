@@ -28,6 +28,14 @@ _Avoid_: Prompt, test case
 One harness's single autonomous attempt at one scenario from a fresh baseline under one declared condition.
 _Avoid_: Run, experiment
 
+**Matched block**:
+A predeclared set containing one trial per eligible harness under the same scenario, provider/model profile, worker profile, budgets, and repetition ordinal; the unit used for paired comparison.
+_Avoid_: Batch, group of runs
+
+**Analysis stratum**:
+A result slice whose suite visibility, workload, provider/model profile, worker profile, and compatible scenario/verifier versions may be summarized without pooling materially different evidence.
+_Avoid_: Leaderboard, overall result
+
 **Result bundle**:
 A content-addressed, write-once collection of a trial's declared identities, raw outputs, verification evidence, operational records, and file digests.
 _Avoid_: Report, score
