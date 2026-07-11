@@ -20,9 +20,37 @@ _Avoid_: Runner, harness
 The immutable codebase snapshot that a harness may modify while attempting a scenario.
 _Avoid_: Repository under test, subject repository, repository being edited
 
+**Pristine Source Snapshot**:
+The provenance-bearing upstream code snapshot from which a Scenario Baseline is deterministically derived.
+_Avoid_: Clean baseline, upstream repo
+
+**Scenario Baseline**:
+The exact initialized evaluated-repository tree presented identically to every Harness for a Scenario.
+_Avoid_: Buggy baseline, task workspace
+
 **Scenario**:
 A versioned real-code challenge presented to every compared harness under the same evaluated-repository baseline, instruction, environment policy, and verification contract. Each scenario is materialized as one benchmark-substrate task while retaining its own substrate-independent identity.
 _Avoid_: Prompt, test case
+
+**Scenario Package**:
+The canonical versioned collection that defines one Scenario's immutable inputs, developer-facing instruction, execution policy, verification contract, provenance, and supporting assets.
+_Avoid_: Task file, prompt bundle
+
+**Developer Brief**:
+The single immutable, harness-neutral statement of work presented to a Harness for a Scenario.
+_Avoid_: Prompt, harness instructions
+
+**Check Group**:
+A stable verifier unit that combines one or more checks into a predeclared acceptance, regression, or domain outcome without giving extra weight to scenarios that contain more tests.
+_Avoid_: Test count, reward component
+
+**Submission**:
+The host-derived repository patch or explicitly declared non-patch artifact transferred from a completed agent environment into a fresh verifier environment.
+_Avoid_: Agent response, workspace snapshot
+
+**Reference Solution**:
+An author-only valid implementation used to prove that a Scenario is solvable and its verifier can recognize success, never as a similarity target.
+_Avoid_: Golden patch, expected implementation
 
 **Trial**:
 One harness's single autonomous attempt at one scenario from a fresh baseline under one declared condition.
@@ -59,6 +87,10 @@ _Avoid_: Shared trial cache, persistent workspace
 **Stock profile**:
 One pinned harness release or commit plus its versioned minimal configuration, preserving that harness's native autonomous behavior while varying only declared experimental controls.
 _Avoid_: Shared agent profile, normalized harness
+
+**Execution Profile**:
+A frozen benchmark-wide set of environment, resource, network, verification, and evidence controls applied identically across a comparison stratum.
+_Avoid_: Harness profile, task configuration
 
 **Credential proxy**:
 A benchmark-controlled boundary that holds provider credentials and gives a trial only narrowly scoped access to its declared model route.
