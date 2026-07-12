@@ -186,6 +186,10 @@ _Avoid_: Batch, group of runs
 A result slice whose suite visibility, workload, provider/model profile, worker profile, and compatible scenario/verifier versions may be summarized without pooling materially different evidence.
 _Avoid_: Leaderboard, overall result
 
+**Smallest Worthwhile Difference**:
+The predeclared minimum outcome difference large enough to change an organizational Harness-routing decision within one Analysis Stratum.
+_Avoid_: Detectable effect, post-hoc threshold
+
 **Structural Missingness**:
 The absence of a Trial because a planned Harness condition is unsupported or unqualified. It is reported as missing common support, never converted to a score or Harness failure.
 _Avoid_: Failed Trial, zero score
