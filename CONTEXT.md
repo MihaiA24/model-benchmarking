@@ -66,6 +66,30 @@ _Avoid_: Private suite release, private package manifest
 A non-measured collection of migrated historical tasks that exercises the real package, adapter, execution, and verifier path without entering production Matched Blocks, workload scores, Public or Private Suite reports, or comparative claims.
 _Avoid_: Legacy benchmark, third benchmark suite
 
+**Suite namespace**:
+One of the closed `public`, `private`, or `calibration` release streams, each with independent version identity, disclosure, and evidence-use boundaries.
+_Avoid_: Report tab, shared suite counter
+
+**Suite Version**:
+The human-facing monotonically increasing SemVer label of a Suite Release within one Suite namespace.
+_Avoid_: Scenario version, manifest digest
+
+**Suite Release**:
+A sealed Suite manifest identified by its Suite namespace, Suite Version, and manifest SHA-256 digest. A production experiment pins one Public and one Private Suite Release without pooling their evidence.
+_Avoid_: Mutable portfolio, benchmark result
+
+**Suite Compatibility Record**:
+A sealed dimension-by-dimension assessment of whether two Suite Releases have identical, proven-equivalent, incompatible, or unassessed Scenario, scoring, weighting, estimand, claim, and analysis semantics.
+_Avoid_: SemVer inference, blanket compatibility flag
+
+**Bridge Study**:
+A separately planned diagnostic experiment that reruns unchanged anchor Scenarios contemporaneously under otherwise identical conditions to compare Suite Releases without pooling their fixed-suite results.
+_Avoid_: Cross-version pooling, carried-forward Trial
+
+**Production Experiment Manifest**:
+A sealed declaration of the exact Suite Releases, Harness and model conditions, execution and worker controls, matched design, repetitions, and analysis implementation used by one production experiment.
+_Avoid_: Suite Release, mutable coordinator state
+
 **Clean-room representative repository**:
 A legally redistributable repository authored without copying confidential company source or data, designed to reproduce professionally relevant framework and maintenance characteristics for Private Suite Scenarios.
 
@@ -85,6 +109,18 @@ A bounded professional Scenario requiring deeper investigation, a broader change
 **Scenario Package**:
 The canonical versioned collection that defines one Scenario's immutable inputs, developer-facing instruction, execution policy, verification contract, provenance, and supporting assets.
 _Avoid_: Task file, prompt bundle
+
+**Scenario Version**:
+The SemVer-plus-digest identity of a Scenario's baseline, Developer Brief, declared resources, Submission boundary, and observable task meaning.
+_Avoid_: Suite Version, package digest alone
+
+**Verifier Version**:
+The SemVer-plus-digest identity of a Scenario's executable checks, fixtures, verifier environment, and verification behavior.
+_Avoid_: Score Contract Version, Harbor version
+
+**Score Contract Version**:
+The SemVer-plus-digest identity of a Scenario's Check Groups, requiredness, total-scoring rules, directions, weights, and missingness semantics.
+_Avoid_: Verifier Version, report formula
 
 **Developer Brief**:
 The single immutable, harness-neutral statement of work presented to a Harness for a Scenario.
