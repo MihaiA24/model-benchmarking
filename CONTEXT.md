@@ -238,6 +238,10 @@ _Avoid_: Shared agent profile, normalized harness
 A frozen benchmark-wide set of environment, resource, network, verification, and evidence controls applied identically across a comparison stratum.
 _Avoid_: Harness profile, task configuration
 
+**Resolved Execution Profile**:
+A deterministic projection of one Planned Trial Cell's applicable Execution Profile, Scenario requirements, experiment controls, Worker Profile, and approved exception, retained with its authoritative inputs for validation rather than treated as a new source of policy.
+_Avoid_: Runtime defaults, merged configuration authority
+
 **Credential proxy**:
 A benchmark-controlled boundary that holds provider credentials and gives a trial only narrowly scoped access to its declared model route.
 _Avoid_: Shared API key, secret mount
