@@ -98,6 +98,10 @@ _Avoid_: Test count, reward component
 The host-derived repository patch or explicitly declared non-patch artifact transferred from a completed agent environment into a fresh verifier environment.
 _Avoid_: Agent response, workspace snapshot
 
+**Final Repository Capture**:
+The trusted host's normalized, completeness-bearing identity of the evaluated repository after the Harness process tree stops, from which the Submission is derived.
+_Avoid_: Submission, workspace archive
+
 **Reference Solution**:
 An author-only valid implementation used to prove that a Scenario is solvable and its verifier can recognize success, never as a similarity target.
 _Avoid_: Golden patch, expected implementation
@@ -105,6 +109,38 @@ _Avoid_: Golden patch, expected implementation
 **Trial**:
 One harness's single autonomous attempt at one scenario from a fresh baseline under one declared condition.
 _Avoid_: Run, experiment
+
+**Planned Trial Cell**:
+One predeclared Harness-condition slot in the intended comparison design. An eligible cell may be fulfilled by an analysis-eligible Trial; an unsupported or unqualified cell remains structural missingness outside a complete Matched Block.
+_Avoid_: Trial, result row
+
+**Trial Attempt Record**:
+The immutable terminal Run Ledger record for one coordinator attempt to fulfill a Planned Trial Cell, including an attempt that ends before a measured Trial starts. It links any started Trial and its Result Bundle.
+_Avoid_: Mutable run row, report row
+
+**Replacement Trial**:
+The single new Trial Attempt permitted for a Planned Trial Cell after its prior attempt ends `not_started` or `invalid_infrastructure`, under the identical Condition Fingerprint.
+_Avoid_: Retry, rerun, second repetition
+
+**Condition Fingerprint**:
+A digest derived deterministically from the canonical typed identities fixed by a Planned Trial Cell. It proves equality of the recorded condition without replacing its component provenance.
+_Avoid_: Opaque condition ID, proof of immutable model weights
+
+**Declared Control Profile**:
+The frozen allowlisted provider, model, Harness, adapter, and execution controls that define a Planned Trial Cell, including explicit omission or default states but no secret values.
+_Avoid_: Environment dump, requested-model string
+
+**Qualification Bundle**:
+A content-addressed evidence artifact proving before measured Trials that one exact Harness, Stock Profile, adapter, Provider Route, Execution Profile, and Worker Profile combination honors its Declared Control Profile and required enforcement boundary.
+_Avoid_: Trial result, configuration claim
+
+**Observed Control Projection**:
+The terminal Trial Attempt Record's structured account of controls actually observed by the launch shim, Harness, and Credential Proxy, backed by redacted raw evidence in the Result Bundle.
+_Avoid_: Requested configuration, raw environment
+
+**Pricing Record**:
+An immutable versioned statement of provider prices, units, currency, applicability, effective interval, source, and content digest used to derive Trial cost from provider-reported usage.
+_Avoid_: Mutable price table, rounded cost
 
 **Matched block**:
 A predeclared set containing one trial per eligible harness under the same scenario, provider/model profile, worker profile, budgets, and repetition ordinal; the unit used for paired comparison.
@@ -114,9 +150,33 @@ _Avoid_: Batch, group of runs
 A result slice whose suite visibility, workload, provider/model profile, worker profile, and compatible scenario/verifier versions may be summarized without pooling materially different evidence.
 _Avoid_: Leaderboard, overall result
 
+**Structural Missingness**:
+The absence of a Trial because a planned Harness condition is unsupported or unqualified. It is reported as missing common support, never converted to a score or Harness failure.
+_Avoid_: Failed Trial, zero score
+
 **Result bundle**:
 A content-addressed, write-once collection of a trial's declared identities, raw outputs, verification evidence, operational records, and file digests.
 _Avoid_: Report, score
+
+**Artifact Descriptor**:
+The canonical identity and availability record for one declared or collected Result Bundle artifact, based on its logical role, bundle-relative path, byte length, SHA-256 digest, sensitivity, and capture state.
+_Avoid_: Absolute path, object-store URL, placeholder file
+
+**Secret-safe Provenance**:
+Evidence that identifies a credential's declared purpose, scope, injection boundary, and redaction treatment without retaining its value, access-granting identifier, or reusable hash.
+_Avoid_: Secret dump, credential hash
+
+**Run Ledger**:
+The versioned, append-only canonical structured record of Planned Trial Cells, terminal Trial Attempt Records, and Ledger Amendments. Reports and query stores are derived from it.
+_Avoid_: Metrics CSV, dashboard database, mutable results table
+
+**Ledger Amendment**:
+An immutable Run Ledger record that corrects, supersedes, or invalidates an earlier record by reference without rewriting or deleting it.
+_Avoid_: In-place edit, silent correction
+
+**Canonical Derived Projection**:
+A deterministically recomputable value stored with its authoritative inputs and derivation-rule identity for validation and consumption, without outranking those inputs.
+_Avoid_: Source fact, report aggregate
 
 **Agent environment**:
 The disposable trial boundary in which one harness and its model-controlled processes may inspect and modify the evaluated repository. Everything inside it is presumed visible and mutable to the harness.
@@ -145,3 +205,7 @@ _Avoid_: Harness profile, task configuration
 **Credential proxy**:
 A benchmark-controlled boundary that holds provider credentials and gives a trial only narrowly scoped access to its declared model route.
 _Avoid_: Shared API key, secret mount
+
+**Provider Route**:
+The declared provider endpoint and routing boundary through which a Trial's model requests pass, recorded separately from the requested and provider-reported model identities.
+_Avoid_: Model, Harness endpoint
