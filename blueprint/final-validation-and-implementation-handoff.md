@@ -1,6 +1,7 @@
 # Validate the blueprint and set the implementation handoff
 
-**Status:** Working decision record — not yet accepted
+**Status:** Final decision
+**Decision date:** 2026-07-13
 **Map:** [Design a real-world CLI benchmark for coding-agent harnesses](https://github.com/MihaiA24/model-benchmarking/issues/13)
 **Ticket:** [Validate the blueprint and set the implementation handoff](https://github.com/MihaiA24/model-benchmarking/issues/25)
 
@@ -87,9 +88,9 @@ The blueprint is ready to leave Wayfinder only when the implementation backlog a
 9. **Portfolio closure:** all 12 Public and 12 access-controlled Private Scenario Packages pass the common authoring, independent-review, provenance, leakage, solvability, and repeatability gates before Suite sealing.
 10. **No operation by implication:** qualification proves readiness; pilot and production operation remain separately authorized work using sealed inputs and budget approval.
 
-## Draft implementation frontier
+## Published implementation frontier
 
-The implementation issues will live outside the Wayfinder hierarchy. They will be linked here by verified title and URL after human acceptance and creation.
+The 21 implementation issues live outside the Wayfinder hierarchy. Each is open with exactly the `enhancement` category and `ready-for-agent` readiness labels, title-wrapped parent/evidence/blocker links, and matching native `blocked by` edges. This linked graph is the sequencing source of truth.
 
 **Accepted granularity:** create 21 focused, independently claimable implementation issues. Keep the three Harness Adapters and the six Suite-visibility × ecosystem authoring slices separate so they can proceed in parallel after their shared gates.
 
@@ -99,45 +100,54 @@ Priorities use `P0` for the validity gate that can reopen the substrate, `P1` fo
 
 ### Wave 0 — retire the validity risk
 
-- Prove trusted post-stop Submission capture with pinned Harbor.
+- **P0, unblocked:** [#27 Prove trusted post-stop Submission capture with pinned Harbor](https://github.com/MihaiA24/model-benchmarking/issues/27).
 
-### Wave 1 — establish immutable contracts
+### Wave 1 — establish the canonical foundation
 
-- Establish the Python project, canonical serialization, and strict schema foundation.
-- Implement Scenario Package and `standard-v1` authoring tooling.
-- Implement Suite and experiment declaration lifecycles.
-- Implement the append-only Run Ledger and effective record projection.
+- **P1, blocked by #27:** [#28 Establish the Python project, canonical serialization, and strict schema foundation](https://github.com/MihaiA24/model-benchmarking/issues/28).
 
-### Wave 2 — build the measured Trial path
+### Wave 2 — build four parallel contract lanes
 
-- Implement the transparent Credential Proxy and common Adapter runtime.
-- Qualify the OMP Stock Profile Adapter.
-- Qualify the OpenCode Stock Profile Adapter.
-- Qualify the Hermes Stock Profile Adapter.
-- Implement single-cell Harbor execution, preflight, scheduling, and monitoring.
-- Implement trusted repository capture, Submission validation, and Result Bundle sealing.
+- **P1, blocked by #28:** [#29 Implement Scenario Package and `standard-v1` authoring tooling](https://github.com/MihaiA24/model-benchmarking/issues/29).
+- **P1, blocked by #28:** [#30 Implement Suite and experiment declaration lifecycles](https://github.com/MihaiA24/model-benchmarking/issues/30).
+- **P1, blocked by #28:** [#31 Implement the append-only Run Ledger and effective record projection](https://github.com/MihaiA24/model-benchmarking/issues/31).
+- **P1, blocked by #28:** [#32 Implement the transparent Credential Proxy and common Adapter runtime](https://github.com/MihaiA24/model-benchmarking/issues/32).
 
-### Wave 3 — build decision evidence
+### Wave 3 — qualify adapters and production design in parallel
 
-- Implement repetition selection and aggregate-spend qualification.
-- Implement disposition-aware paired analysis and sealed static reports.
+- **P1, blocked by #32:** [#33 Qualify the OMP Stock Profile Adapter](https://github.com/MihaiA24/model-benchmarking/issues/33).
+- **P1, blocked by #32:** [#34 Qualify the OpenCode Stock Profile Adapter](https://github.com/MihaiA24/model-benchmarking/issues/34).
+- **P1, blocked by #32:** [#35 Qualify the Hermes Stock Profile Adapter](https://github.com/MihaiA24/model-benchmarking/issues/35).
+- **P1, blocked by #30 and #31:** [#38 Implement repetition selection and aggregate-spend qualification](https://github.com/MihaiA24/model-benchmarking/issues/38).
 
-### Wave 4 — qualify the production interfaces
+### Wave 4 — implement the measured Trial runtime
 
-- Qualify the Legacy Calibration Suite end to end.
+- **P1, blocked by #29–#35:** [#36 Implement single-cell Harbor execution, preflight, scheduling, and monitoring](https://github.com/MihaiA24/model-benchmarking/issues/36).
 
-### Wave 5 — author the measured portfolio in parallel
+### Wave 5 — seal canonical Trial evidence
 
-- Author and qualify the Public Angular/TypeScript Scenario slice.
-- Author and qualify the Public Spring Boot/Java Scenario slice.
-- Author and qualify the Public Python data-engineering Scenario slice.
-- Author and qualify the access-controlled Private Angular/TypeScript Scenario slice.
-- Author and qualify the access-controlled Private Spring Boot/Java Scenario slice.
-- Author and qualify the access-controlled Private Python data-engineering Scenario slice.
+- **P1, blocked by #27, #31, and #36:** [#37 Implement trusted repository capture, Submission validation, and Result Bundle sealing](https://github.com/MihaiA24/model-benchmarking/issues/37).
 
-### Wave 6 — seal implementation readiness
+### Wave 6 — build decision evidence and reports
 
-- Seal the initial Suite Releases and validate implementation readiness.
+- **P1, blocked by #30, #31, #37, and #38:** [#39 Implement disposition-aware paired analysis and sealed static reports](https://github.com/MihaiA24/model-benchmarking/issues/39).
+
+### Wave 7 — qualify the complete production interface
+
+- **P1, blocked by #29 and #33–#39 as wired:** [#40 Qualify the Legacy Calibration Suite end to end](https://github.com/MihaiA24/model-benchmarking/issues/40).
+
+### Wave 8 — author the measured portfolio in parallel
+
+- **P2, blocked by #40:** [#41 Author and qualify the Public Angular/TypeScript Scenario slice](https://github.com/MihaiA24/model-benchmarking/issues/41).
+- **P2, blocked by #40:** [#42 Author and qualify the Public Spring Boot/Java Scenario slice](https://github.com/MihaiA24/model-benchmarking/issues/42).
+- **P2, blocked by #40:** [#43 Author and qualify the Public Python data-engineering Scenario slice](https://github.com/MihaiA24/model-benchmarking/issues/43).
+- **P2, blocked by #40:** [#44 Author and qualify the access-controlled Private Angular/TypeScript Scenario slice](https://github.com/MihaiA24/model-benchmarking/issues/44).
+- **P2, blocked by #40:** [#45 Author and qualify the access-controlled Private Spring Boot/Java Scenario slice](https://github.com/MihaiA24/model-benchmarking/issues/45).
+- **P2, blocked by #40:** [#46 Author and qualify the access-controlled Private Python data-engineering Scenario slice](https://github.com/MihaiA24/model-benchmarking/issues/46).
+
+### Wave 9 — seal implementation readiness
+
+- **P1, blocked by #30, #38–#40, and #41–#46:** [#47 Seal the initial Suite Releases and validate implementation readiness](https://github.com/MihaiA24/model-benchmarking/issues/47).
 
 ## Deduplication and ownership decisions
 
@@ -165,6 +175,6 @@ Priorities use `P0` for the validity gate that can reopen the substrate, `P1` fo
 - No generic Harness plugin system, generalized command-template language, protocol-translating model gateway, profile inheritance, arbitrary extension map, digest negotiation, or storage-provider abstraction.
 - No confidential company source or data, unresolved external datasets, subjective trace scoring, universal weighted winner, or pilot/production campaign operation.
 
-## Decisions pending
+## Completion state
 
-The handoff destination, 21-issue granularity, and dependency policy are accepted. This record remains working and the Wayfinder ticket remains open until every dispatched audit is accounted for, each implementation issue and dependency is published, and the tracker graph is verified.
+The handoff destination, 21-issue granularity, and dependency policy are accepted. All three dispatched audits are accounted for. Issues #27–#47 were fetched individually and verified open with the required sections, parent/evidence links, labels, title-wrapped blocker links, and 48 matching native dependency edges. The recommended starting frontier is issue #27 only; no downstream issue should be claimed before its blockers close. Pilot and production execution remain outside this implementation backlog.
