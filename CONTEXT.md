@@ -32,6 +32,56 @@ _Avoid_: Buggy baseline, task workspace
 A versioned real-code challenge presented to every compared harness under the same evaluated-repository baseline, instruction, environment policy, and verification contract. Each scenario is materialized as one benchmark-substrate task while retaining its own substrate-independent identity.
 _Avoid_: Prompt, test case
 
+**Workload Family**:
+The single primary category of professional change a Scenario asks a Harness to perform: Defect diagnosis and repair, Bounded feature implementation, Test generation and hardening, or Repository evolution. It is not a verifier category, and each Scenario belongs to exactly one family for analysis.
+_Avoid_: Task type, secondary tag
+
+**Defect diagnosis and repair**:
+Locate and correct a seeded behavioral defect while preserving applicable regressions.
+
+**Bounded feature implementation**:
+Add observable behavior integrated into an existing Evaluated Repository, including repository-integrated creation of a new component, module, or pipeline.
+
+**Test generation and hardening**:
+Add executable tests for existing behavior, edge cases, and regression protection without changing production behavior except through explicitly permitted testability seams.
+
+**Repository evolution**:
+Perform a bounded dependency, framework, API, schema, or configuration migration while preserving declared behavior and compatibility.
+
+**Initial Scenario Portfolio**:
+The frozen set of 24 independently authored Scenarios selected for the first benchmark: one Scenario in every ecosystem-by-Workload-Family cell of each 12-Scenario Public or Private Suite.
+_Avoid_: Task list, scenario pool
+
+**Public Suite**:
+The 12-Scenario disclosure namespace whose complete Scenario Packages may be released for independent reproduction. Its results remain a separate Analysis Stratum from the Private Suite.
+
+**Private Suite**:
+The 12-Scenario access-controlled namespace containing Scenarios substantively distinct from the Public Suite. Its packages, verifier assets, expected outputs, and canonical Result Bundles remain private; `private` describes benchmark disclosure, not proprietary production source.
+
+**Private Suite Commitment**:
+A pre-trial content-addressed commitment to the exact access-controlled Private Suite manifest and Scenario Package digests, proving that the held-out portfolio was frozen before outcomes were observed without revealing its contents.
+_Avoid_: Private suite release, private package manifest
+
+**Legacy Calibration Suite**:
+A non-measured collection of migrated historical tasks that exercises the real package, adapter, execution, and verifier path without entering production Matched Blocks, workload scores, Public or Private Suite reports, or comparative claims.
+_Avoid_: Legacy benchmark, third benchmark suite
+
+**Clean-room representative repository**:
+A legally redistributable repository authored without copying confidential company source or data, designed to reproduce professionally relevant framework and maintenance characteristics for Private Suite Scenarios.
+
+**Evaluated Repository lineage**:
+A shared upstream repository or derivative history whose reuse can correlate Scenario familiarity, structure, dependencies, and contamination risk even when commits or seed mutations differ.
+
+**Synthetic Data Fixture**:
+A deterministic generated dataset whose versioned schema, generator, seed, distributions, invariants, and content digest reproduce professionally relevant data behavior without copying production or externally licensed records.
+_Avoid_: Fake data, sample CSV
+
+**Standard Scenario**:
+A bounded professional Scenario requiring meaningful repository investigation and iterative verification without unusually broad cross-layer coordination.
+
+**Challenging Scenario**:
+A bounded professional Scenario requiring deeper investigation, a broader change surface, cross-layer coordination, or more involved build/test feedback than a Standard Scenario. The band is assigned before measured Trials and is not inferred from Harness success.
+
 **Scenario Package**:
 The canonical versioned collection that defines one Scenario's immutable inputs, developer-facing instruction, execution policy, verification contract, provenance, and supporting assets.
 _Avoid_: Task file, prompt bundle
