@@ -136,7 +136,7 @@ Stop agent-visible sidecars before verification. When verification needs a servi
 
 Always preserve host-captured sidecar logs. A scenario may also declare final-state exports collected after the agent stops and before teardown. Prefer logical exports such as SQL dumps, SQLite databases, schema snapshots, or declared query outputs over raw volume snapshots. Seal each export into the result bundle with its digest, byte length, media type, and sensitivity classification; never restore it into a later trial.
 
-When sidecar state is the task submission, materialize the declared export in the separate verifier under the same safe-handoff rules. Failure to produce a mandatory export is `invalid_infrastructure`; preserve a missing-evidence marker for optional diagnostics without invalidating the trial. Harbor's declared and sidecar artifact facilities remain the storage lifecycle; add only scenario-specific export hooks.
+When sidecar state is the task Submission, materialize the declared export in the separate verifier under the same safe-handoff rules. Distinguish the producing boundary: an absent or malformed Harness-produced logical export after complete trusted capture is a deterministic `valid_harness_outcome`; failure of the trusted Harbor/collector hook to capture an existing or indeterminately observed mandatory export is `invalid_infrastructure`. Preserve precise producer, capture-completeness, and reason evidence. A missing optional diagnostic remains explicit without invalidating the Trial. Harbor's declared and sidecar artifact facilities remain the storage lifecycle; add only scenario-specific export hooks.
 
 ## Qualification gates
 

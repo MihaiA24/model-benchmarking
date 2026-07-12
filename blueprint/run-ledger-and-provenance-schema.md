@@ -25,12 +25,12 @@ This boundary preserves the frozen comparison design, records every physical att
 
 Keep every independently versioned boundary as a separate typed identity rather than hiding provenance inside one composite identifier. A Planned Trial Cell and its Trial Attempt Records preserve:
 
-- Suite release identity and its public or private namespace, plus the Private Suite Commitment and access-controlled manifest identity where applicable;
-- Scenario ID and version, Scenario Package payload and lock digests, Developer Brief digest, and resolved Scenario Baseline tree digest;
+- Suite Release identity and its Public or Private namespace, plus the Private Suite Commitment and access-controlled Private Roster Manifest identity where applicable;
+- Scenario ID and independent Scenario Version, Verifier Version, and Score Contract Version identities; Scenario Package payload and lock digests; Package Qualification Record; Developer Brief digest; and resolved Scenario Baseline tree digest;
 - pinned Harbor release and commit, Harbor task checksum, lock and job-configuration digests, and Harbor-native job and Trial UUIDs;
 - Harness identity, pinned Stock Profile, CLI artifact, adapter declaration, and launch-shim digests;
 - provider identity, endpoint and route identity, requested model identifier, provider-reported model or revision when exposed, and effective supported settings; and
-- resolved Execution Profile and Worker Profile identities, budgets, planned and actual execution order, repetition ordinal, workload and analysis-stratum labels, and frozen analysis-manifest identity.
+- resolved Execution Profile and Worker Profile identities, Worker Qualification Record, budgets, Production Design Selection for production cells, planned and actual execution order, repetition ordinal, workload and analysis-stratum labels, and frozen analysis-manifest identity.
 
 The typed identities are authoritative. Derive one **Condition Fingerprint** deterministically from their canonical serialization to prove equality and support joins, but never use it as a substitute for the component identities.
 
@@ -103,12 +103,12 @@ Only a Trial Attempt with effective disposition `not_started` or `invalid_infras
 
 Never replace `valid_completed`, `valid_harness_outcome`, `valid_limit_outcome`, `invalid_integrity`, or `aborted_operator`. An integrity invalidation pauses the affected batch for investigation; an operator abort remains an incomplete cell. Neither creates another opportunity for the Harness condition.
 
-Use Ledger Amendments for all post-seal lineage changes:
+Use exactly one closed Ledger Amendment operation for every post-seal lineage change. Reject unknown operations, multiple operations in one Amendment, cycles, a second replacement designation for one Planned Trial Cell, and any chain that yields more than one analysis-active attempt:
 
-- replacement designation identifies the one allowed replacement as the cell's analysis-active attempt;
-- correction supplies a corrected projection, reason, evidence, author, and timestamp while preserving the original facts;
-- supersession points from an earlier record to its authoritative successor; and
-- invalidation preserves the record and artifacts while naming the affected scope and exclusion reason.
+- `replacement_designation` identifies the one allowed replacement as the cell's analysis-active attempt;
+- `correction` supplies a corrected projection, reason, evidence, author, and timestamp while preserving the original facts;
+- `supersession` points from an earlier record to its authoritative successor; and
+- `invalidation` preserves the record and artifacts while naming the affected scope and exclusion reason.
 
 Later verifier defects, contamination, or Scenario Package errors invalidate the affected evidence and normally require a new Suite Version rather than retroactive replacement. Reports resolve the append-only amendment chain into an effective view while still publishing original, replaced, superseded, corrected, and invalidated counts.
 
@@ -133,6 +133,19 @@ Keep four outcome projections orthogonal and assign a distinct trusted authority
 The trusted host owns the **Final Repository Capture**: Scenario Baseline tree digest, final normalized repository-tree digest, capture completeness, changed, added and deleted path inventory, normalized host-derived patch digest and reference, and repository-policy violations found during capture. A captured repository with no changes is an explicit no-op, not a missing Submission.
 
 The trusted handoff validator owns the Submission outcome: accepted normalized patch, accepted no-op, accepted declared non-patch artifact, or rejected handoff with its exact reason and safe evidence reference. Never transfer the final workspace wholesale. A rejected handoff remains a valid Harness outcome and follows the Scenario Package's deterministic rejected or no-submission scoring rule.
+
+Use one total capture-to-verification state machine; do not infer disposition from a missing path alone:
+
+| Trusted observed state | Verifier materialization | Disposition authority |
+| --- | --- | --- |
+| Complete Final Repository Capture with no changed bytes | accepted no-op | verifier-derived valid outcome scored against the unchanged baseline |
+| Complete capture with a valid normalized patch | accepted patch only | verifier-derived valid outcome |
+| Complete capture but absent/malformed declared Harness-produced non-patch artifact | declared deterministic no-submission/rejected input | `valid_harness_outcome` unless a declared limit caused it |
+| Complete capture with an unsafe or policy-rejected handoff | declared deterministic rejected input | `valid_harness_outcome` or `invalid_integrity` only when separate integrity evidence proves tampering/breach |
+| Incomplete Final Repository Capture or failed trusted collector/handoff machinery independent of Harness output | no verifier observation | `invalid_infrastructure` |
+| Complete accepted Submission but verifier infrastructure fails independently of submitted code | no authoritative score vector | `invalid_infrastructure` |
+
+The Scenario Score Contract specifies deterministic scoring for accepted no-op, missing Harness-produced output, and rejected handoff. Infrastructure-invalid rows never materialize the baseline as a synthetic Harness Submission and never receive task-quality scores.
 
 The project verifier owns the verification outcome: every predeclared Check Group with `pass`, `fail`, `error`, or `not_evaluable`; evidence references for every group; the complete `task_success`, acceptance, regression, and domain-score vector; and verifier execution and completeness status. Derive `task_success` and numeric scores from the named Check Groups and frozen weights. The structured verifier result is authoritative, while Harbor's numeric reward is a required projection that must agree exactly. A projection mismatch or verifier failure independent of submitted code is `invalid_infrastructure`, not a failed Check Group.
 
@@ -186,7 +199,7 @@ Classify every field into one of three authority classes.
 
 **Report-only derivations** never flow back into canonical Trial records: cross-cell denominators and disposition counts; scenario, workload and model aggregates; paired differences and ratios; uncertainty intervals; bootstrap and exact-test results; multiplicity adjustments; probability of improvement; performance profiles; Pareto sets; winner, no-winner and routing conclusions; quality-per-cost summaries; and anonymized presentation labels.
 
-Seal every report as a derivative that records its input ledger and bundle-set digest, analysis-manifest identity and digest, analysis code and environment identity, random seed and resample count, generation time, and formula or column provenance. A report may filter only according to the frozen analysis manifest and effective amendment chain; it cannot invent eligibility or overwrite canonical outcomes.
+Seal every report as a derivative that records its input ledger and bundle-set digest, analysis-manifest identity and digest, analysis code and environment identity, random seed and resample count or exact-enumeration identity, sealed deterministic generation epoch, and formula or column provenance. Actual publication time is a separate append-only report-registry event outside the reproducible payload digest. A report may filter only according to the frozen analysis manifest and effective amendment chain; it cannot invent eligibility or overwrite canonical outcomes.
 
 ## Dependency reconciliation
 

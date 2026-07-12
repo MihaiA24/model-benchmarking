@@ -37,7 +37,7 @@ Never pool across these boundaries in a primary result:
 - workload family;
 - materially different provider/model profile;
 - materially different worker profile;
-- incompatible scenario or verifier major version; or
+- incompatible Scenario, Verifier, or Score Contract Version; or
 - qualification profile with different effective settings or tool availability.
 
 Report each exact model profile separately. A cross-model workload summary is allowed only when model profiles and weights were predeclared and every compared harness is eligible in every included cell. Preserve harness-by-model interaction instead of hiding it behind a single average.
@@ -48,10 +48,10 @@ Public and private suites remain separate evidence. They may be shown side by si
 
 A complete matched block contains exactly one planned trial for each eligible harness and fixes:
 
-- suite and scenario version/digests;
+- Suite Release plus independent Scenario, Verifier, and Score Contract Version identities and package digests;
 - workload label;
 - provider, exact model identifier or declared alias limitation, endpoint, and effective supported settings;
-- instruction, verifier, budget, image, adapter, and worker-profile identities;
+- instruction, verifier, score-contract, budget, image, adapter, Worker Profile, and Worker Qualification identities;
 - repetition ordinal and block identifier; and
 - a predeclared randomized harness order.
 
@@ -84,7 +84,7 @@ Preserve raw check counts and logs. Aggregation uses equal scenario weight withi
 The scenario package must define a total, deterministic scoring path for every valid terminal harness outcome:
 
 - A safe partial patch is verified normally, including after a budget limit.
-- A missing submission materializes as the declared no-op baseline: `task_success=false`, acceptance is scored against the unchanged baseline, and regression behavior remains measurable.
+- After a complete trusted Final Repository Capture, a missing Harness-produced Submission materializes as the Score Contract's declared no-op/rejected input: `task_success=false`, acceptance is scored against the unchanged baseline where applicable, and regression behavior remains measurable. An incomplete trusted capture or failed collector is `invalid_infrastructure` and never fabricates a baseline Submission or quality score.
 - An empty, malformed, oversized, unsafe, or otherwise rejected handoff has `task_success=false` and a predeclared score mapping that cannot reward an unusable artifact. Preserve the rejection reason and raw artifact evidence.
 - A harness crash or non-zero exit does not by itself assign quality. The verifier/no-submission rule assigns quality; the process outcome remains a separate dimension.
 - A verifier failure caused by submitted code is a valid harness outcome. A verifier infrastructure failure independent of the submission is `invalid_infrastructure` and not a quality score.
@@ -130,15 +130,19 @@ Use equal released-scenario weights unless the suite manifest predeclares differ
 4. a performance profile over meaningful score thresholds; and
 5. pairwise probability of improvement with an interval.
 
-For `task_success`, also report the paired discordance table and exact McNemar analysis. The effect estimate and interval remain primary; a p-value is corroborating evidence, never the conclusion by itself.
+For `task_success`, also report the paired discordance table and exact McNemar analysis. Use the two-sided exact binomial McNemar p-value on discordant counts, capped at one; when there are no discordant pairs, set `p = 1`. The effect estimate and interval remain primary; a p-value is corroborating evidence, never the conclusion by itself.
 
 For cost, elapsed time, and positive resource measures, report paired absolute differences and ratios where defined. Keep failed and limited valid attempts in the unconditional expected-consumption estimand. Conditional “cost per success” may be shown only as a clearly labelled secondary ratio with both numerator and success denominator; never use it to hide expensive failures or divide by a near-zero success rate.
 
 ### Bootstrap structure
 
-Use a deterministic recorded random seed and at least 50,000 resamples for published intervals. Preserve the complete harness vector when resampling a matched block.
+Freeze one executable interval specification in the Suite-owned analysis semantics and record its implementation/environment identity in every experiment. Preserve the complete Harness vector whenever a Matched Block is resampled.
 
-- **Fixed-suite interval:** keep released scenarios fixed; within each scenario/model cell, resample matched repetition blocks with replacement, then apply equal scenario weights.
+For the primary pairwise `task_success` effect, orient each difference as first-named Harness minus second-named Harness and compute the equal-Scenario mean of complete-block values in `{-1, 0, 1}`. Use the exact conditional paired stratified-bootstrap distribution: within each Scenario, raise the empirical three-point block-difference distribution to that Scenario's number of complete blocks; convolve the three Scenario distributions; and apply equal Scenario weights. Compute probabilities with integer counts or exact rationals, not binary floating-point comparisons. The 95% interval is the equal-tailed percentile interval whose lower and upper endpoints are the smallest support values with cumulative probability at least `0.025` and `0.975`. Define interval half-width as `(upper − lower) / 2`. This exact enumeration is the production interval code used inside repetition sizing and avoids a nested Monte Carlo bootstrap.
+
+For bounded secondary scores and any non-enumerable paired endpoint, use exactly 50,000 paired stratified-bootstrap resamples for a published interval. Derive every draw from a recorded root seed through a counter-based SHA-256 rejection sampler keyed by purpose, Analysis Stratum digest, contrast, resample index, Scenario identity, and draw index; publish golden vectors so dependency upgrades cannot change the stream silently. Use the same equal-tailed quantile rule. Degenerate samples produce their point-mass interval; unknown, non-finite, or empty inputs fail closed rather than inventing an interval.
+
+- **Fixed-suite interval:** keep released Scenarios fixed; within each Scenario/model cell, resample Matched Blocks with replacement, then apply equal Scenario weights.
 - **Scenario-generalization interval:** resample scenarios within a workload, then matched blocks within each sampled scenario. Label this exploratory and do not show it when too few independent scenarios make the result unstable.
 - **Model-pooled interval:** only for a predeclared model mixture; resample within scenario/model cells and apply fixed model weights. Always retain per-model results.
 
@@ -150,8 +154,8 @@ Predeclare one primary quality family per `suite visibility × workload × model
 
 Before production, declare a smallest worthwhile difference for each decision-relevant dimension in its natural units. Use this claim vocabulary:
 
-- **Supported superior:** the paired effect is beyond the predeclared worthwhile margin, its 95% interval excludes no meaningful advantage, and the corresponding primary family passes multiplicity control.
-- **Supported practically equivalent:** an equivalence procedure and predeclared symmetric margin place the full interval inside the equivalence region.
+- **Supported superior:** in the named direction, the paired point estimate is at least the predeclared worthwhile margin, the lower 95% interval endpoint is strictly greater than zero, and the corresponding exact paired test passes Holm multiplicity control at family-wise `0.05`.
+- **Supported practically equivalent:** the full 95% interval lies inside or exactly on the predeclared symmetric equivalence boundaries.
 - **Inconclusive:** the interval crosses zero, the worthwhile margin, or both; absence of significance is not equivalence.
 - **Unsupported comparison:** common support, qualification, integrity, or evidence completeness is missing.
 

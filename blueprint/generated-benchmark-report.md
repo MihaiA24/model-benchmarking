@@ -42,7 +42,7 @@ Every statistic and chart belongs to exactly one Suite visibility stratum. Switc
 
 Generate the report as a self-contained, versioned static site with immutable relative links and no live database dependency. Use this typed drill-down path:
 
-> Report → Workload Family → Scenario → Matched Block → effective Trial Attempt → Result Bundle manifest → disclosure-safe Artifact
+> Report → Workload Family → Scenario → Matched Block → Planned Trial Cell → effective Trial Attempt → Result Bundle manifest → disclosure-safe Artifact
 
 Every hop displays its typed identity, applicable content digest, disposition or claim state, denominator, replacement or amendment lineage, and access state. Workload and Scenario aggregates link to their exact contributing blocks and effective attempts rather than to a mutable query. Trial pages preserve original and effective records when a replacement or amendment exists.
 
@@ -56,7 +56,9 @@ Use one fixed neutral Harness order throughout navigation, filters, tables, lege
 
 Do not use medals, podiums, winner colors, an overall rank, or a weighted universal score. A Workload Family may headline one Harness only when it satisfies the accepted **supported strongest** rule: supported superiority to both alternatives on strict `task_success`, no supported material regression harm, and valid common-support and integrity evidence. The headline always names the Workload Family, Suite visibility, and exact model stratum to which the claim applies.
 
-When that rule is not met, headline **no unique winner** and show the applicable claim states and nondominated set without selecting a fallback winner. Cost, elapsed time, or resource use may support a routing preference only after a predeclared quality non-inferiority or minimum-quality gate is met. `inconclusive`, `supported practically equivalent`, and `unsupported comparison` remain first-class neutral states rather than visually downgraded losses.
+Apply this headline precedence before any ranking: `unsupported comparison` when compatibility, qualification, integrity, or completeness cannot support the claim; otherwise the accepted `supported strongest` headline when its full rule passes; otherwise **no unique winner**. Unsupported evidence is removed from routing and never softened into an ordinary no-winner state. `inconclusive` and `supported practically equivalent` remain first-class neutral states rather than visually downgraded losses.
+
+The initial Suite contract defines no quality non-inferiority or minimum-quality rule for operational routing. Therefore v1 reports cost, elapsed-time, resource, and Pareto evidence descriptively but emits no cheaper/faster routing preference. A later Suite Release may enable such routing only by predeclaring the exact quality gate and passing compatibility/versioning review; report code cannot invent one.
 
 ### Required page hierarchy
 
@@ -74,7 +76,7 @@ The generated site is the inspectable presentation of a frozen analysis; it is n
 
 - Public and Private Suite evidence and exact model profiles remain separate Analysis Strata and are never silently pooled.
 - The report consumes the effective append-only Run Ledger view; every aggregate is report-only and cannot overwrite canonical Trial evidence.
-- A sealed report derivative records its input ledger and bundle-set digest, analysis-manifest identity and digest, analysis code and environment identity, bootstrap seed and resample count, generation time, and formula or column provenance.
+- A sealed report derivative records its input ledger and bundle-set digest, analysis-manifest identity and digest, analysis code and environment identity, bootstrap seed and resample count or exact-enumeration identity, deterministic generation epoch, and formula or column provenance. The generation epoch is a sealed input fixed before rendering and included in canonical bytes so repeated builds are byte-identical; actual publication time belongs to a separate append-only report-registry event outside the reproducible payload digest.
 - Repetition counts, worthwhile effects, and precision targets remain owned by [Set repetition counts and precision targets](https://github.com/MihaiA24/model-benchmarking/issues/26); the report renders their frozen values without choosing them.
 - Compatibility across Suite and verifier versions remains owned by [Define suite versioning and refresh policy](https://github.com/MihaiA24/model-benchmarking/issues/23); the report fails closed rather than pooling strata without an accepted compatibility mapping.
 

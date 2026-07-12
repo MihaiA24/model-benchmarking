@@ -27,10 +27,10 @@ Sealing a Suite Release makes its canonical manifest and every transitively refe
 
 - the namespace, Suite Version, canonical manifest bytes, and manifest digest;
 - the exact Scenario roster and portfolio-cell assignments;
-- each Scenario ID and version plus its package payload, lock, Scenario Baseline, Developer Brief, verifier, scoring rule, Check Group, and weight identities;
+- each Scenario ID plus independent Scenario Version, Verifier Version, and Score Contract Version identities; package payload and lock; Scenario Baseline; Developer Brief; and Check Group identities;
 - ecosystem, Workload Family, difficulty, visibility, Evaluated Repository lineage, eligibility, disclosure, and supported-claim metadata;
-- content-addressed package-qualification evidence and every approved `standard-v1` exception; and
-- for a Private Suite Release, the access-controlled manifest identity and published Private Suite Commitment.
+- content-addressed Package Qualification Records and every approved `standard-v1` exception; and
+- for a Private Suite Release, the access-controlled Private Roster Manifest identity and the published Private Suite Commitment created from it before the outer release manifest is sealed.
 
 The manifest uses deterministic canonical serialization and a deterministic Scenario order so regenerating it from unchanged inputs reproduces the same digest. Transitive identity is strict: changing a referenced byte or semantic declaration changes the release even when a top-level locator or friendly name is unchanged.
 
@@ -128,11 +128,23 @@ A separately sealed **Production Experiment Manifest** pins:
 - pinned Harbor release, commit, task checksums, and job configuration;
 - every Harness release or commit, Stock Profile, CLI artifact, adapter declaration, and launch-shim digest;
 - Provider Route, requested model identity, effective supported settings, and explicit alias limitation;
-- resolved Execution Profile, Worker Profile, budgets, and applicable Qualification Bundles;
-- Matched Block construction, repetition count, randomized order schedule, and planned cells; and
-- analysis-manifest, implementation, environment, dependency, seed, and resample identities.
+- resolved Execution Profile, Worker Profile, Worker Qualification Record, budgets, Provisioning Manifest, and applicable Qualification Bundles;
+- accepted Production Design Selection, Matched Block construction, repetition count, randomized order schedule, and Planned Trial Cells; and
+- analysis-manifest, implementation, environment, dependency, seed, and resample-count or exact-enumeration identities.
 
 Pricing remains a separately versioned observation-time Pricing Record and does not change either the Suite Release or declared experimental condition.
+
+Enforce this field-ownership matrix rather than mirroring mutable values across artifacts:
+
+| Authority | Owns | May only reference |
+| --- | --- | --- |
+| Scenario Package and Package Qualification Record | Scenario, Verifier, Score Contract, package, baseline, brief, resource, provenance, and package-qualification identities | required Execution Profile version |
+| Suite Release | exact roster, package/component identities, Suite weights, fixed-suite estimand, practical margins, multiplicity, claim semantics, analysis semantics, disclosure, lifecycle, and compatibility | Package Qualification Records |
+| Production Design Selection | frozen pilot ledger, exact sizing/interval implementation, candidate pass rates, selected repetitions, model roster, Pricing Records, and spend qualification | Suite Releases and analysis semantics |
+| Production Experiment Manifest | Harness/Stock Profile/adapter, Provider Route/model/settings, Worker and Worker Qualification, resolved Execution Profile, budgets, randomized schedule, Planned Trial Cells, exact analysis implementation/environment/seed, and accepted Production Design Selection | Suite-owned semantics without copying or overriding them |
+| Trial Attempt Record and Result Bundle | observed lifecycle, controls, usage, evidence, outcomes, dispositions, and artifact availability | every governing declaration by typed identity |
+
+A validator rejects a field owned by another artifact when it is duplicated as a second authority, and rejects a cross-reference whose identity or semantic version does not match the owner. Experiment-varying Qualification Bundles never enter Suite identity; Suite-owned Package Qualification Records never prove an exact Harness/model/worker condition.
 
 Changing a Harness, Stock Profile, adapter, Provider Route, requested model or effective setting, Worker Profile, or analysis implementation does not by itself bump the Suite Version. It creates a new Production Experiment Manifest and Condition Fingerprint, requires every applicable qualification to run again, and remains a separate Analysis Stratum wherever effective settings, worker behavior, or analysis semantics differ.
 
@@ -175,10 +187,10 @@ No accepted dependency is reopened. Where this policy is stricter, it specialize
 
 ## Downstream contracts
 
-- [Set repetition counts and precision targets](https://github.com/MihaiA24/model-benchmarking/issues/26) supplies the practical-margin values, fixed repetitions, precision targets, and analysis-manifest values that the Suite Release and Production Experiment Manifest pin; it remains a separate unclaimed decision.
+- [Set repetition counts and precision targets](https://github.com/MihaiA24/model-benchmarking/issues/26) supplied the final practical margins, candidate repetitions, precision targets, completeness rules, and spend gates now consumed by Suite Releases, Production Design Selections, and Production Experiment Manifests.
 - [Set the benchmark architecture and reuse boundary](https://github.com/MihaiA24/model-benchmarking/issues/24) implements canonical Suite manifests, component identities, compatibility and incident records, experiment manifests, lifecycle registries, validators, sealing, qualification replay, retention, and report supersession without introducing a second runner.
 - [Validate the blueprint and set the implementation handoff](https://github.com/MihaiA24/model-benchmarking/issues/25) verifies that Suite, experiment, ledger, analysis, and report identities join; that invalidation and compatibility fail closed; and that the implementation sequence preserves every accepted boundary.
 
 ## Decision completeness
 
-All versioning, sealing, component-version, compatibility, cross-version comparison, rotation, incident-response, pinning, lifecycle, retention, and report-supersession branches are resolved. No investigation was delegated and no evidence remains outstanding. This record is the complete decision contract; implementation and the still-open repetition values remain with the named downstream tickets.
+All versioning, sealing, component-version, compatibility, cross-version comparison, rotation, incident-response, pinning, lifecycle, retention, and report-supersession branches are resolved. No investigation was delegated for this ticket and no evidence remains outstanding. This record is the complete decision contract; implementation consumes the final repetition values and the final validation handoff named above.

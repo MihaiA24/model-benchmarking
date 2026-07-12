@@ -88,14 +88,14 @@ Keep public and private package identities, task sources, execution roots, crede
 Keep the human-authored `scenario.yaml` limited to seven sections:
 
 1. `schema_version` identifies the project schema.
-2. `scenario` declares a stable scenario ID, scenario version, visibility, ecosystem, workload, and `execution_profile: standard-v1`.
+2. `scenario` declares a stable scenario ID, independent Scenario Version, visibility, ecosystem, workload, and `execution_profile: standard-v1`.
 3. `repository` declares the Pristine Source Snapshot, seed inputs, and resulting Scenario Baseline identity.
 4. `instruction` identifies `instruction.md` and its digest.
 5. `submission` declares the patch or non-patch kind and its safe handoff boundary.
-6. `verification` declares Check Groups, weights, domain scores, and total scoring rules.
+6. `verification` declares independent Verifier Version and Score Contract Version identities, Check Groups, weights, domain scores, and total scoring rules.
 7. `provenance` records authorship, source references, licenses, and contamination disclosures.
 
-Generate and commit `scenario.lock.json`; never edit it manually. The lock inventories every canonical package file except itself with byte length and digest, resolves seed inputs, OCI images, datasets, the Harbor task checksum and pinned Harbor identity, and records one canonical payload digest over that manifest. The enclosing suite release records the digest of `scenario.lock.json`. Package validation must reproduce both the lock contents and payload digest exactly or fail.
+Generate and commit `scenario.lock.json`; never edit it manually. The lock inventories every canonical package file except itself with byte length and digest, resolves seed inputs, OCI images, datasets, the Harbor task checksum and pinned Harbor identity, preserves the independent Scenario, Verifier, and Score Contract identities, and records one canonical payload digest over that manifest. The enclosing Suite Release records the digest of `scenario.lock.json`. Package validation must reproduce both the lock contents and payload digest exactly or fail.
 
 Do not put harness, provider/model, repetition, worker, randomized order, trial outcome, or pricing fields in the Scenario Package. Those vary by experiment or observation and belong to the experiment and ledger contracts.
 
@@ -134,7 +134,7 @@ Use one short workflow:
 2. Author the source snapshot, seed inputs, Developer Brief, verifier, Check Groups, and Reference Solution.
 3. Run one package checker that performs project-schema validation, cross-file checks, and pinned-Harbor task loading.
 4. Run qualification against fresh agent and verifier environments.
-5. Obtain one independent review, generate `scenario.lock.json`, and freeze the package.
+5. Obtain one independent review, generate `scenario.lock.json`, and seal one Suite-owned Package Qualification Record.
 
 Qualification must prove all of the following before a package is eligible for suite selection:
 
@@ -146,7 +146,7 @@ Qualification must prove all of the following before a package is eligible for s
 - representative malformed and unsafe handoffs are rejected according to the declared total scoring rules; and
 - measured execution requires no download.
 
-One independent reviewer confirms that the Developer Brief and verifier specify the same observable behavior, required checks do not encode an undisclosed implementation preference, provenance and licensing are complete, and the agent-visible package contains no answer leakage. Lock generation is the final step; any subsequent content change invalidates the lock and requires qualification again.
+One independent reviewer confirms that the Developer Brief and verifier specify the same observable behavior, required checks do not encode an undisclosed implementation preference, provenance and licensing are complete, and the agent-visible package contains no answer leakage. Lock generation precedes the Package Qualification Record; any subsequent content or component-identity change invalidates both and requires qualification again. The Package Qualification Record is independent of Harness, adapter, Provider Route, model, Worker Profile, or Production Experiment Manifest. Those exact-condition controls are proven later by experiment-owned Qualification Bundles.
 
 ### Cross-ecosystem portability
 

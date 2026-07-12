@@ -49,7 +49,7 @@ Add executable tests for existing behavior, edge cases, and regression protectio
 Perform a bounded dependency, framework, API, schema, or configuration migration while preserving declared behavior and compatibility.
 
 **Initial Scenario Portfolio**:
-The frozen set of 24 independently authored Scenarios selected for the first benchmark: one Scenario in every ecosystem-by-Workload-Family cell of each 12-Scenario Public or Private Suite.
+The frozen 24-cell authoring and qualification design for the first benchmark: one Scenario in every ecosystem-by-Workload-Family cell of each 12-Scenario Public or Private Suite. A cell becomes a released Scenario only after its candidate package qualifies and the Suite roster seals.
 _Avoid_: Task list, scenario pool
 
 **Public Suite**:
@@ -59,8 +59,12 @@ The 12-Scenario disclosure namespace whose complete Scenario Packages may be rel
 The 12-Scenario access-controlled namespace containing Scenarios substantively distinct from the Public Suite. Its packages, verifier assets, expected outputs, and canonical Result Bundles remain private; `private` describes benchmark disclosure, not proprietary production source.
 
 **Private Suite Commitment**:
-A pre-trial content-addressed commitment to the exact access-controlled Private Suite manifest and Scenario Package digests, proving that the held-out portfolio was frozen before outcomes were observed without revealing its contents.
+A pre-trial content-addressed commitment to the exact access-controlled Private Roster Manifest and Scenario Package digests, proving that the held-out portfolio was frozen before outcomes were observed without revealing its contents. The commitment is created before and referenced by the outer Private Suite Release manifest, so it never hashes a manifest that already contains itself.
 _Avoid_: Private suite release, private package manifest
+
+**Private Roster Manifest**:
+The access-controlled canonical roster of exact Private Scenario, Verifier, Score Contract, package-lock, and package-payload identities that forms the Private Suite Commitment preimage before the outer Private Suite Release manifest is sealed.
+_Avoid_: Private Suite Release, public commitment
 
 **Legacy Calibration Suite**:
 A non-measured collection of migrated historical tasks that exercises the real package, adapter, execution, and verifier path without entering production Matched Blocks, workload scores, Public or Private Suite reports, or comparative claims.
@@ -78,6 +82,10 @@ _Avoid_: Scenario version, manifest digest
 A sealed Suite manifest identified by its Suite namespace, Suite Version, and manifest SHA-256 digest. A production experiment pins one Public and one Private Suite Release without pooling their evidence.
 _Avoid_: Mutable portfolio, benchmark result
 
+**Package Qualification Record**:
+A Suite-owned sealed record proving that one Scenario Package is authorable, reproducible, solvable, verifier-consistent, leak-reviewed, and eligible for a Suite roster independently of any experiment-varying Harness, Provider Route, model, Worker Profile, or Production Experiment Manifest.
+_Avoid_: Qualification Bundle, Trial result
+
 **Suite Compatibility Record**:
 A sealed dimension-by-dimension assessment of whether two Suite Releases have identical, proven-equivalent, incompatible, or unassessed Scenario, scoring, weighting, estimand, claim, and analysis semantics.
 _Avoid_: SemVer inference, blanket compatibility flag
@@ -89,6 +97,10 @@ _Avoid_: Cross-version pooling, carried-forward Trial
 **Production Experiment Manifest**:
 A sealed declaration of the exact Suite Releases, Harness and model conditions, execution and worker controls, matched design, repetitions, and analysis implementation used by one production experiment.
 _Avoid_: Suite Release, mutable coordinator state
+
+**Production Design Selection**:
+The sealed output of deterministic pre-production qualification that consumes the frozen pilot ledger, repetition policy, exact analysis implementation, Pricing Records, and model roster; records candidate pass rates and aggregate-spend qualification; and authorizes one fixed repetition schedule for a Production Experiment Manifest.
+_Avoid_: Production result, mutable sizing worksheet
 
 **Clean-room representative repository**:
 A legally redistributable repository authored without copying confidential company source or data, designed to reproduce professionally relevant framework and maintenance characteristics for Private Suite Scenarios.
@@ -138,6 +150,10 @@ _Avoid_: Agent response, workspace snapshot
 The trusted host's normalized, completeness-bearing identity of the evaluated repository after the Harness process tree stops, from which the Submission is derived.
 _Avoid_: Submission, workspace archive
 
+**Trusted Submission Capture**:
+The fail-closed post-stop step that derives and validates the Final Repository Capture and Submission outside Harness control before Harbor materializes only the accepted handoff in the Verifier environment. The initial implementation must prove this with Harbor's supported main-stop-before-sidecar-collection seam or reopen the substrate fallback.
+_Avoid_: Harness-generated patch, whole-workspace transfer
+
 **Reference Solution**:
 An author-only valid implementation used to prove that a Scenario is solvable and its verifier can recognize success, never as a similarity target.
 _Avoid_: Golden patch, expected implementation
@@ -167,7 +183,7 @@ The frozen allowlisted provider, model, Harness, adapter, and execution controls
 _Avoid_: Environment dump, requested-model string
 
 **Qualification Bundle**:
-A content-addressed evidence artifact proving before measured Trials that one exact Harness, Stock Profile, adapter, Provider Route, Execution Profile, and Worker Profile combination honors its Declared Control Profile and required enforcement boundary.
+A content-addressed experiment-owned evidence artifact proving before measured Trials that one exact Harness, Stock Profile, adapter, Provider Route, Execution Profile, and Worker Profile combination honors its Declared Control Profile and required enforcement boundary. It never becomes part of Suite Release identity; package eligibility is proven by Package Qualification Records.
 _Avoid_: Trial result, configuration claim
 
 **Observed Control Projection**:
@@ -183,7 +199,7 @@ A predeclared set containing one trial per eligible harness under the same scena
 _Avoid_: Batch, group of runs
 
 **Analysis stratum**:
-A result slice whose suite visibility, workload, provider/model profile, worker profile, and compatible scenario/verifier versions may be summarized without pooling materially different evidence.
+A result slice whose suite visibility, workload, provider/model profile, worker profile, and compatible Scenario, Verifier, and Score Contract Versions may be summarized without pooling materially different evidence.
 _Avoid_: Leaderboard, overall result
 
 **Smallest Worthwhile Difference**:
@@ -211,7 +227,7 @@ The versioned, append-only canonical structured record of Planned Trial Cells, t
 _Avoid_: Metrics CSV, dashboard database, mutable results table
 
 **Ledger Amendment**:
-An immutable Run Ledger record that corrects, supersedes, or invalidates an earlier record by reference without rewriting or deleting it.
+An immutable Run Ledger record using exactly one closed operation—`correction`, `supersession`, `invalidation`, or `replacement_designation`—to update the effective interpretation or lineage of earlier records by reference without rewriting or deleting them.
 _Avoid_: In-place edit, silent correction
 
 **Canonical Derived Projection**:
@@ -245,6 +261,14 @@ _Avoid_: Harness profile, task configuration
 **Resolved Execution Profile**:
 A deterministic projection of one Planned Trial Cell's applicable Execution Profile, Scenario requirements, experiment controls, Worker Profile, and approved exception, retained with its authoritative inputs for validation rather than treated as a new source of policy.
 _Avoid_: Runtime defaults, merged configuration authority
+
+**Worker Qualification Record**:
+A sealed pre-execution assessment of one exact Worker Profile and host proving required isolation, control enforcement, private/public cache separation, cloud-metadata and personal-credential exclusion, time synchronization, capacity, and `development_only` versus claim-bearing eligibility.
+_Avoid_: Worker Profile, operator attestation
+
+**Provisioning Manifest**:
+A sealed inventory of every trusted-provisioning input and produced project, coordinator, Scenario runtime, verifier, and Harness artifact image by source, recipe, visibility-scoped cache root, immutable digest, and qualification evidence. Measured preflight verifies it without pulling or building.
+_Avoid_: Docker cache listing, mutable build log
 
 **Credential proxy**:
 A benchmark-controlled boundary that holds provider credentials and gives a trial only narrowly scoped access to its declared model route.

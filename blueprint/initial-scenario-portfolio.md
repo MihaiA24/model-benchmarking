@@ -60,26 +60,28 @@ Public and Private Suite Scenarios must not share an Evaluated Repository lineag
 
 ### Portfolio eligibility gates
 
-A candidate enters the Initial Scenario Portfolio only when all of these conditions hold:
+Use this closed pre-release state flow for every frozen portfolio cell: `authoring_target` or `private_slot` → `candidate` → `package_qualified` → `roster_selected` → `suite_sealed`. A rejected candidate becomes `rejected` with durable evidence and may be replaced only by another candidate for the same ecosystem × Workload Family × difficulty cell. No target, slot, candidate, or merely qualified package is a released Scenario until the Suite Release seals it.
+
+A candidate may become `package_qualified` and enter the selected roster only when all of these conditions hold:
 
 - it fills one required ecosystem-by-Workload-Family cell and satisfies the repository-lineage limits;
 - its Developer Brief states observable professional behavior without identifying the fix location or prescribing an implementation;
 - hidden acceptance and regression Check Groups deterministically verify behavior rather than treating compilation or build success as sufficient;
 - the unchanged Scenario Baseline fails at least one required acceptance group while passing every applicable regression group;
 - the Reference Solution produces the same successful score vector twice in fresh verifier environments;
-- all three Harness stock profiles qualify under the same `standard-v1` controls and declared task capabilities;
+- its declared capabilities fit the common `standard-v1` capability set required of all three Harness Stock Profiles; exact Harness, adapter, Provider Route, model, Execution Profile, and Worker Profile combinations qualify separately through experiment-owned Qualification Bundles before Planned Trial Cells become eligible;
 - measured execution requires no download, mutable external service, or Harness-specific tool; and
 - an independent reviewer confirms professional realism, brief/verifier alignment, implementation neutrality, licensing, bounded scope, and absence of answer leakage.
 
 Exclude token-level or explicitly located repairs, isolated utility exercises without repository integration, build-only verification, subjective or documentation-only deliverables, tasks dependent on live third-party behavior, tasks requiring unmatched Harness capabilities or budgets, and tasks whose verifier is materially vulnerable to hardcoding or test tampering.
 
-These portfolio gates specialize rather than replace the previously accepted Scenario Package qualification workflow. A candidate must pass both sets of gates before suite freeze.
+These portfolio gates specialize rather than replace the previously accepted Scenario Package qualification workflow. A candidate must pass both sets of gates and retain a Package Qualification Record before Suite sealing. The Suite Release seals package qualification evidence but never experiment-varying Qualification Bundles.
 
 ### Contamination and disclosure
 
 Publish the exact Public Suite Scenarios and their complete releasable Scenario Packages. For the Private Suite, publish only the frozen slot contracts: ecosystem, Workload Family, difficulty band, verifier shape, realism requirements, and repository-lineage limits. Keep the exact private repository refs, Developer Briefs, seeds, verifiers, Reference Solutions, and package identities in an access-controlled manifest.
 
-Before measured Trials, publish one content-addressed **Private Suite Commitment** covering the exact private manifest and Scenario Package digests. The commitment proves that the held-out portfolio was frozen before outcomes were observed without disclosing its contents; it does not make an undisclosed package reproducible by the public.
+Before measured Trials, seal the access-controlled **Private Roster Manifest** over the exact Private Scenario, Verifier, Score Contract, package-lock, and package-payload identities; hash those canonical bytes into the **Private Suite Commitment**; then seal the outer Private Suite Release manifest that references both identities. This prescribed inner-roster → commitment → outer-release order is non-circular. The commitment proves that the held-out portfolio was frozen before outcomes were observed without disclosing its contents; it does not make an undisclosed package reproducible by the public.
 
 For every candidate, record observable exposure such as public issues, patches, tests, prior benchmark use, and answer-bearing documentation. Do not claim to know whether a model trained on an artifact. Canary strings may be added as provenance markers, but they are not evidence that contamination was prevented. Discovery that private material leaked or that public material exposes the answer triggers the invalidation and rotation policy owned by [Define suite versioning and refresh policy](https://github.com/MihaiA24/model-benchmarking/issues/23).
 
