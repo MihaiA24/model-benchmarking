@@ -1,0 +1,1 @@
+{"assertions":["special file rejected","no patch artifact collected"],"case":"special-file","disposition":"rejected special file","result":"passed","test_nodeid":"tests/test_harbor_capture.py::test_unsafe_repository_state_is_rejected_without_partial_submission[special-file]"}

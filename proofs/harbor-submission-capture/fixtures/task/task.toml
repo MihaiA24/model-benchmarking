@@ -1,0 +1,29 @@
+version = "1.0"
+
+artifacts = [
+  { source = "/capture/capture.json", service = "capture" },
+  { source = "/capture/submission.patch", service = "capture" },
+]
+
+[task]
+name = "model-benchmarking/harbor-submission-capture-proof"
+description = "Proves trusted post-stop sidecar capture before a separate verifier."
+keywords = ["docker-compose", "sidecar", "submission", "separate-verifier"]
+
+[verifier]
+timeout_sec = 120.0
+environment_mode = "separate"
+
+[[verifier.collect]]
+service = "capture"
+command = "python3 /opt/capture/capture.py --repository /input/repo --baseline /opt/capture/baseline --policy /opt/capture/policy.json --output /capture"
+timeout_sec = 30.0
+
+[agent]
+timeout_sec = 60.0
+
+[environment]
+build_timeout_sec = 600.0
+workdir = "/workspace/repo"
+cpus = 1
+memory_mb = 512

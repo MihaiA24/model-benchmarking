@@ -1,0 +1,1 @@
+{"assertions":["symlink rejected without dereference","no patch artifact collected"],"case":"symlink","disposition":"rejected symlink","result":"passed","test_nodeid":"tests/test_harbor_capture.py::test_unsafe_repository_state_is_rejected_without_partial_submission[symlink]"}

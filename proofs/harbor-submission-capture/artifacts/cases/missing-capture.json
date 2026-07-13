@@ -1,0 +1,1 @@
+{"assertions":["both declared capture artifacts missing","separate verifier reward remained zero"],"case":"missing-capture","disposition":"rejected missing capture","result":"passed","test_nodeid":"tests/test_harbor_capture.py::test_missing_capture_never_becomes_an_authoritative_submission"}
