@@ -1,7 +1,7 @@
 # Choose the benchmark substrate
 
-**Decision date:** 2026-07-10  
-**Decision status:** Recommended substrate and retained boundary  
+**Decision date:** 2026-07-10\
+**Decision status:** Recommended substrate and retained boundary\
 **Primary-source cutoff:** 2026-07-10
 
 ## Decision
@@ -62,7 +62,7 @@ Material gaps:
 - `BaseInstalledAgent` and `BaseAgent` are supported extension points, but there is no generic task field containing agent argv/stdin/stdout semantics ([agent integration documentation](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/docs/content/docs/agents/index.mdx), [agent configuration model](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/models/trial/config.py)). Each CLI therefore needs a thin adapter.
 - Results preserve trial UUID, task checksum/source, agent/model/config, timing, and reward, but the result schema has no explicit `pair_id`, treatment arm, repetition ordinal, or randomization block ([trial result model](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/models/trial/result.py)). Pair assignment must be project-owned.
 - Harbor's local files are rich and machine-readable but are not, solely by being written, an immutable evidence store. **Assessment:** seal them by content digest after completion.
-- Environment substitution and sensitive-name redaction exist, but secrets are still delivered to processes/containers rather than through a general secret-manager abstraction ([environment resolution/redaction](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/utils/env.py)). Restrict credentials to the phase that needs them and keep model credentials host-side where an agent's protocol permits.
+- Environment substitution and sensitive-name redaction exist, but Harbor's generic environment path still delivers secrets to processes/containers rather than through a general secret-manager abstraction ([environment resolution/redaction](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/utils/env.py)). The retained architecture therefore keeps provider credentials host-side behind the Credential Proxy; a Stock Profile that requires direct provider credentials is unqualified.
 
 ### 2. Inspect AI — strong runner, second choice
 
@@ -232,7 +232,7 @@ If a substrate failure occurs and cannot be fixed by configuration or a small up
 | No reviewed substrate natively identifies arbitrary target repositories and paired experimental blocks together. | Reproducibility or pairing can be overstated if arbitrary metadata is incomplete. | Make the project manifest mandatory and fail closed on missing identities. |
 | Provider model aliases may be mutable, and seed support differs. | “Exact model” may mean exact request configuration, not immutable weights/service revision. | Record provider-exposed immutable revision when available; otherwise label the limitation explicitly. |
 | Network/resource behavior depends on the selected Harbor provider and host runtime. | A declared policy may not be enforced identically across Docker/cloud backends. | Qualify the local Docker profile once; reject unsupported capability combinations rather than silently degrading. |
-| Secret-name redaction is not a secret vault or proof against agent exfiltration. | A credential visible to the agent is under agent control. | Prefer host-side model mediation; otherwise use minimum-scope disposable credentials and no private verifier secrets in the agent phase. |
+| Secret-name redaction is not a secret vault or proof against agent exfiltration. | A credential visible to the agent is under agent control. | Require host-side Credential Proxy mediation and reject any Stock Profile that needs direct provider credentials; keep verifier secrets absent from the agent phase. |
 | Artifact collection of arbitrary paths can fail without failing the trial. | A score could exist while required evidence is incomplete. | The sealing step must reject bundles missing mandatory artifacts even if Harbor reports a completed trial. |
 | Current research is documentation/source review only; no candidate was executed. | CLI and provider interoperability remain unproven. | Run the narrow proof gates before benchmark production; do not reinterpret this document as integration certification. |
 | BenchFlow is changing quickly and its roadmap may close the current verifier gap. | The relative decision can change. | Re-evaluate when its first-party capability matrix marks separate verifier execution implemented and documents non-ACP CLI operation. |

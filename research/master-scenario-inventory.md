@@ -1,9 +1,9 @@
 # Inventory the master-branch benchmark scenarios
 
-**Status:** Final inventory  
-**Inventory timestamp:** 2026-07-11T17:02:06Z  
-**Authoritative source snapshot:** repository `master` at [`efb243da54cc77d3a250a1cae9cd4ca5ac7d2714`](https://github.com/MihaiA24/model-benchmarking/tree/efb243da54cc77d3a250a1cae9cd4ca5ac7d2714)  
-**Map:** [Design a real-world CLI benchmark for coding-agent harnesses](https://github.com/MihaiA24/model-benchmarking/issues/13)  
+**Status:** Final inventory\
+**Inventory timestamp:** 2026-07-11T17:02:06Z\
+**Authoritative source snapshot:** repository `master` at [`efb243da54cc77d3a250a1cae9cd4ca5ac7d2714`](https://github.com/MihaiA24/model-benchmarking/tree/efb243da54cc77d3a250a1cae9cd4ca5ac7d2714)\
+**Map:** [Design a real-world CLI benchmark for coding-agent harnesses](https://github.com/MihaiA24/model-benchmarking/issues/13)\
 **Ticket:** [Inventory the master-branch benchmark scenarios](https://github.com/MihaiA24/model-benchmarking/issues/15)
 
 ## Answer

@@ -1,7 +1,7 @@
 # Define the harness adapter and launch contract
 
-**Status:** Final decision  
-**Map:** [Design a real-world CLI benchmark for coding-agent harnesses](https://github.com/MihaiA24/model-benchmarking/issues/13)  
+**Status:** Final decision\
+**Map:** [Design a real-world CLI benchmark for coding-agent harnesses](https://github.com/MihaiA24/model-benchmarking/issues/13)\
 **Ticket:** [Define the harness adapter and launch contract](https://github.com/MihaiA24/model-benchmarking/issues/18)
 
 ## Accepted decisions

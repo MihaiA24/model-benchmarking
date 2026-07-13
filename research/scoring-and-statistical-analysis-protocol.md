@@ -1,8 +1,8 @@
 # Define the scoring and statistical analysis protocol
 
-**Status:** Final research decision  
-**Decision date:** 2026-07-11  
-**Map:** [Design a real-world CLI benchmark for coding-agent harnesses](https://github.com/MihaiA24/model-benchmarking/issues/13)  
+**Status:** Final research decision\
+**Decision date:** 2026-07-11\
+**Map:** [Design a real-world CLI benchmark for coding-agent harnesses](https://github.com/MihaiA24/model-benchmarking/issues/13)\
 **Ticket:** [Define the scoring and statistical analysis protocol](https://github.com/MihaiA24/model-benchmarking/issues/16)
 
 ## Decision

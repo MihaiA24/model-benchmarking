@@ -37,7 +37,7 @@ External documentation, APIs, and datasets required by a scenario are either inc
 
 Keep provider credentials outside the agent environment. A benchmark-controlled credential proxy injects provider authentication, restricts traffic to the declared provider and model route, and gives each trial only an opaque short-lived token that is valid at that proxy.
 
-If a stock harness cannot use the proxy, the scenario may declare a fail-closed exception for a least-privilege disposable credential. Inject it only at launch through ephemeral storage, scope it to one trial, suppress its value from logs and result bundles, and destroy it during teardown. Mark the trial `credential_exposed_to_harness`; never inject a long-lived personal credential. Because the harness controls processes inside its environment, an injected exception credential is not considered secret from the harness itself.
+If a Stock Profile cannot use the Credential Proxy without exposing a provider credential to the agent environment, that exact Harness condition is `unqualified` and no measured Trial starts. There is no direct-credential exception, disposable-key fallback, or `credential_exposed_to_harness` measured mode. Diagnostic work on an unqualified profile must use non-provider fixtures and cannot produce benchmark evidence.
 
 ### Trial lifecycle and reset
 
