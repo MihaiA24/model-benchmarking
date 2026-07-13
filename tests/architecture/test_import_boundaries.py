@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-import ast
 from pathlib import Path
+
+import pytest
+
+from model_benchmark.evidence.imports import (
+    harbor_import_is_allowed,
+    import_candidates,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -12,31 +18,10 @@ REVERSE_IMPORTS = {
     "evidence": {"analysis", "runtime"},
     "analysis": set(),
 }
-PUBLIC_HARBOR_ADAPTER_IMPORT = "harbor.agents.installed.base"
 
 
 def _imports(path: Path, source_parent: Path = ROOT / "src") -> set[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    imported: set[str] = set()
-    relative_module = path.relative_to(source_parent).with_suffix("")
-    package_parts = list(relative_module.parts)
-    if path.name != "__init__.py":
-        package_parts.pop()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imported.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            if node.level == 0 and node.module is not None:
-                imported.add(node.module)
-                continue
-            if node.level > len(package_parts):
-                imported.add("<invalid-relative-import>")
-                continue
-            base = package_parts[: len(package_parts) - node.level + 1]
-            if node.module is not None:
-                base.extend(node.module.split("."))
-            imported.add(".".join(base))
-    return imported
+    return import_candidates(path, source_parent)
 
 
 def test_relative_imports_are_normalized_before_guarding(tmp_path: Path) -> None:
@@ -45,7 +30,82 @@ def test_relative_imports_are_normalized_before_guarding(tmp_path: Path) -> None
     path.parent.mkdir(parents=True)
     path.write_text("from ..runtime import execute\n", encoding="utf-8")
 
-    assert _imports(path, source_parent) == {"model_benchmark.runtime"}
+    assert _imports(path, source_parent) == {"model_benchmark.runtime.execute"}
+
+
+def test_relative_imports_cannot_escape_the_source_root(tmp_path: Path) -> None:
+    source_parent = tmp_path / "src"
+    path = source_parent / "model_benchmark/declarations/example.py"
+    path.parent.mkdir(parents=True)
+    path.write_text("from ...outside import value\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="relative import escapes source root"):
+        _imports(path, source_parent)
+
+
+def test_import_from_aliases_expose_effective_dependency_candidates(
+    tmp_path: Path,
+) -> None:
+    source_parent = tmp_path / "src"
+    path = source_parent / "model_benchmark/declarations/example.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "from model_benchmark import runtime\n"
+        "from .. import evidence\n"
+        "from harbor.agents.installed import base\n"
+        "from harbor.agents.installed.base import BaseInstalledAgent\n",
+        encoding="utf-8",
+    )
+
+    assert _imports(path, source_parent) == {
+        "model_benchmark.runtime",
+        "model_benchmark.evidence",
+        "harbor.agents.installed.base",
+        "harbor.agents.installed.base.BaseInstalledAgent",
+    }
+
+
+def test_harbor_aliases_are_allowed_only_inside_the_public_adapter_seam(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src/model_benchmark"
+    adapter_root = source_root / "runtime/adapters"
+    inside = adapter_root / "example.py"
+    outside = source_root / "declarations/example.py"
+
+    assert harbor_import_is_allowed(
+        inside,
+        adapter_root,
+        "harbor.agents.installed.base.BaseInstalledAgent",
+    )
+    assert not harbor_import_is_allowed(
+        outside,
+        adapter_root,
+        "harbor.agents.installed.base.BaseInstalledAgent",
+    )
+    assert not harbor_import_is_allowed(
+        inside,
+        adapter_root,
+        "harbor.agents.installed.private.InternalAgent",
+    )
+    assert not harbor_import_is_allowed(
+        inside,
+        adapter_root,
+        "harbor.agents.installed.base.InternalAgent",
+    )
+
+    wildcard = source_root / "runtime/adapters/wildcard.py"
+    wildcard.parent.mkdir(parents=True)
+    wildcard.write_text(
+        "from harbor.agents.installed.base import *\n",
+        encoding="utf-8",
+    )
+    wildcard_imports = _imports(wildcard, tmp_path / "src")
+    assert wildcard_imports == {"harbor.agents.installed.base.*"}
+    assert all(
+        not harbor_import_is_allowed(wildcard, adapter_root, imported)
+        for imported in wildcard_imports
+    )
 
 
 def test_public_module_dependencies_never_point_backwards() -> None:
@@ -69,7 +129,6 @@ def test_harbor_imports_are_confined_to_supported_adapter_seam() -> None:
         for imported in _imports(path):
             if imported != "harbor" and not imported.startswith("harbor."):
                 continue
-            inside_adapter = path.is_relative_to(adapter_root)
-            if not inside_adapter or imported != PUBLIC_HARBOR_ADAPTER_IMPORT:
+            if not harbor_import_is_allowed(path, adapter_root, imported):
                 violations.append(f"{path.relative_to(ROOT)}: forbidden import {imported}")
     assert violations == []

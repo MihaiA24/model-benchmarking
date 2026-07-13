@@ -6,6 +6,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,18 @@ from model_benchmark.evidence.verification import (
 
 
 _ISSUE_DIRECTORY = re.compile(r"^issue_([1-9][0-9]*)$")
+_SELECTION_OPTIONS = (
+    "keyword",
+    "markexpr",
+    "ignore",
+    "ignore_glob",
+    "deselect",
+    "lf",
+    "failedfirst",
+    "newfirst",
+    "stepwise",
+    "collectonly",
+)
 
 
 @dataclass
@@ -37,6 +50,8 @@ class _AcceptanceState:
     results: dict[str, str] = field(default_factory=dict)
     invalid_mandatory_result: bool = False
     extra_inputs: list[VerificationInput] = field(default_factory=list)
+    input_paths: list[Path] = field(default_factory=list)
+    launcher_command: str = ""
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -53,6 +68,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="run live cases only with a sealed prerequisite attestation",
     )
+    group.addoption(
+        "--acceptance-input",
+        action="append",
+        default=[],
+        metavar="PROJECT_RELATIVE_PATH",
+        help="include an additional file or directory in acceptance source identity",
+    )
 
 
 def _schema_root() -> Path:
@@ -65,26 +87,61 @@ def _schema_root() -> Path:
     raise pytest.UsageError("published model-benchmark schemas are unavailable")
 
 
+def _recognized_issue_states(
+    project_root: Path,
+    arguments: list[str],
+) -> list[_AcceptanceState]:
+    acceptance_root = (project_root / "tests/acceptance").resolve()
+    states: dict[int, _AcceptanceState] = {}
+    for argument in arguments:
+        if argument.startswith("-"):
+            continue
+        target_text = argument.split("::", 1)[0]
+        target = Path(target_text)
+        if not target.is_absolute():
+            target = project_root / target
+        target = target.resolve()
+        try:
+            relative = target.relative_to(acceptance_root)
+        except ValueError:
+            continue
+        if not relative.parts:
+            continue
+        issue_directory = relative.parts[0]
+        match = _ISSUE_DIRECTORY.fullmatch(issue_directory)
+        if match is None:
+            continue
+        issue = int(match.group(1))
+        states[issue] = _AcceptanceState(
+            project_root=project_root,
+            issue_path=acceptance_root / issue_directory,
+            issue=issue,
+        )
+    return list(states.values())
+
+
+def pytest_load_initial_conftests(
+    early_config: pytest.Config,
+    parser: pytest.Parser,
+    args: list[str],
+) -> None:
+    del parser
+    project_root = Path(early_config.rootpath).resolve()
+    for state in _recognized_issue_states(project_root, args):
+        _remove_authoritative_outputs(state)
+
+
 def _acceptance_state(config: pytest.Config) -> _AcceptanceState | None:
     project_root = Path(config.rootpath).resolve()
     acceptance_root = (project_root / "tests/acceptance").resolve()
-    targets = [Path(argument).resolve() for argument in config.args]
+    targets = [Path(argument.split("::", 1)[0]).resolve() for argument in config.args]
     acceptance_targets = [path for path in targets if path.is_relative_to(acceptance_root)]
     if not acceptance_targets:
         return None
-    if len(targets) != 1 or len(acceptance_targets) != 1:
-        raise pytest.UsageError("acceptance proof must target exactly one issue directory")
-    issue_path = acceptance_targets[0]
-    match = _ISSUE_DIRECTORY.fullmatch(issue_path.name)
-    if issue_path.parent != acceptance_root or match is None or not issue_path.is_dir():
+    states = _recognized_issue_states(project_root, list(config.args))
+    if len(states) != 1 or not states[0].issue_path.is_dir():
         raise pytest.UsageError("acceptance proof path must be tests/acceptance/issue_N")
-    if config.getoption("maxfail") != 1:
-        raise pytest.UsageError("acceptance proof requires --maxfail=1")
-    return _AcceptanceState(
-        project_root=project_root,
-        issue_path=issue_path,
-        issue=int(match.group(1)),
-    )
+    return states[0]
 
 
 def _state(config: pytest.Config) -> _AcceptanceState | None:
@@ -117,50 +174,159 @@ def _require_docker() -> bytes:
     return completed.stdout.strip().encode("utf-8")
 
 
+def _launcher_provenance(
+    state: _AcceptanceState,
+) -> tuple[str, list[VerificationInput]]:
+    normalized: list[str] = []
+    python_executable = Path(sys.executable)
+    if not python_executable.is_file():
+        raise pytest.UsageError("Python executable is unavailable for provenance")
+    inputs: list[VerificationInput] = [
+        VerificationInput(
+            name="python-executable",
+            digest=TypedDigest.from_bytes(
+                DigestKind.ARTIFACT,
+                python_executable.read_bytes(),
+            ),
+        )
+    ]
+    roots = (
+        (Path(sys.prefix).absolute(), "@python-env"),
+        (state.project_root.absolute(), "@project"),
+    )
+    for index, argument in enumerate(sys.orig_argv):
+        path = Path(argument)
+        normalized_argument = argument
+        if path.is_absolute():
+            for root, label in roots:
+                try:
+                    relative = path.relative_to(root)
+                except ValueError:
+                    continue
+                normalized_argument = f"{label}/{relative.as_posix()}"
+                break
+            if path.is_file():
+                inputs.append(
+                    VerificationInput(
+                        name=f"launcher-argv-{index}",
+                        digest=TypedDigest.from_bytes(
+                            DigestKind.ARTIFACT,
+                            path.read_bytes(),
+                        ),
+                    )
+                )
+        normalized.append(normalized_argument)
+    return shlex.join(normalized), inputs
+
+
 def pytest_configure(config: pytest.Config) -> None:
     state = _acceptance_state(config)
     setattr(config, "_model_benchmark_acceptance_state", state)
     if state is not None:
         _remove_authoritative_outputs(state)
-
-    if config.getoption("require_docker"):
-        docker_identity = TypedDigest.from_bytes(DigestKind.ARTIFACT, _require_docker())
+    try:
         if state is not None:
-            state.extra_inputs.append(
-                VerificationInput(name="docker-server-version", digest=docker_identity)
-            )
+            exact_target = len(config.args) == 1 and "::" not in config.args[0]
+            if not exact_target or Path(config.args[0]).resolve() != state.issue_path:
+                raise pytest.UsageError(
+                    "acceptance proof must target exactly one issue directory"
+                )
+            if config.getoption("maxfail") != 1:
+                raise pytest.UsageError("acceptance proof requires --maxfail=1")
+            for option in _SELECTION_OPTIONS:
+                if config.getoption(option, default=None):
+                    raise pytest.UsageError(
+                        f"acceptance proof forbids selection option: {option}"
+                    )
+            for value in config.getoption("acceptance_input") or []:
+                relative = Path(value)
+                resolved = (state.project_root / relative).resolve()
+                if (
+                    relative.is_absolute()
+                    or ".." in relative.parts
+                    or not resolved.is_relative_to(state.project_root)
+                    or not resolved.exists()
+                ):
+                    raise pytest.UsageError(
+                        f"invalid acceptance input path: {value}"
+                    )
+                state.input_paths.append(resolved)
+            state.launcher_command, launcher_inputs = _launcher_provenance(state)
+            state.extra_inputs.extend(launcher_inputs)
 
-    if config.getoption("run_live"):
-        if state is None:
-            raise pytest.UsageError("--run-live requires an exact issue acceptance path")
-        attestation_value = os.environ.get("MODEL_BENCHMARK_LIVE_ATTESTATION")
-        if not attestation_value:
-            raise pytest.UsageError(
-                "--run-live requires MODEL_BENCHMARK_LIVE_ATTESTATION"
+        if config.getoption("require_docker"):
+            docker_identity = TypedDigest.from_bytes(DigestKind.ARTIFACT, _require_docker())
+            if state is not None:
+                state.extra_inputs.append(
+                    VerificationInput(name="docker-server-version", digest=docker_identity)
+                )
+
+        if config.getoption("run_live"):
+            if state is None:
+                raise pytest.UsageError("--run-live requires an exact issue acceptance path")
+            attestation_value = os.environ.get("MODEL_BENCHMARK_LIVE_ATTESTATION")
+            if not attestation_value:
+                raise pytest.UsageError(
+                    "--run-live requires MODEL_BENCHMARK_LIVE_ATTESTATION"
+                )
+            attestation_path = Path(attestation_value)
+            try:
+                verify_live_attestation(
+                    path=attestation_path,
+                    schema_root=_schema_root(),
+                    issue=state.issue,
+                )
+                attestation_bytes = attestation_path.read_bytes()
+            except (LiveAttestationError, OSError) as error:
+                raise pytest.UsageError(
+                    f"invalid live prerequisite attestation: {error}"
+                ) from error
+            state.extra_inputs.append(
+                VerificationInput(
+                    name="live-prerequisite-attestation",
+                    digest=TypedDigest.from_bytes(DigestKind.ARTIFACT, attestation_bytes),
+                )
             )
-        attestation_path = Path(attestation_value)
-        try:
-            verify_live_attestation(
-                path=attestation_path,
-                schema_root=_schema_root(),
-                issue=state.issue,
-            )
-            attestation_bytes = attestation_path.read_bytes()
-        except (LiveAttestationError, OSError) as error:
-            raise pytest.UsageError(f"invalid live prerequisite attestation: {error}") from error
-        state.extra_inputs.append(
-            VerificationInput(
-                name="live-prerequisite-attestation",
-                digest=TypedDigest.from_bytes(DigestKind.ARTIFACT, attestation_bytes),
-            )
-        )
+    except BaseException:
+        if state is not None:
+            _remove_authoritative_outputs(state)
+        raise
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_collection_modifyitems(
+    session: pytest.Session,
+    config: pytest.Config,
+    items: list[pytest.Item],
+):
+    state = _state(config)
+    inventory = {item.nodeid for item in items}
+    yield
+    if state is None:
+        return
+    selected = {item.nodeid for item in items}
+    state.collected = inventory
+    if selected != inventory:
+        state.invalid_mandatory_result = True
+
+
+def pytest_deselected(items: list[pytest.Item]) -> None:
+    if not items:
+        return
+    state = _state(items[0].config)
+    if state is not None:
+        state.invalid_mandatory_result = True
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
     state = _state(session.config)
     if state is None:
         return
-    state.collected = {item.nodeid for item in session.items}
+    selected = {item.nodeid for item in session.items}
+    if not state.collected:
+        state.collected = selected
+    if selected != state.collected:
+        state.invalid_mandatory_result = True
     if not state.collected:
         state.invalid_mandatory_result = True
     for item in session.items:
@@ -184,18 +350,26 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]):
 def _tree_digest(paths: list[Path], project_root: Path) -> TypedDigest:
     digest = hashlib.sha256()
     files: list[Path] = []
+    resolved_project_root = project_root.resolve()
     for root in paths:
+        if root.is_symlink():
+            raise RuntimeError(f"acceptance input cannot be a symlink: {root}")
         if root.is_file():
             files.append(root)
         elif root.is_dir():
-            files.extend(
-                path
-                for path in root.rglob("*")
-                if path.is_file() and "__pycache__" not in path.parts
-            )
+            for path in root.rglob("*"):
+                if "__pycache__" in path.parts:
+                    continue
+                if path.is_symlink():
+                    raise RuntimeError(f"acceptance input cannot contain symlinks: {path}")
+                if path.is_file():
+                    files.append(path)
     for path in sorted(set(files)):
+        resolved = path.resolve()
+        if not resolved.is_relative_to(resolved_project_root):
+            raise RuntimeError(f"acceptance input escapes project root: {path}")
         relative = path.relative_to(project_root).as_posix().encode("utf-8")
-        data = path.read_bytes()
+        data = resolved.read_bytes()
         digest.update(len(relative).to_bytes(4, "big"))
         digest.update(relative)
         digest.update(len(data).to_bytes(8, "big"))
@@ -213,6 +387,10 @@ def _verification_inputs(state: _AcceptanceState) -> list[VerificationInput]:
         state.project_root / "tests/conftest.py",
         state.issue_path,
     ]
+    fixture_root = state.project_root / "tests/fixtures"
+    if fixture_root.exists():
+        paths.append(fixture_root)
+    paths.extend(state.input_paths)
     schema_registry = SchemaRegistry(_schema_root())
     inputs = [
         VerificationInput(
@@ -264,15 +442,12 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             session.exitstatus = pytest.ExitCode.TESTS_FAILED
         return
 
-    command = "uv run --frozen pytest " + shlex.join(
-        list(session.config.invocation_params.args)
-    )
     try:
         write_verification_artifacts(
             project_root=state.project_root,
             schema_root=_schema_root(),
             issue=state.issue,
-            command=command,
+            command=state.launcher_command,
             inputs=_verification_inputs(state),
             cases=[
                 VerificationCase(id=nodeid, outcome="passed")
