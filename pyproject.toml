@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "model-benchmark"
+version = "0.1.0"
+description = "Reproducible coding-harness benchmark coordinator"
+requires-python = "==3.12.*"
+dependencies = [
+  "harbor @ git+https://github.com/harbor-framework/harbor.git@527d50deb63a5d279e8c20593c18a2cbc7f61f9e",
+  "jsonschema==4.25.1",
+]
+
+[project.scripts]
+model-benchmark = "model_benchmark.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest==8.4.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/model_benchmark"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"schemas" = "model_benchmark/published_schemas"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-config", "--strict-markers"]
