@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -25,10 +24,7 @@ def _project(tmp_path: Path, test_source: str = "def test_case():\n    assert Tr
     (project / "src").mkdir()
     (project / "src/foundation.txt").write_text("source\n", encoding="utf-8")
     (project / "uv.lock").write_text("version = 1\n", encoding="utf-8")
-    (project / "tests/conftest.py").write_text(
-        'pytest_plugins = ["model_benchmark.evidence.pytest_acceptance"]\n',
-        encoding="utf-8",
-    )
+    (project / "tests/conftest.py").write_text("", encoding="utf-8")
     (issue / "test_case.py").write_text(test_source, encoding="utf-8")
     return project
 
@@ -118,27 +114,17 @@ def test_run_live_requires_a_valid_sealed_attestation(tmp_path: Path) -> None:
     assert accepted.returncode == 0, accepted.stdout + accepted.stderr
 
 
-def test_require_docker_matches_real_daemon_availability(tmp_path: Path) -> None:
+def test_require_docker_accepts_a_responding_daemon_probe(tmp_path: Path) -> None:
     project = _project(tmp_path)
-    docker = shutil.which("docker")
-    available = False
-    if docker is not None:
-        try:
-            probe = subprocess.run(
-                [docker, "info", "--format", "{{json .ServerVersion}}"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            available = False
-        else:
-            available = probe.returncode == 0 and bool(probe.stdout.strip())
+    binary_root = tmp_path / "bin"
+    binary_root.mkdir()
+    docker = binary_root / "docker"
+    docker.write_text("#!/bin/sh\nprintf '\"29.4.0\"\\n'\n", encoding="utf-8")
+    docker.chmod(0o755)
 
-    completed = _run(project, "--require-docker")
+    completed = _run(project, "--require-docker", env={"PATH": str(binary_root)})
 
-    assert (completed.returncode == 0) is available
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def test_non_exact_acceptance_path_is_rejected(tmp_path: Path) -> None:

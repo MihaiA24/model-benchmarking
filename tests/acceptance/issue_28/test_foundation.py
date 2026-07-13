@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import json
 import subprocess
 import sys
@@ -23,6 +22,10 @@ from model_benchmark.declarations.identities import (
     VerifierIdentity,
 )
 from model_benchmark.declarations.schemas import SchemaRegistry, SchemaValidationError
+from model_benchmark.evidence.imports import (
+    harbor_import_is_allowed,
+    import_candidates,
+)
 from model_benchmark.evidence.verification import (
     VerificationArtifactError,
     VerificationCase,
@@ -46,27 +49,7 @@ def _object_field(value: dict[str, object], name: str) -> dict[str, object]:
 
 
 def _source_imports(path: Path, source_root: Path) -> set[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    relative_module = path.relative_to(source_root.parent).with_suffix("")
-    package_parts = list(relative_module.parts)
-    if path.name != "__init__.py":
-        package_parts.pop()
-    imports: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imports.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            if node.level == 0 and node.module is not None:
-                imports.add(node.module)
-                continue
-            if node.level > len(package_parts):
-                imports.add("<invalid-relative-import>")
-                continue
-            base = package_parts[: len(package_parts) - node.level + 1]
-            if node.module is not None:
-                base.extend(node.module.split("."))
-            imports.add(".".join(base))
-    return imports
+    return import_candidates(path, source_root.parent)
 
 
 def test_frozen_uv_project_has_only_immutable_dependency_sources() -> None:
@@ -180,8 +163,15 @@ def test_dependency_direction_and_harbor_import_guards_cover_the_source_tree(
     probe_root = tmp_path / "src/model_benchmark"
     relative_probe = probe_root / "declarations/example.py"
     relative_probe.parent.mkdir(parents=True)
-    relative_probe.write_text("from ..runtime import execute\n", encoding="utf-8")
-    assert _source_imports(relative_probe, probe_root) == {"model_benchmark.runtime"}
+    relative_probe.write_text(
+        "from ..runtime import execute\n"
+        "from model_benchmark import evidence\n",
+        encoding="utf-8",
+    )
+    assert _source_imports(relative_probe, probe_root) == {
+        "model_benchmark.runtime.execute",
+        "model_benchmark.evidence",
+    }
     forbidden = {
         "declarations": {"analysis", "evidence", "runtime"},
         "runtime": {"analysis", "evidence"},
@@ -199,9 +189,7 @@ def test_dependency_direction_and_harbor_import_guards_cover_the_source_tree(
                         violations.append(f"{path}: reverse import {imported}")
                 if imported == "harbor" or imported.startswith("harbor."):
                     adapter_root = source_root / "runtime/adapters"
-                    if not path.is_relative_to(adapter_root) or imported != (
-                        "harbor.agents.installed.base"
-                    ):
+                    if not harbor_import_is_allowed(path, adapter_root, imported):
                         violations.append(f"{path}: forbidden Harbor import {imported}")
     assert violations == []
 

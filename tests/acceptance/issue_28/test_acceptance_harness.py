@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -23,10 +22,7 @@ def _project(tmp_path: Path, source: str = "def test_case():\n    assert True\n"
     (project / "src").mkdir()
     (project / "src/foundation.txt").write_text("source\n", encoding="utf-8")
     (project / "uv.lock").write_text("version = 1\n", encoding="utf-8")
-    (project / "tests/conftest.py").write_text(
-        'pytest_plugins = ["model_benchmark.evidence.pytest_acceptance"]\n',
-        encoding="utf-8",
-    )
+    (project / "tests/conftest.py").write_text("", encoding="utf-8")
     (issue / "test_case.py").write_text(source, encoding="utf-8")
     return project
 
@@ -169,25 +165,17 @@ def test_missing_docker_fails_without_skip_or_stale_outputs(tmp_path: Path) -> N
     assert all(not output.exists() for output in stale_outputs)
 
 
-def test_require_docker_probes_a_real_daemon_and_never_skips(tmp_path: Path) -> None:
+def test_require_docker_accepts_a_responding_daemon_probe_and_never_skips(
+    tmp_path: Path,
+) -> None:
     project = _project(tmp_path)
-    docker = shutil.which("docker")
-    available = False
-    if docker is not None:
-        try:
-            probe = subprocess.run(
-                [docker, "info", "--format", "{{json .ServerVersion}}"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            available = False
-        else:
-            available = probe.returncode == 0 and bool(probe.stdout.strip())
+    binary_root = tmp_path / "bin"
+    binary_root.mkdir()
+    docker = binary_root / "docker"
+    docker.write_text("#!/bin/sh\nprintf '\"29.4.0\"\\n'\n", encoding="utf-8")
+    docker.chmod(0o755)
 
-    completed = _run(project, "--require-docker")
+    completed = _run(project, "--require-docker", env={"PATH": str(binary_root)})
 
-    assert (completed.returncode == 0) is available
+    assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "skipped" not in completed.stdout.lower()

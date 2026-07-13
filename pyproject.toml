@@ -15,6 +15,9 @@ dependencies = [
 [project.scripts]
 model-benchmark = "model_benchmark.cli:main"
 
+[project.entry-points.pytest11]
+model-benchmark-acceptance = "model_benchmark.evidence.pytest_acceptance"
+
 [dependency-groups]
 dev = [
   "pytest==8.4.2",
