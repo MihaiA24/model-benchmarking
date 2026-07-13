@@ -1,5 +1,7 @@
 # Contexto para continuar el proyecto en otro PC con Claude Code
 
+> **Estado histórico.** Este prompt reproduce el piloto directo-modelo anterior. No debe usarse como handoff para implementar el nuevo benchmark autónomo. Para ese trabajo, empieza por [`CONTEXT.md`](CONTEXT.md), [`blueprint/final-validation-and-implementation-handoff.md`](blueprint/final-validation-and-implementation-handoff.md) y los demás contratos aceptados en [`blueprint/`](blueprint/).
+
 Pega este bloque como primer mensaje al abrir Claude Code en un PC nuevo.
 Claude leerá el `CLAUDE.md` del repo automáticamente, pero este fichero le da el estado
 exacto del proyecto y las instrucciones de setup que no están en el código.

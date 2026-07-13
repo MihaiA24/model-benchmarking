@@ -1,5 +1,7 @@
 # PoC — Evaluación de modelos de IA para desarrollo
 
+> **Estado histórico.** Este README documenta el piloto directo-modelo existente y conserva sus instrucciones para reproducirlo. No es la arquitectura de implementación vigente. El nuevo benchmark autónomo de OMP, OpenCode y Hermes está definido por [`CONTEXT.md`](CONTEXT.md) y los contratos aceptados en [`blueprint/`](blueprint/); no amplíes los runners por stack ni sus baselines como camino de implementación del nuevo benchmark.
+
 Benchmark automatizado para elegir qué modelo de IA adoptar vía API en un equipo de
 ~300–400 desarrolladores. Compara calidad, coste y latencia sobre los cuatro stacks reales
 de la empresa: **Spring Boot, Angular, React y Datos (Chinook SQLite)**.

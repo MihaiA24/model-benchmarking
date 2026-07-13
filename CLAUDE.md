@@ -1,5 +1,7 @@
 # CLAUDE.md — PoC de evaluación de modelos de IA para desarrollo
 
+> **Prioridad actual (2026-07-13):** este fichero conserva la metodología del piloto histórico. Para implementar el nuevo benchmark autónomo de OMP, OpenCode y Hermes, [`CONTEXT.md`](CONTEXT.md) y los contratos aceptados en [`blueprint/`](blueprint/) tienen precedencia. No extiendas `poc_harness.py`, los runners por stack, los baselines locales ni el patrón directo a OpenRouter como arquitectura nueva.
+
 > Contexto persistente del proyecto. Léelo entero al empezar una sesión.
 > Para el estado más reciente, lee también `results/metrics.csv` y `BUGS.md` si existen.
 
