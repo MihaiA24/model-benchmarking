@@ -1,0 +1,6 @@
+{
+  "allowed_paths": ["README.md", "src/**"],
+  "max_file_count": 16,
+  "max_total_bytes": 1024,
+  "stability_window_ms": 250
+}

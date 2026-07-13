@@ -1,0 +1,24 @@
+services:
+  main:
+    volumes:
+      - trial-repository:/workspace
+
+  capture:
+    build:
+      context: ./capture
+    command: ["sh", "-c", "sleep infinity"]
+    depends_on:
+      main:
+        condition: service_started
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    volumes:
+      - trial-repository:/input:ro
+
+volumes:
+  trial-repository:

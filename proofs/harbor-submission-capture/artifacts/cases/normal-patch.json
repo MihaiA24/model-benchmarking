@@ -1,0 +1,1 @@
+{"assertions":["main stopped before capture hook","separate verifier received only capture.json and submission.patch","agent-home marker absent from normalized patch"],"case":"normal-patch","disposition":"accepted normalized patch","result":"passed","test_nodeid":"tests/test_harbor_capture.py::test_normal_patch_uses_post_stop_sidecar_and_separate_verifier"}

@@ -1,0 +1,1 @@
+{"assertions":["main and descendant stopped before capture hook","repository stable across capture window"],"case":"racing-descendant","disposition":"accepted stable post-stop patch","result":"passed","test_nodeid":"tests/test_harbor_capture.py::test_racing_descendant_is_stopped_before_stable_capture"}

@@ -1,0 +1,1 @@
+{"assertions":["main stopped before capture hook","empty patch represented as explicit accepted no-op"],"case":"no-op","disposition":"accepted explicit no-op","result":"passed","test_nodeid":"tests/test_harbor_capture.py::test_noop_is_an_explicit_accepted_submission"}
