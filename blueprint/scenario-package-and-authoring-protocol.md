@@ -134,7 +134,7 @@ Use one short workflow:
 2. Author the source snapshot, seed inputs, Developer Brief, verifier, Check Groups, and Reference Solution.
 3. Run one package checker that performs project-schema validation, cross-file checks, and pinned-Harbor task loading.
 4. Run qualification against fresh agent and verifier environments.
-5. Obtain one independent review, generate `scenario.lock.json`, and seal one Suite-owned Package Qualification Record.
+5. Generate `scenario.lock.json`, obtain one independent review of that exact locked package, and only then seal one Suite-owned Package Qualification Record.
 
 Qualification must prove all of the following before a package is eligible for suite selection:
 
