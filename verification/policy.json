@@ -1,0 +1,770 @@
+{
+  "version": 1,
+  "repository": "MihaiA24/model-benchmarking",
+  "non_authoritative": true,
+  "domains": [
+    "development",
+    "cached_integration",
+    "fresh_authoritative",
+    "ci_acceptance",
+    "trial_verifier",
+    "runtime_preflight",
+    "provisioning_preflight"
+  ],
+  "broad_development_slice": "broad",
+  "development_slices": [
+    {
+      "id": "architecture",
+      "authority": "none",
+      "commands": [
+        "uv run --offline --frozen pytest -q tests/architecture --maxfail=1"
+      ]
+    },
+    {
+      "id": "broad",
+      "authority": "none",
+      "commands": [
+        "uv run --offline --frozen pytest -q tests/unit tests/architecture --maxfail=1",
+        "uv lock --check",
+        "python -m compileall -q src scripts verification"
+      ]
+    },
+    {
+      "id": "cli",
+      "authority": "none",
+      "commands": [
+        "uv run --offline --frozen pytest -q tests/unit/test_cli.py --maxfail=1"
+      ]
+    },
+    {
+      "id": "declarations",
+      "authority": "none",
+      "commands": [
+        "uv run --offline --frozen pytest -q tests/unit/test_canonical.py tests/unit/test_identities.py tests/unit/test_schemas.py --maxfail=1"
+      ]
+    },
+    {
+      "id": "evidence",
+      "authority": "none",
+      "commands": [
+        "uv run --offline --frozen pytest -q tests/unit/test_live_attestation.py tests/unit/test_pytest_acceptance.py tests/unit/test_verification_artifacts.py tests/architecture/test_import_boundaries.py --maxfail=1"
+      ]
+    },
+    {
+      "id": "legacy-runtime",
+      "authority": "none",
+      "commands": [
+        "uv run --offline --frozen pytest -q test_slugs.py --maxfail=1"
+      ]
+    },
+    {
+      "id": "scenarios",
+      "authority": "none",
+      "commands": [
+        "uv run --offline --frozen pytest -q tests/unit/test_scenarios.py tests/unit/test_scenario_sources.py tests/unit/test_scenario_qualification.py --maxfail=1"
+      ]
+    },
+    {
+      "id": "verification-policy",
+      "authority": "none",
+      "commands": [
+        "uv run --offline --frozen pytest -q tests/unit/test_verification_policy.py tests/unit/test_proof_consumer.py tests/architecture/test_import_boundaries.py --maxfail=1"
+      ]
+    }
+  ],
+  "cached_integration_slices": [
+    {
+      "id": "proof-harness",
+      "authority": "diagnostic",
+      "commands": [
+        "uv run --offline --frozen pytest -q tests/unit/test_pytest_acceptance.py tests/unit/test_verification_artifacts.py tests/architecture/test_import_boundaries.py --maxfail=1"
+      ]
+    },
+    {
+      "id": "scenario-contracts",
+      "authority": "diagnostic",
+      "commands": [
+        "uv run --offline --frozen pytest -q tests/unit/test_scenarios.py tests/unit/test_scenario_sources.py tests/unit/test_scenario_qualification.py --maxfail=1"
+      ]
+    }
+  ],
+  "fresh_gates": [
+    {
+      "id": "issue-27",
+      "check_name": "qualification / issue-27",
+      "trusted_app_slug": "github-actions",
+      "workflow_path": ".github/workflows/qualification.yml",
+      "worker_classes": [
+        "local-reference",
+        "dedicated-ci-docker"
+      ],
+      "docker_required": true,
+      "commands": [
+        {
+          "id": "harbor-capture-proof",
+          "command": "uv run --project proofs/harbor-submission-capture --frozen pytest -q proofs/harbor-submission-capture/tests --maxfail=1",
+          "case_inventory": "none",
+          "acceptance_artifact": null
+        }
+      ]
+    },
+    {
+      "id": "issue-28",
+      "check_name": "qualification / issue-28",
+      "trusted_app_slug": "github-actions",
+      "workflow_path": ".github/workflows/qualification.yml",
+      "worker_classes": [
+        "local-reference",
+        "dedicated-ci"
+      ],
+      "docker_required": false,
+      "commands": [
+        {
+          "id": "sync",
+          "command": "uv sync --frozen",
+          "case_inventory": "none",
+          "acceptance_artifact": null
+        },
+        {
+          "id": "acceptance",
+          "command": "uv run --frozen pytest -q tests/acceptance/issue_28 --maxfail=1",
+          "case_inventory": "required",
+          "acceptance_artifact": "artifacts/acceptance/issue-28/verification.json"
+        },
+        {
+          "id": "cli-help",
+          "command": "uv run --frozen model-benchmark --help",
+          "case_inventory": "none",
+          "acceptance_artifact": null
+        },
+        {
+          "id": "diff-check",
+          "command": "git diff --check origin/master...HEAD",
+          "case_inventory": "none",
+          "acceptance_artifact": null
+        }
+      ]
+    },
+    {
+      "id": "issue-29",
+      "check_name": "qualification / issue-29",
+      "trusted_app_slug": "github-actions",
+      "workflow_path": ".github/workflows/qualification.yml",
+      "worker_classes": [
+        "local-reference",
+        "dedicated-ci-docker"
+      ],
+      "docker_required": true,
+      "commands": [
+        {
+          "id": "acceptance",
+          "command": "uv run --frozen pytest -q tests/acceptance/issue_29 --maxfail=1",
+          "case_inventory": "required",
+          "acceptance_artifact": "artifacts/acceptance/issue-29/verification.json"
+        }
+      ]
+    },
+    {
+      "id": "issue-51",
+      "check_name": "qualification / issue-51",
+      "trusted_app_slug": "github-actions",
+      "workflow_path": ".github/workflows/qualification.yml",
+      "worker_classes": [
+        "local-reference",
+        "dedicated-ci-docker"
+      ],
+      "docker_required": true,
+      "commands": [
+        {
+          "id": "sync",
+          "command": "uv sync --frozen",
+          "case_inventory": "none",
+          "acceptance_artifact": null
+        },
+        {
+          "id": "acceptance",
+          "command": "uv run --frozen pytest -q tests/acceptance/issue_51 --maxfail=1 --require-docker --acceptance-input=tests/architecture",
+          "case_inventory": "required",
+          "acceptance_artifact": "artifacts/acceptance/issue-51/verification.json"
+        },
+        {
+          "id": "regression",
+          "command": "uv run --frozen pytest -q tests/unit/test_pytest_acceptance.py tests/unit/test_verification_artifacts.py tests/architecture/test_import_boundaries.py --maxfail=1",
+          "case_inventory": "none",
+          "acceptance_artifact": null
+        },
+        {
+          "id": "diff-check",
+          "command": "git diff --check origin/master...HEAD",
+          "case_inventory": "none",
+          "acceptance_artifact": null
+        }
+      ]
+    },
+    {
+      "id": "issue-54",
+      "check_name": "qualification / issue-54",
+      "trusted_app_slug": "github-actions",
+      "workflow_path": ".github/workflows/qualification.yml",
+      "worker_classes": [
+        "local-reference",
+        "dedicated-ci"
+      ],
+      "docker_required": false,
+      "commands": [
+        {
+          "id": "sync",
+          "command": "uv sync --frozen",
+          "case_inventory": "none",
+          "acceptance_artifact": null
+        },
+        {
+          "id": "acceptance",
+          "command": "uv run --frozen pytest -q tests/acceptance/issue_54 --maxfail=1 --acceptance-input=verification --acceptance-input=scripts",
+          "case_inventory": "required",
+          "acceptance_artifact": "artifacts/acceptance/issue-54/verification.json"
+        },
+        {
+          "id": "regression",
+          "command": "uv run --frozen pytest -q tests/unit tests/architecture --maxfail=1",
+          "case_inventory": "none",
+          "acceptance_artifact": null
+        },
+        {
+          "id": "lock-check",
+          "command": "uv lock --check",
+          "case_inventory": "none",
+          "acceptance_artifact": null
+        },
+        {
+          "id": "compile",
+          "command": "python -m compileall src scripts",
+          "case_inventory": "none",
+          "acceptance_artifact": null
+        }
+      ]
+    }
+  ],
+  "path_rules": [
+    {
+      "id": "verification-policy",
+      "patterns": [
+        "verification/**",
+        "scripts/**",
+        ".github/workflows/**"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "fresh_authoritative",
+        "ci_acceptance"
+      ],
+      "development": [
+        "verification-policy"
+      ],
+      "cached_integration": [],
+      "fresh_gates": [
+        "issue-27",
+        "issue-28",
+        "issue-29",
+        "issue-51",
+        "issue-54"
+      ]
+    },
+    {
+      "id": "shared-contract-inputs",
+      "patterns": [
+        ".gitignore",
+        "pyproject.toml",
+        "uv.lock",
+        "schemas/**",
+        "profiles/**",
+        "scaffolds/**",
+        "tests/conftest.py",
+        "tests/fixtures/**"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "fresh_authoritative",
+        "ci_acceptance",
+        "trial_verifier"
+      ],
+      "development": [
+        "broad"
+      ],
+      "cached_integration": [
+        "proof-harness",
+        "scenario-contracts"
+      ],
+      "fresh_gates": [
+        "issue-27",
+        "issue-28",
+        "issue-29",
+        "issue-51",
+        "issue-54"
+      ]
+    },
+    {
+      "id": "declaration-core",
+      "patterns": [
+        "src/model_benchmark/declarations/canonical.py",
+        "src/model_benchmark/declarations/identities.py",
+        "src/model_benchmark/declarations/schemas.py"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "ci_acceptance"
+      ],
+      "development": [
+        "declarations"
+      ],
+      "cached_integration": [],
+      "fresh_gates": [
+        "issue-28",
+        "issue-29",
+        "issue-51",
+        "issue-54"
+      ]
+    },
+    {
+      "id": "scenario-declarations",
+      "patterns": [
+        "src/model_benchmark/declarations/scenario_*.py",
+        "src/model_benchmark/declarations/scenarios.py",
+        "src/model_benchmark/declarations/__init__.py"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "cached_integration",
+        "ci_acceptance",
+        "trial_verifier"
+      ],
+      "development": [
+        "scenarios"
+      ],
+      "cached_integration": [
+        "scenario-contracts"
+      ],
+      "fresh_gates": [
+        "issue-29",
+        "issue-54"
+      ]
+    },
+    {
+      "id": "evidence",
+      "patterns": [
+        "src/model_benchmark/evidence/**"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "cached_integration",
+        "fresh_authoritative",
+        "ci_acceptance"
+      ],
+      "development": [
+        "evidence"
+      ],
+      "cached_integration": [
+        "proof-harness"
+      ],
+      "fresh_gates": [
+        "issue-28",
+        "issue-29",
+        "issue-51",
+        "issue-54"
+      ]
+    },
+    {
+      "id": "scenario-runtime",
+      "patterns": [
+        "src/model_benchmark/runtime/scenario_qualification.py"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "cached_integration",
+        "runtime_preflight",
+        "provisioning_preflight"
+      ],
+      "development": [
+        "scenarios"
+      ],
+      "cached_integration": [
+        "scenario-contracts"
+      ],
+      "fresh_gates": [
+        "issue-29",
+        "issue-54"
+      ]
+    },
+    {
+      "id": "package-shells",
+      "patterns": [
+        "src/model_benchmark/__init__.py",
+        "src/model_benchmark/analysis/**",
+        "src/model_benchmark/runtime/__init__.py",
+        "src/model_benchmark/runtime/adapters/**"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development"
+      ],
+      "development": [
+        "architecture"
+      ],
+      "cached_integration": [],
+      "fresh_gates": []
+    },
+    {
+      "id": "operator-cli",
+      "patterns": [
+        "src/model_benchmark/cli.py"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "ci_acceptance"
+      ],
+      "development": [
+        "cli"
+      ],
+      "cached_integration": [],
+      "fresh_gates": [
+        "issue-28",
+        "issue-29",
+        "issue-54"
+      ]
+    },
+    {
+      "id": "unit-declarations",
+      "patterns": [
+        "tests/unit/test_canonical.py",
+        "tests/unit/test_identities.py",
+        "tests/unit/test_schemas.py"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "ci_acceptance"
+      ],
+      "development": [
+        "declarations"
+      ],
+      "cached_integration": [],
+      "fresh_gates": [
+        "issue-54"
+      ]
+    },
+    {
+      "id": "unit-scenarios",
+      "patterns": [
+        "tests/unit/test_scenario_*.py",
+        "tests/unit/test_scenarios.py"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "cached_integration",
+        "ci_acceptance"
+      ],
+      "development": [
+        "scenarios"
+      ],
+      "cached_integration": [
+        "scenario-contracts"
+      ],
+      "fresh_gates": [
+        "issue-54"
+      ]
+    },
+    {
+      "id": "unit-evidence",
+      "patterns": [
+        "tests/unit/test_live_attestation.py",
+        "tests/unit/test_pytest_acceptance.py",
+        "tests/unit/test_verification_artifacts.py"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "cached_integration",
+        "ci_acceptance"
+      ],
+      "development": [
+        "evidence"
+      ],
+      "cached_integration": [
+        "proof-harness"
+      ],
+      "fresh_gates": [
+        "issue-51",
+        "issue-54"
+      ]
+    },
+    {
+      "id": "unit-cli",
+      "patterns": [
+        "tests/unit/test_cli.py"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "ci_acceptance"
+      ],
+      "development": [
+        "cli"
+      ],
+      "cached_integration": [],
+      "fresh_gates": [
+        "issue-54"
+      ]
+    },
+    {
+      "id": "unit-verification-policy",
+      "patterns": [
+        "tests/unit/test_verification_policy.py",
+        "tests/unit/test_proof_consumer.py"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "ci_acceptance"
+      ],
+      "development": [
+        "verification-policy"
+      ],
+      "cached_integration": [],
+      "fresh_gates": [
+        "issue-54"
+      ]
+    },
+    {
+      "id": "architecture-tests",
+      "patterns": [
+        "tests/architecture/**"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "ci_acceptance"
+      ],
+      "development": [
+        "architecture"
+      ],
+      "cached_integration": [
+        "proof-harness"
+      ],
+      "fresh_gates": [
+        "issue-51",
+        "issue-54"
+      ]
+    },
+    {
+      "id": "issue-28-acceptance",
+      "patterns": [
+        "tests/acceptance/issue_28/**",
+        "artifacts/acceptance/issue-28/**"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "fresh_authoritative",
+        "ci_acceptance"
+      ],
+      "development": [
+        "declarations",
+        "evidence"
+      ],
+      "cached_integration": [],
+      "fresh_gates": [
+        "issue-28"
+      ]
+    },
+    {
+      "id": "issue-29-acceptance",
+      "patterns": [
+        "tests/acceptance/issue_29/**",
+        "artifacts/acceptance/issue-29/**"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "fresh_authoritative",
+        "ci_acceptance",
+        "trial_verifier"
+      ],
+      "development": [
+        "scenarios"
+      ],
+      "cached_integration": [
+        "scenario-contracts"
+      ],
+      "fresh_gates": [
+        "issue-29"
+      ]
+    },
+    {
+      "id": "issue-51-acceptance",
+      "patterns": [
+        "tests/acceptance/issue_51/**",
+        "artifacts/acceptance/issue-51/**"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "fresh_authoritative",
+        "ci_acceptance"
+      ],
+      "development": [
+        "evidence"
+      ],
+      "cached_integration": [
+        "proof-harness"
+      ],
+      "fresh_gates": [
+        "issue-51"
+      ]
+    },
+    {
+      "id": "issue-54-acceptance",
+      "patterns": [
+        "tests/acceptance/issue_54/**",
+        "artifacts/acceptance/issue-54/**"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "fresh_authoritative",
+        "ci_acceptance"
+      ],
+      "development": [
+        "verification-policy"
+      ],
+      "cached_integration": [],
+      "fresh_gates": [
+        "issue-54"
+      ]
+    },
+    {
+      "id": "planned-acceptance",
+      "patterns": [
+        "tests/acceptance/issue_30/**",
+        "tests/acceptance/issue_31/**",
+        "tests/acceptance/issue_32/**",
+        "tests/acceptance/issue_36/**",
+        "tests/acceptance/issue_55/**",
+        "tests/acceptance/issue_56/**"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "fresh_authoritative",
+        "ci_acceptance"
+      ],
+      "development": [
+        "broad"
+      ],
+      "cached_integration": [],
+      "fresh_gates": [
+        "issue-27",
+        "issue-28",
+        "issue-29",
+        "issue-51",
+        "issue-54"
+      ]
+    },
+    {
+      "id": "harbor-capture-proof",
+      "patterns": [
+        "proofs/**"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "cached_integration",
+        "fresh_authoritative",
+        "ci_acceptance"
+      ],
+      "development": [
+        "architecture"
+      ],
+      "cached_integration": [],
+      "fresh_gates": [
+        "issue-27"
+      ]
+    },
+    {
+      "id": "normative-blueprint",
+      "patterns": [
+        "blueprint/**",
+        "research/**"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development",
+        "fresh_authoritative",
+        "ci_acceptance"
+      ],
+      "development": [
+        "broad"
+      ],
+      "cached_integration": [],
+      "fresh_gates": [
+        "issue-27",
+        "issue-28",
+        "issue-29",
+        "issue-51",
+        "issue-54"
+      ]
+    },
+    {
+      "id": "legacy-runtime",
+      "patterns": [
+        "baselines/**",
+        "gen_form_data.py",
+        "gen_plantilla.py",
+        "merge_metrics.py",
+        "poc_harness.py",
+        "run_all.py",
+        "run_angular.py",
+        "run_data.py",
+        "run_data_feat1only.py",
+        "run_react.py",
+        "run_springboot.py",
+        "test_slugs.py"
+      ],
+      "classification": "normative",
+      "domains": [
+        "development"
+      ],
+      "development": [
+        "legacy-runtime"
+      ],
+      "cached_integration": [],
+      "fresh_gates": []
+    },
+    {
+      "id": "non-normative-prose-and-results",
+      "patterns": [
+        "CLAUDE.md",
+        "CONTEXT.md",
+        "CONTEXT_PROMPT.md",
+        "README.md",
+        "human_review/**",
+        "openrouter_key.txt.example",
+        "presentacion.html",
+        "prototypes/**",
+        "results/**"
+      ],
+      "classification": "non_normative_docs",
+      "domains": [],
+      "development": [],
+      "cached_integration": [],
+      "fresh_gates": []
+    }
+  ]
+}
