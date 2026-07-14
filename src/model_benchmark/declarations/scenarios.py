@@ -652,20 +652,26 @@ def scaffold_scenario_package(
             "set -eu\n"
             f"prlimit --pid $$ --nproc={profile['container_limits']['process_count']}:{profile['container_limits']['process_count']}\n"
             "mkdir -p /logs/verifier\n"
-            "if grep -q '\"status\":\"accepted\"' /capture/capture.json && "
-            "grep -q '\"kind\":\"patch\"' /capture/capture.json; then\n"
-            "  acceptance=1; task_success=true; status=pass\n"
+            "if grep -q '\"status\":\"accepted\"' /capture/capture.json; then\n"
+            "  regression=1; regression_status=pass\n"
             "else\n"
-            "  acceptance=0; task_success=false; status=fail\n"
+            "  regression=0; regression_status=fail\n"
+            "fi\n"
+            "if [ \"${regression}\" = 1 ] && "
+            "grep -q '\"kind\":\"patch\"' /capture/capture.json; then\n"
+            "  acceptance=1; task_success=true; acceptance_status=pass\n"
+            "else\n"
+            "  acceptance=0; task_success=false; acceptance_status=fail\n"
             "fi\n"
             "printf '%s\\n' "
-            "\"{\\\"acceptance_score\\\":${acceptance},\\\"checks\\\":[{\\\"evidence\\\":[\\\"capture/capture.json\\\"],\\\"id\\\":\\\"acceptance\\\",\\\"status\\\":\\\"${status}\\\"},{\\\"evidence\\\":[\\\"tests/test.sh\\\"],\\\"id\\\":\\\"regression\\\",\\\"status\\\":\\\"pass\\\"}],\\\"domain_scores\\\":{},\\\"regression_score\\\":1,\\\"required_group_statuses\\\":{\\\"acceptance\\\":\\\"${status}\\\",\\\"regression\\\":\\\"pass\\\"},\\\"task_success\\\":${task_success},\\\"verifier_complete\\\":true}\" "
+            "\"{\\\"acceptance_score\\\":${acceptance},\\\"checks\\\":[{\\\"evidence\\\":[\\\"capture/capture.json\\\"],\\\"id\\\":\\\"acceptance\\\",\\\"status\\\":\\\"${acceptance_status}\\\"},{\\\"evidence\\\":[\\\"tests/test.sh\\\"],\\\"id\\\":\\\"regression\\\",\\\"status\\\":\\\"${regression_status}\\\"}],\\\"domain_scores\\\":{},\\\"regression_score\\\":${regression},\\\"required_group_statuses\\\":{\\\"acceptance\\\":\\\"${acceptance_status}\\\",\\\"regression\\\":\\\"${regression_status}\\\"},\\\"task_success\\\":${task_success},\\\"verifier_complete\\\":true}\" "
             "> /logs/verifier/verifier-result.json\n"
             "printf '%s\\n' "
-            "\"{\\\"acceptance_score\\\":${acceptance},\\\"regression_score\\\":1,\\\"task_success\\\":${acceptance}}\" "
+            "\"{\\\"acceptance_score\\\":${acceptance},\\\"regression_score\\\":${regression},\\\"task_success\\\":${acceptance}}\" "
             "> /logs/verifier/reward.json\n",
             executable=True,
         )
+        _write_text(path / "tests/private-canary.txt", f"{_HIDDEN_MARKER}\n")
         _write_text(
             path / "solution/solve.sh",
             "#!/bin/sh\n"
@@ -764,6 +770,16 @@ def _check_answer_leakage(path: Path, manifest: dict[str, Any]) -> None:
         for hidden in hidden_files
         for marker in marker_pattern.findall(hidden.read_bytes())
     }
+    verifier_files = [
+        candidate
+        for candidate in (path / "tests").rglob("*")
+        if candidate.is_file() and not candidate.is_symlink()
+    ]
+    if not any(_HIDDEN_MARKER.encode("utf-8") in item.read_bytes() for item in verifier_files):
+        raise ScenarioPackageError(
+            "answer-leakage",
+            "the capture canary must identify a hidden verifier asset",
+        )
     if any(hidden.stat().st_size == 0 for hidden in hidden_files):
         raise ScenarioPackageError(
             "answer-leakage",
@@ -799,6 +815,11 @@ def _check_answer_leakage(path: Path, manifest: dict[str, Any]) -> None:
 def _check_profile(path: Path, manifest: dict[str, Any]) -> dict[str, Any]:
     if manifest["scenario"]["execution_profile"] != _STANDARD_PROFILE:
         raise ScenarioPackageError("profile-mismatch", "Scenario must reference standard-v1")
+    if manifest["scenario"].get("execution_profile_exception") is not None:
+        raise ScenarioPackageError(
+            "unsupported-profile-exception",
+            "standard-v1 exceptions require a future trusted approval registry",
+        )
     try:
         task = tomllib.loads((path / "task.toml").read_text(encoding="utf-8"))
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:

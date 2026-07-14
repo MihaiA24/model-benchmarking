@@ -131,7 +131,7 @@ def test_check_rejects_unknown_nested_scenario_fields(tmp_path: Path) -> None:
     assert summary["classification"] == "invalid-scenario-schema"
 
 
-def test_profile_exception_is_explicit_and_lock_bound(tmp_path: Path) -> None:
+def test_profile_exception_requires_a_trusted_approval_registry(tmp_path: Path) -> None:
     package = tmp_path / "scenario"
     scaffold = _run(
         "scaffold",
@@ -147,25 +147,25 @@ def test_profile_exception_is_explicit_and_lock_bound(tmp_path: Path) -> None:
     manifest_path = package / "scenario.yaml"
     manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     manifest["scenario"]["execution_profile_exception"] = {
-        "approval_reference": "benchmark-owner-approval/29",
-        "approved_by": "repository:MihaiA24/model-benchmarking",
-        "deviations": ["additional integrity signal collection"],
+        "approval_reference": "https://github.com/MihaiA24/model-benchmarking/issues/29",
+        "approved_by": "ed25519:sha256:" + "1" * 64,
+        "deviations": [
+            {
+                "control": "environment.cpus",
+                "value": 4,
+            }
+        ],
         "id": "integrity-signals-29",
-        "reason": "exercise the explicit exception boundary",
         "stratum": "exception/integrity-signals-29",
+        "reason": "exercise the explicit exception boundary",
     }
     manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
 
     locked = _run("lock", str(package))
-    assert locked.returncode == 0, locked.stderr or locked.stdout
-    checked = _run("check", str(package))
-    assert checked.returncode == 0, checked.stderr or checked.stdout
 
-    manifest["scenario"]["execution_profile_exception"]["reason"] = "changed after lock"
-    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
-    stale = _run("check", str(package))
-    assert stale.returncode != 0
-    assert json.loads(stale.stdout)["classification"] == "stale-package-lock"
+    assert locked.returncode != 0
+    assert json.loads(locked.stdout)["classification"] == "unsupported-profile-exception"
+    assert not (package / "scenario.lock.json").exists()
 
 
 def test_lock_is_non_circular_byte_reproducible_and_preserves_identities(
@@ -964,3 +964,95 @@ def test_failed_relock_removes_the_previous_authoritative_lock(tmp_path: Path) -
 
     assert relocked.returncode != 0
     assert not lock_path.exists()
+
+
+def test_lock_binds_canonical_file_modes(tmp_path: Path) -> None:
+    package = tmp_path / "scenario"
+    scaffold = _run(
+        "scaffold",
+        str(package),
+        "--scenario-id",
+        "example/canonical-mode",
+        "--ecosystem",
+        "python-data-engineering",
+        "--visibility",
+        "private",
+    )
+    assert scaffold.returncode == 0, scaffold.stderr or scaffold.stdout
+    first = _run("lock", str(package))
+    assert first.returncode == 0, first.stderr or first.stdout
+    (package / "task.toml").chmod(0o755)
+
+    stale = _run("check", str(package))
+
+    assert stale.returncode != 0
+    assert json.loads(stale.stdout)["classification"] == "stale-package-lock"
+    relocked = _run("lock", str(package))
+    assert relocked.returncode == 0, relocked.stderr or relocked.stdout
+    lock = json.loads((package / "scenario.lock.json").read_bytes())
+    task = next(
+        entry for entry in lock["package"]["files"] if entry["path"] == "task.toml"
+    )
+    assert task["mode"] == "0755"
+
+
+def test_domain_scores_map_each_domain_group_exactly_once(tmp_path: Path) -> None:
+    package = tmp_path / "scenario"
+    scaffold = _run(
+        "scaffold",
+        str(package),
+        "--scenario-id",
+        "example/domain-scores",
+        "--ecosystem",
+        "python-data-engineering",
+        "--visibility",
+        "private",
+    )
+    assert scaffold.returncode == 0, scaffold.stderr or scaffold.stdout
+    manifest_path = package / "scenario.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["verification"]["check_groups"].append(
+        {
+            "class": "domain",
+            "evidence_key": "domain",
+            "id": "domain",
+            "required": False,
+            "score_direction": "maximize",
+            "weight": "1",
+        }
+    )
+    manifest["verification"]["domain_scores"] = [
+        {"check_groups": ["domain"], "name": "correctness_score"}
+    ]
+    for field, value in (
+        ("baseline_score_vector", "0"),
+        ("reference_score_vector", "1"),
+    ):
+        manifest["verification"]["qualification"][field].append(
+            {"name": "correctness_score", "value": value}
+        )
+        manifest["verification"]["qualification"][field].sort(
+            key=lambda entry: entry["name"]
+        )
+    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+
+    locked = _run("lock", str(package))
+
+    assert locked.returncode == 0, locked.stderr or locked.stdout
+    (package / "scenario.lock.json").unlink()
+    manifest["verification"]["domain_scores"].append(
+        {"check_groups": ["domain"], "name": "performance_score"}
+    )
+    for field in ("baseline_score_vector", "reference_score_vector"):
+        manifest["verification"]["qualification"][field].append(
+            {"name": "performance_score", "value": "0"}
+        )
+        manifest["verification"]["qualification"][field].sort(
+            key=lambda entry: entry["name"]
+        )
+    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+
+    rejected = _run("check", str(package))
+
+    assert rejected.returncode != 0
+    assert "uniquely and completely map" in json.loads(rejected.stdout)["message"]

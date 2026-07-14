@@ -219,13 +219,43 @@ def validate_scenario_manifest(
             "acceptance and regression weights must each sum exactly to one"
         )
     domain_scores = verification["domain_scores"]
-    if len(domain_scores) != len(set(domain_scores)):
-        raise ScenarioContractError("domain score names must be unique")
+    domain_score_names = [score["name"] for score in domain_scores]
+    mapped_groups = [
+        group_id
+        for score in domain_scores
+        for group_id in score["check_groups"]
+    ]
+    domain_group_ids = {
+        group["id"]
+        for group in verification["check_groups"]
+        if group["class"] == "domain"
+    }
+    if (
+        len(domain_score_names) != len(set(domain_score_names))
+        or len(mapped_groups) != len(set(mapped_groups))
+        or set(mapped_groups) != domain_group_ids
+    ):
+        raise ScenarioContractError(
+            "domain scores must uniquely and completely map domain Check Groups"
+        )
+    groups_by_id = {group["id"]: group for group in verification["check_groups"]}
+    for score in domain_scores:
+        total = sum(
+            (
+                _weight(groups_by_id[group_id]["weight"], group_id)
+                for group_id in score["check_groups"]
+            ),
+            Decimal(0),
+        )
+        if total != Decimal(1):
+            raise ScenarioContractError(
+                f"domain score {score['name']!r} weights must sum exactly to one"
+            )
     expected_names = {
         "acceptance_score",
         "regression_score",
         "task_success",
-        *domain_scores,
+        *domain_score_names,
     }
     for field in ("baseline_score_vector", "reference_score_vector"):
         vector = verification["qualification"][field]

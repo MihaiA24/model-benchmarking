@@ -381,7 +381,7 @@ def _validate_review(
             "untrusted-independent-reviewer",
             "independent review was not signed by the designated reviewer",
         )
-    if identity in manifest["provenance"]["authors"]:
+    if reviewer["principal_identity"] in manifest["provenance"]["authors"]:
         raise ScenarioPackageError(
             "non-independent-review",
             "package author cannot approve the independent review",
@@ -409,6 +409,47 @@ def _validate_review(
             "independent review signature is invalid",
         ) from error
     return str(TypedDigest.from_bytes(DigestKind.SCENARIO_REVIEW, review_data))
+
+
+def _prior_rejection(
+    root: Path,
+    *,
+    lock: dict[str, object],
+    lock_data: bytes,
+    manifest: dict[str, Any],
+) -> Path | None:
+    if not root.exists():
+        return None
+    registry = SchemaRegistry(schema_root_path())
+    for path in sorted(root.rglob("*.json")):
+        value, data = _load_document(
+            path,
+            registry=registry,
+            name=REVIEW_SCHEMA_NAME,
+            classification="invalid-retained-review",
+        )
+        if value["judgment"] != "reject":
+            continue
+        package = lock["package"]
+        assert isinstance(package, dict)
+        if (
+            value["package_lock_sha256"]
+            != str(TypedDigest.from_bytes(DigestKind.PACKAGE_LOCK, lock_data))
+            or value["package_payload_sha256"] != package["payload_sha256"]
+        ):
+            continue
+        reviewer = value["reviewer"]
+        assert isinstance(reviewer, dict)
+        _validate_review(
+            value,
+            review_data=data,
+            lock=lock,
+            lock_data=lock_data,
+            manifest=manifest,
+            trusted_reviewer_identity=str(reviewer["identity"]),
+        )
+        return path
+    return None
 
 
 def qualify_scenario_package(
@@ -481,9 +522,21 @@ def qualify_scenario_package(
             manifest=manifest,
             trusted_reviewer_identity=trusted_reviewer_identity,
         )
+        review_root = output.parent / "scenario-reviews"
+        if review_value["judgment"] == "approve":
+            prior_rejection = _prior_rejection(
+                review_root,
+                lock=lock,
+                lock_data=lock_data,
+                manifest=manifest,
+            )
+            if prior_rejection is not None:
+                raise ScenarioPackageError(
+                    "scenario-candidate-rejected",
+                    f"candidate was durably rejected at {prior_rejection}",
+                )
         review_store = (
-            output.parent
-            / "scenario-reviews"
+            review_root
             / manifest["scenario"]["visibility"]
             / f"{review_digest.rsplit(':', 1)[-1]}.json"
         )

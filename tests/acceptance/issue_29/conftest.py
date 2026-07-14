@@ -219,6 +219,7 @@ def build_qualification_case(tmp_path: Path) -> QualificationCase:
         },
         "reviewed_at": "2026-07-13T21:00:00Z",
         "reviewer": {
+            "principal_identity": "urn:model-benchmark:author:independent-reviewer",
             "authentication": {
                 "kind": "repository-identity",
                 "value": "https://github.com/example/reviews/qualified-scenario",

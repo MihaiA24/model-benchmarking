@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import stat
 import tomllib
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -129,10 +130,16 @@ def _inventory(package: Path, manifest: dict[str, Any]) -> list[dict[str, object
         relative_paths.add(relative)
         casefolded_paths.add(relative.casefold())
         role, agent_visible = _file_role(relative, manifest)
+        mode = stat.S_IMODE(path.stat(follow_symlinks=False).st_mode)
+        if mode not in {0o644, 0o755}:
+            raise ScenarioLockError(
+                f"package file has noncanonical mode {mode:04o}: {relative}"
+            )
         data = path.read_bytes()
         files.append(
             {
                 "agent_visible": agent_visible,
+                "mode": f"{mode:04o}",
                 "bytes": len(data),
                 "path": relative,
                 "role": role,

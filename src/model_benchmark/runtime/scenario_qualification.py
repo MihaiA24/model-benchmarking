@@ -33,7 +33,7 @@ from model_benchmark.declarations.scenarios import (
 
 _TECHNICAL_SCHEMA_NAME = "model-benchmark/scenario-technical-qualification"
 _SCHEMA_VERSION = 1
-_CheckGroup = tuple[str, str, bool, str, Decimal]
+_CheckGroup = tuple[str, str, bool, str, Decimal, str | None]
 _CheckGroups = tuple[_CheckGroup, ...]
 
 
@@ -109,13 +109,18 @@ def _inspect_local_images(references: list[str]) -> None:
     _run(["docker", "version", "--format", "{{.Server.Version}}"], timeout=30)
     missing: list[str] = []
     for reference in references:
-        completed = subprocess.run(
-            ["docker", "image", "inspect", reference, "--format", "{{.Id}}"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                ["docker", "image", "inspect", reference, "--format", "{{.Id}}"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ScenarioPackageError(
+                "qualification-runtime-failed", str(error)
+            ) from error
         if completed.returncode != 0:
             missing.append(reference)
     if missing:
@@ -301,13 +306,13 @@ def _validate_structured_result(
                 "structured verifier check identity, status, or evidence is invalid",
             )
         parsed_checks[check_id] = (status, tuple(evidence))
-    expected_statuses = {group_id for group_id, _, _, _, _ in expected_groups}
+    expected_statuses = {group_id for group_id, _, _, _, _, _ in expected_groups}
     if set(statuses) != expected_statuses:
         raise ScenarioPackageError(
             "invalid-infrastructure",
             "structured verifier result omits or invents Check Groups",
         )
-    for group_id, evidence_key, _, _, _ in expected_groups:
+    for group_id, evidence_key, _, _, _, _ in expected_groups:
         status = statuses[group_id]
         if status not in {"pass", "fail", "error", "not_evaluable"}:
             raise ScenarioPackageError(
@@ -319,19 +324,48 @@ def _validate_structured_result(
                 "invalid-infrastructure",
                 f"Check Group {group_id} lacks matching raw evidence",
             )
-    for score_name, group_class in (
+    domain_scores = structured["domain_scores"]
+    declared_domain_scores = {
+        domain_score
+        for _, _, _, _, _, domain_score in expected_groups
+        if domain_score is not None
+    }
+    if set(domain_scores) != declared_domain_scores:
+        raise ScenarioPackageError(
+            "invalid-infrastructure",
+            "structured verifier result omits or invents domain scores",
+        )
+    score_targets = (
         ("acceptance_score", "acceptance"),
         ("regression_score", "regression"),
-    ):
+        *((name, None) for name in sorted(declared_domain_scores)),
+    )
+    for score_name, group_class in score_targets:
         derived = sum(
             (
                 weight
-                for group_id, _, _, declared_class, weight in expected_groups
-                if declared_class == group_class and statuses[group_id] == "pass"
+                for (
+                    group_id,
+                    _,
+                    _,
+                    declared_class,
+                    weight,
+                    domain_score,
+                ) in expected_groups
+                if (
+                    (group_class is not None and declared_class == group_class)
+                    or domain_score == score_name
+                )
+                and statuses[group_id] == "pass"
             ),
             Decimal(0),
         )
-        if _normalized_score(structured.get(score_name)) != _normalized_score(derived):
+        actual = (
+            structured.get(score_name)
+            if group_class is not None
+            else domain_scores.get(score_name)
+        )
+        if _normalized_score(actual) != _normalized_score(derived):
             raise ScenarioPackageError(
                 "invalid-infrastructure",
                 f"{score_name} disagrees with declared Check Group outcomes",
@@ -339,7 +373,7 @@ def _validate_structured_result(
     declared_success = structured.get("task_success")
     required_pass = all(
         statuses[group_id] == "pass"
-        for group_id, _, required, group_class, _ in expected_groups
+        for group_id, _, required, group_class, _, _ in expected_groups
         if required and group_class in {"acceptance", "regression"}
     )
     if not isinstance(declared_success, bool) or declared_success is not required_pass:
@@ -834,6 +868,11 @@ def measure_scenario_package(
     references = _image_references(lock)
     _inspect_local_images(references)
     declared = manifest["verification"]["qualification"]
+    domain_score_by_group = {
+        group_id: score["name"]
+        for score in manifest["verification"]["domain_scores"]
+        for group_id in score["check_groups"]
+    }
     expected_score_names = tuple(
         entry["name"] for entry in declared["baseline_score_vector"]
     )
@@ -844,6 +883,7 @@ def measure_scenario_package(
             group["required"],
             group["class"],
             Decimal(str(group["weight"])),
+            domain_score_by_group.get(group["id"]),
         )
         for group in manifest["verification"]["check_groups"]
     )

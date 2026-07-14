@@ -411,6 +411,7 @@ def test_production_qualify_measures_harbor_and_seals_authenticated_evidence(
         },
         "reviewed_at": reviewed_at,
         "reviewer": {
+            "principal_identity": "urn:model-benchmark:author:independent-reviewer",
             "authentication": {"kind": "signature", "value": "pending"},
             "identity": "pending",
             "independence_attested": True,

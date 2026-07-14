@@ -72,8 +72,8 @@ def test_numeric_projection_includes_every_declared_domain_score() -> None:
 
 def test_structured_result_requires_complete_group_evidence_and_consistent_success() -> None:
     groups = (
-        ("acceptance", "acceptance", True, "acceptance", Decimal("1")),
-        ("regression", "regression", True, "regression", Decimal("1")),
+        ("acceptance", "acceptance", True, "acceptance", Decimal("1"), None),
+        ("regression", "regression", True, "regression", Decimal("1"), None),
     )
     valid: dict[str, object] = {
         "acceptance_score": 1,
@@ -325,6 +325,7 @@ def _qualification_inputs(
         },
         "reviewed_at": "2026-07-13T21:00:00Z",
         "reviewer": {
+            "principal_identity": "urn:model-benchmark:author:independent-reviewer",
             "authentication": {
                 "kind": "repository-identity",
                 "value": "https://github.com/example/reviews/qualified-scenario",
@@ -549,3 +550,19 @@ def test_scenario_lifecycle_is_closed() -> None:
 
     with pytest.raises(Exception, match="cannot move"):
         validate_scenario_state_transition("candidate", "suite_sealed")
+
+
+def test_package_author_cannot_serve_as_independent_reviewer(
+    tmp_path: Path,
+) -> None:
+    package, technical, review_path, output, _, review = _qualification_inputs(tmp_path)
+    manifest = yaml.safe_load((package / "scenario.yaml").read_text(encoding="utf-8"))
+    review["reviewer"]["principal_identity"] = manifest["provenance"]["authors"][0]
+    _sign_review(review)
+    _write_document(review_path, review)
+
+    completed = _qualify(package, technical, review_path, output)
+
+    assert completed.returncode != 0
+    assert json.loads(completed.stdout)["classification"] == "non-independent-review"
+    assert not output.exists()
