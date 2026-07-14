@@ -1,0 +1,22 @@
+schema_version: 1
+id: standard-v1
+trusted_capture:
+  source_sha256: artifact:sha256:7a9a29c557952d028ee054479fc272df25026df9df92421029837a97d548b15d
+harbor_task:
+  version: '1.0'
+  agent:
+    user: 65532
+    network_mode: no-network
+    timeout_sec: null
+  verifier:
+    user: 65532
+    network_mode: no-network
+    environment_mode: separate
+    timeout_sec: 600
+  environment:
+    network_mode: no-network
+    workdir: /workspace/repository
+    cpus: 1
+    memory_mb: 512
+    storage_mb: 1024
+    build_timeout_sec: 600

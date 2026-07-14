@@ -25,6 +25,17 @@ def test_cli_help_is_concise_and_noninteractive() -> None:
     assert completed.stderr == ""
 
 
+def test_cli_exposes_the_scenario_authoring_workflow() -> None:
+    completed = _run("scenario", "--help")
+
+    assert completed.returncode == 0
+    assert "scaffold" in completed.stdout
+    assert "check" in completed.stdout
+    assert "qualify" in completed.stdout
+    assert "lock" in completed.stdout
+    assert completed.stderr == ""
+
+
 def test_cli_emits_machine_readable_canonical_summary() -> None:
     completed = _run("--json")
 

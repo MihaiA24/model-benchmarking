@@ -21,6 +21,13 @@ class DigestKind(str, Enum):
     ARTIFACT = "artifact"
     UV_LOCK = "uv-lock"
     SOURCE_TREE = "source-tree"
+    PACKAGE_PAYLOAD = "package-payload"
+    PACKAGE_LOCK = "package-lock"
+    EXECUTION_PROFILE = "execution-profile"
+    HARBOR_TASK = "harbor-task"
+    OCI_IMAGE = "oci-image"
+    SCENARIO_REVIEW = "scenario-review"
+    PACKAGE_QUALIFICATION = "package-qualification"
 
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")

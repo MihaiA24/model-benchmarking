@@ -2,9 +2,132 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from model_benchmark import __version__
 from model_benchmark.declarations.canonical import canonical_json_bytes
+from model_benchmark.declarations.scenarios import (
+    ScenarioPackage,
+    ScenarioPackageError,
+    check_scenario_package,
+    lock_scenario_package,
+    scaffold_scenario_package,
+)
+from model_benchmark.evidence.capture import trusted_capture_source
+
+
+def _configure_scenario_parser(parser: argparse.ArgumentParser) -> None:
+    subcommands = parser.add_subparsers(dest="scenario_command", required=True)
+    scaffold = subcommands.add_parser(
+        "scaffold", help="create a standard-v1 Scenario Package"
+    )
+    scaffold.add_argument("path", type=Path)
+    scaffold.add_argument("--scenario-id", required=True)
+    scaffold.add_argument(
+        "--ecosystem",
+        required=True,
+        choices=(
+            "angular-typescript",
+            "spring-boot-java",
+            "python-data-engineering",
+        ),
+    )
+    scaffold.add_argument(
+        "--visibility", required=True, choices=("public", "private")
+    )
+    check = subcommands.add_parser("check", help="validate a Scenario Package")
+    check.add_argument("path", type=Path)
+    qualify = subcommands.add_parser(
+        "qualify", help="provision, measure, or seal a locked Scenario Package"
+    )
+    qualify.add_argument("path", type=Path)
+    qualify.add_argument("--provision", action="store_true")
+    qualify.add_argument("--jobs-dir", type=Path)
+    qualify.add_argument("--measure-output", type=Path)
+    qualify.add_argument("--worker-private-key", type=Path)
+    qualify.add_argument("--technical-evidence", type=Path)
+    qualify.add_argument("--trusted-worker-identity")
+    qualify.add_argument("--review", type=Path)
+    qualify.add_argument("--trusted-reviewer-identity")
+    qualify.add_argument("--output", type=Path)
+    lock = subcommands.add_parser("lock", help="seal a deterministic package lock")
+    lock.add_argument("path", type=Path)
+
+
+def _emit(summary: dict[str, object], machine_readable: bool) -> None:
+    if machine_readable:
+        sys.stdout.buffer.write(canonical_json_bytes(summary) + b"\n")
+    else:
+        print(summary["message"])
+
+
+def _run_scenario(arguments: argparse.Namespace) -> dict[str, object]:
+    if arguments.scenario_command == "scaffold":
+        return scaffold_scenario_package(
+            path=arguments.path,
+            scenario_id=arguments.scenario_id,
+            ecosystem=arguments.ecosystem,
+            visibility=arguments.visibility,
+            trusted_capture_source=trusted_capture_source(),
+        )
+    if arguments.scenario_command == "check":
+        return check_scenario_package(arguments.path)
+    if arguments.scenario_command == "lock":
+        return lock_scenario_package(arguments.path)
+    if arguments.scenario_command == "qualify":
+        package = ScenarioPackage.open(arguments.path)
+        if arguments.provision:
+            if arguments.jobs_dir is None:
+                raise ScenarioPackageError(
+                    "invalid-qualification-arguments",
+                    "--provision requires --jobs-dir",
+                )
+            from model_benchmark.runtime.scenario_qualification import (
+                provision_scenario_package,
+            )
+
+            return provision_scenario_package(package.root, jobs_dir=arguments.jobs_dir)
+        if arguments.measure_output is not None:
+            if arguments.jobs_dir is None or arguments.worker_private_key is None:
+                raise ScenarioPackageError(
+                    "invalid-qualification-arguments",
+                    "--measure-output requires --jobs-dir and --worker-private-key",
+                )
+            from model_benchmark.runtime.scenario_qualification import (
+                measure_scenario_package,
+            )
+
+            return measure_scenario_package(
+                package.root,
+                jobs_dir=arguments.jobs_dir,
+                output=arguments.measure_output,
+                worker_private_key=arguments.worker_private_key,
+            )
+        if any(
+            value is None
+            for value in (
+                arguments.technical_evidence,
+                arguments.trusted_worker_identity,
+                arguments.review,
+                arguments.trusted_reviewer_identity,
+                arguments.output,
+            )
+        ):
+            raise ScenarioPackageError(
+                "invalid-qualification-arguments",
+                "sealing requires --technical-evidence, --trusted-worker-identity, --review, --trusted-reviewer-identity, and --output",
+            )
+        return package.qualify(
+            technical_evidence=arguments.technical_evidence,
+            trusted_worker_identity=arguments.trusted_worker_identity,
+            review=arguments.review,
+            trusted_reviewer_identity=arguments.trusted_reviewer_identity,
+            output=arguments.output,
+        )
+    raise ScenarioPackageError(
+        "not-implemented",
+        f"scenario {arguments.scenario_command} is not implemented",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -18,7 +141,22 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="emit a machine-readable canonical JSON summary",
     )
+    commands = parser.add_subparsers(dest="command")
+    _configure_scenario_parser(
+        commands.add_parser("scenario", help="author and qualify Scenario Packages")
+    )
     arguments = parser.parse_args(argv)
+    if arguments.command == "scenario":
+        try:
+            summary = _run_scenario(arguments)
+        except ScenarioPackageError as error:
+            if arguments.json:
+                _emit(error.summary(), True)
+            else:
+                print(f"scenario error [{error.classification}]: {error}", file=sys.stderr)
+            return 2
+        _emit(summary, arguments.json)
+        return 0
     if arguments.json:
         summary = {
             "modules": ["analysis", "declarations", "evidence", "runtime"],

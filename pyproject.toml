@@ -8,8 +8,10 @@ version = "0.1.0"
 description = "Reproducible coding-harness benchmark coordinator"
 requires-python = "==3.12.*"
 dependencies = [
+  "cryptography==49.0.0",
   "harbor @ git+https://github.com/harbor-framework/harbor.git@527d50deb63a5d279e8c20593c18a2cbc7f61f9e",
   "jsonschema==4.25.1",
+  "pyyaml==6.0.3",
 ]
 
 [project.scripts]
@@ -28,6 +30,8 @@ packages = ["src/model_benchmark"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "schemas" = "model_benchmark/published_schemas"
+"profiles" = "model_benchmark/published_profiles"
+"scaffolds" = "model_benchmark/published_scaffolds"
 
 [tool.hatch.metadata]
 allow-direct-references = true
