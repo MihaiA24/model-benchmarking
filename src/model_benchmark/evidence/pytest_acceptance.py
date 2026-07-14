@@ -39,6 +39,7 @@ _SELECTION_OPTIONS = (
     "stepwise",
     "collectonly",
 )
+_MANDATORY_DOCKER_ISSUES = {29}
 
 
 @dataclass
@@ -254,7 +255,9 @@ def pytest_configure(config: pytest.Config) -> None:
             state.launcher_command, launcher_inputs = _launcher_provenance(state)
             state.extra_inputs.extend(launcher_inputs)
 
-        if config.getoption("require_docker"):
+        if config.getoption("require_docker") or (
+            state is not None and state.issue in _MANDATORY_DOCKER_ISSUES
+        ):
             docker_identity = TypedDigest.from_bytes(DigestKind.ARTIFACT, _require_docker())
             if state is not None:
                 state.extra_inputs.append(
@@ -390,6 +393,10 @@ def _verification_inputs(state: _AcceptanceState) -> list[VerificationInput]:
     fixture_root = state.project_root / "tests/fixtures"
     if fixture_root.exists():
         paths.append(fixture_root)
+    for production_root in ("profiles", "scaffolds"):
+        candidate = state.project_root / production_root
+        if candidate.exists():
+            paths.append(candidate)
     paths.extend(state.input_paths)
     schema_registry = SchemaRegistry(_schema_root())
     inputs = [

@@ -164,6 +164,48 @@ class SchemaRegistry:
     def canonicalization(self) -> SchemaEntry:
         return self._canonicalization
 
+    def entry(self, name: str, version: int) -> SchemaEntry:
+        entry = next(
+            (
+                item
+                for item in self._entries
+                if item.name == name and item.version == version
+            ),
+            None,
+        )
+        if entry is None:
+            raise SchemaValidationError(f"unknown schema identity: {name} v{version}")
+        return entry
+
+    def envelope(self, name: str, version: int) -> dict[str, object]:
+        entry = self.entry(name, version)
+        return {
+            "canonicalization_sha256": self._canonicalization.sha256,
+            "canonicalization_version": self._canonicalization.version,
+            "name": entry.name,
+            "sha256": entry.sha256,
+            "version": entry.version,
+        }
+
+    def validate_value(
+        self,
+        value: object,
+        *,
+        name: str,
+        version: int,
+    ) -> dict[str, object]:
+        if not isinstance(value, dict):
+            raise SchemaValidationError("document must be an object")
+        entry = self.entry(name, version)
+        errors = sorted(
+            self._validators[(entry.name, entry.version)].iter_errors(value),
+            key=lambda item: item.json_path,
+        )
+        if errors:
+            first = errors[0]
+            raise SchemaValidationError(f"{first.json_path}: {first.message}")
+        return value
+
     def validate_path(self, path: Path) -> dict[str, object]:
         try:
             return self.validate_bytes(path.read_bytes())
@@ -200,20 +242,7 @@ class SchemaRegistry:
             or canonicalization_digest != self._canonicalization.sha256
         ):
             raise SchemaValidationError("document schema identity is malformed")
-        key = (name, version)
-        entry = next(
-            (item for item in self._entries if (item.name, item.version) == key),
-            None,
-        )
-        if entry is None:
-            raise SchemaValidationError(f"unknown schema identity: {name} v{version}")
+        entry = self.entry(name, version)
         if digest != entry.sha256:
             raise SchemaValidationError("document schema digest does not match the catalog")
-        errors = sorted(
-            self._validators[key].iter_errors(value),
-            key=lambda item: item.json_path,
-        )
-        if errors:
-            first = errors[0]
-            raise SchemaValidationError(f"{first.json_path}: {first.message}")
-        return value
+        return self.validate_value(value, name=name, version=version)
