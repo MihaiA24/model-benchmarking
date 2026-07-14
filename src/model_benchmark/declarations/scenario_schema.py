@@ -219,7 +219,10 @@ def validate_scenario_manifest(
             "acceptance and regression weights must each sum exactly to one"
         )
     domain_scores = verification["domain_scores"]
+    reserved_score_names = {"acceptance_score", "regression_score", "task_success"}
     domain_score_names = [score["name"] for score in domain_scores]
+    if any(name in reserved_score_names for name in domain_score_names):
+        raise ScenarioContractError("domain score names cannot use reserved score identities")
     mapped_groups = [
         group_id
         for score in domain_scores
@@ -251,16 +254,11 @@ def validate_scenario_manifest(
             raise ScenarioContractError(
                 f"domain score {score['name']!r} weights must sum exactly to one"
             )
-    expected_names = {
-        "acceptance_score",
-        "regression_score",
-        "task_success",
-        *domain_score_names,
-    }
+    expected_names = reserved_score_names | set(domain_score_names)
     for field in ("baseline_score_vector", "reference_score_vector"):
         vector = verification["qualification"][field]
         names = [entry["name"] for entry in vector]
-        if names != sorted(names) or set(names) != expected_names:
+        if names != sorted(names) or len(names) != len(set(names)) or set(names) != expected_names:
             raise ScenarioContractError(
                 f"qualification.{field} must be sorted and complete"
             )
@@ -272,9 +270,23 @@ def validate_scenario_manifest(
         entry["name"]: entry["value"]
         for entry in verification["qualification"]["reference_score_vector"]
     }
-    if baseline["task_success"] != "0" or reference["task_success"] != "1":
+    try:
+        baseline_acceptance = Decimal(baseline["acceptance_score"])
+        baseline_regression = Decimal(baseline["regression_score"])
+        reference_acceptance = Decimal(reference["acceptance_score"])
+        reference_regression = Decimal(reference["regression_score"])
+    except InvalidOperation as error:
+        raise ScenarioContractError("qualification vectors must use numeric score text") from error
+    if (
+        baseline["task_success"] != "0"
+        or baseline_acceptance >= Decimal(1)
+        or baseline_regression != Decimal(1)
+        or reference["task_success"] != "1"
+        or reference_acceptance != Decimal(1)
+        or reference_regression != Decimal(1)
+    ):
         raise ScenarioContractError(
-            "qualification vectors must declare baseline failure and Reference success"
+            "qualification vectors must declare baseline acceptance failure, baseline regression success, and Reference success"
         )
     authors = provenance["authors"]
     if not authors or len(authors) != len(set(authors)):

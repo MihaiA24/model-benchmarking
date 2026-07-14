@@ -76,6 +76,26 @@ def _run_scenario(arguments: argparse.Namespace) -> dict[str, object]:
         return lock_scenario_package(arguments.path)
     if arguments.scenario_command == "qualify":
         package = ScenarioPackage.open(arguments.path)
+        seal_fields = (
+            "technical_evidence",
+            "trusted_worker_identity",
+            "review",
+            "trusted_reviewer_identity",
+            "output",
+        )
+        seal_requested = any(getattr(arguments, field) is not None for field in seal_fields)
+        selected_phases = sum(
+            (
+                arguments.provision,
+                arguments.measure_output is not None,
+                seal_requested,
+            )
+        )
+        if selected_phases != 1:
+            raise ScenarioPackageError(
+                "invalid-qualification-arguments",
+                "scenario qualify requires exactly one of --provision, --measure-output, or sealing arguments",
+            )
         if arguments.provision:
             if arguments.jobs_dir is None:
                 raise ScenarioPackageError(

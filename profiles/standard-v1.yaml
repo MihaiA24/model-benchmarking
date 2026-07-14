@@ -1,7 +1,7 @@
 schema_version: 1
 id: standard-v1
 trusted_capture:
-  source_sha256: artifact:sha256:b53e5f953caa7700e4aa30be49787d88be69ef1ceaf46271330411d829e59a7c
+  source_sha256: artifact:sha256:32b368ce4eb31e274995462753aa8947e6fa6f67947f7fd12b7cebe964de4435
 container_limits:
   process_count: 256
 harbor_task:

@@ -11,7 +11,7 @@ import tempfile
 import tomllib
 from collections.abc import Hashable
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 import yaml
@@ -324,11 +324,16 @@ def _artifact_collect_hook(submission: dict[str, Any]) -> dict[str, object]:
     allowed_paths = submission["allowed_paths"]
     materialization = submission["materialization"]
     destination = materialization["destination"]
+    destination_path = PurePosixPath(destination)
     if (
         len(allowed_paths) != 1
         or _SAFE_MATERIALIZATION_PATH.fullmatch(allowed_paths[0]) is None
         or _SAFE_MATERIALIZATION_PATH.fullmatch(destination) is None
-        or not destination.startswith("/capture/")
+        or not destination_path.is_absolute()
+        or len(destination_path.parts) <= 2
+        or destination_path.parts[:2] != ("/", "capture")
+        or any(part in {"", ".", ".."} for part in destination_path.parts[2:])
+        or destination_path.as_posix() != destination
         or materialization["service"] != "capture"
         or materialization["mode"] != "copy-no-follow"
         or _SAFE_MEDIA_TYPE.fullmatch(submission["media_type"]) is None
@@ -803,7 +808,7 @@ def _check_answer_leakage(path: Path, manifest: dict[str, Any]) -> None:
             data = visible.read_bytes()
         except OSError as error:
             raise ScenarioPackageError("invalid-agent-input", str(error)) from error
-        if any(marker in data for marker in markers) or any(
+        if marker_pattern.search(data) is not None or any(marker in data for marker in markers) or any(
             hidden_asset in data for hidden_asset in hidden_assets
         ):
             raise ScenarioPackageError(

@@ -522,7 +522,7 @@ def qualify_scenario_package(
             manifest=manifest,
             trusted_reviewer_identity=trusted_reviewer_identity,
         )
-        review_root = output.parent / "scenario-reviews"
+        review_root = package_path.parent / "scenario-reviews"
         if review_value["judgment"] == "approve":
             prior_rejection = _prior_rejection(
                 review_root,

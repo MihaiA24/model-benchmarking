@@ -188,7 +188,7 @@ def _scan_hidden_markers(root: Path, markers: list[str]) -> list[str]:
             for entry in entries:
                 try:
                     if entry.is_symlink():
-                        continue
+                        raise CaptureRejected("symlink")
                     if entry.is_dir(follow_symlinks=False):
                         pending.append(Path(entry.path))
                         continue

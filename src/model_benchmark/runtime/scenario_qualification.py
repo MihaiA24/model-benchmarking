@@ -471,11 +471,17 @@ def _run_record(
     expected_outcome: str,
     expected_capture_kind: str | None,
     expected_capture_reason: str | None,
+    expected_artifact_destination: str | None,
     expected_task_digest: str,
     expected_score_names: tuple[str, ...],
     expected_hidden_marker_digests: tuple[str, ...],
     expected_groups: _CheckGroups,
 ) -> dict[str, object]:
+    capture_destination = (
+        "artifacts/capture/materialization.json"
+        if expected_capture_kind == "artifact"
+        else "artifacts/capture/capture.json"
+    )
     try:
         trial = json.loads(path.read_text(encoding="utf-8"))
         structured = json.loads(
@@ -488,9 +494,7 @@ def _run_record(
         artifact_manifest = json.loads(
             (path.parent / "artifacts/manifest.json").read_text(encoding="utf-8")
         )
-        capture = json.loads(
-            (path.parent / "artifacts/capture/capture.json").read_text(encoding="utf-8")
-        )
+        capture = json.loads((path.parent / capture_destination).read_text(encoding="utf-8"))
 
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
@@ -538,7 +542,7 @@ def _run_record(
         for entry in artifact_manifest
         if isinstance(entry, dict)
     }
-    if collected.get("artifacts/capture/capture.json") != "ok":
+    if collected.get(capture_destination) != "ok":
         raise ScenarioPackageError(
             "invalid-infrastructure",
             "Harbor did not collect the trusted capture record",
@@ -549,7 +553,41 @@ def _run_record(
                 "invalid-infrastructure",
                 "trusted capture rejection does not match the diagnostic handoff",
             )
-    elif capture.get("status") != "accepted" or capture.get("kind") != expected_capture_kind:
+    elif capture.get("status") != "accepted":
+        raise ScenarioPackageError(
+            "invalid-infrastructure",
+            "trusted capture record does not match the measured handoff",
+        )
+    elif expected_capture_kind == "artifact":
+        if expected_artifact_destination is None:
+            raise ScenarioPackageError(
+                "invalid-infrastructure",
+                "artifact handoff destination is missing",
+            )
+        artifact_destination = f"artifacts{expected_artifact_destination}"
+        if collected.get(artifact_destination) != "ok":
+            raise ScenarioPackageError(
+                "invalid-infrastructure",
+                "Harbor did not collect the declared artifact output",
+            )
+        try:
+            artifact = (path.parent / artifact_destination).read_bytes()
+        except OSError as error:
+            raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
+        if capture.get("hidden_markers") != {
+            "digests": list(expected_hidden_marker_digests),
+            "status": "absent",
+        }:
+            raise ScenarioPackageError(
+                "invalid-infrastructure",
+                "trusted capture did not prove hidden markers absent from the agent-visible tree",
+            )
+        if capture.get("artifact_sha256") != hashlib.sha256(artifact).hexdigest():
+            raise ScenarioPackageError(
+                "invalid-infrastructure",
+                "captured artifact digest does not match the collected artifact",
+            )
+    elif capture.get("kind") != expected_capture_kind:
         raise ScenarioPackageError(
             "invalid-infrastructure",
             "trusted capture record does not match the measured handoff",
@@ -636,6 +674,7 @@ def _run_phase(
                 expected_outcome=expected_outcome,
                 expected_capture_kind="patch" if agent == "oracle" else "no-op",
                 expected_capture_reason=expected_capture_reason,
+                expected_artifact_destination=None,
                 expected_task_digest=expected_task_digest,
                 expected_score_names=expected_score_names,
                 expected_hidden_marker_digests=expected_hidden_marker_digests,
@@ -761,6 +800,7 @@ def _run_score_mismatch_phase(
                 expected_outcome="declared-failure",
                 expected_capture_kind="no-op",
                 expected_capture_reason=None,
+                expected_artifact_destination=None,
                 expected_task_digest=task_digest,
                 expected_score_names=expected_score_names,
                 expected_hidden_marker_digests=expected_hidden_marker_digests,
