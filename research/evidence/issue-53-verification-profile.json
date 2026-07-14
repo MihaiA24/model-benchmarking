@@ -1,0 +1,132 @@
+{
+  "schema": "model-benchmark/research-verification-profile/v1",
+  "recorded_at": "2026-07-14T14:47:54Z",
+  "evidence_commit": "011c29c37d55e2c19139f9e8b26b67135657fce8",
+  "strategy_base_commit": "01dc8058d9fa63a4353818db806631fad9d338e4",
+  "environment": {
+    "host": "macOS-26.5-arm64-arm-64bit",
+    "physical_cpu_count": 10,
+    "logical_cpu_count": 10,
+    "memory_bytes": 34359738368,
+    "project_python": "3.12.12",
+    "docker_server": "29.4.0"
+  },
+  "provenance": {
+    "capture_kind": "normalized from preserved command output and Harbor result timers",
+    "accepted_authority": "The accepted handoff on the live Scenario Package issue records the literal published gate and remains the authoritative timing source.",
+    "complete_inventory_profile": "A clean git archive added /usr/bin/time and pytest --durations=25 to the complete issue path and verified its generated checksum before deletion. Because the outer invocation differed from the published gate, this rerun is diagnostic, not authoritative.",
+    "diagnostic_profile": "A second clean git archive disabled the acceptance publisher, selected only the production qualification test, instrumented production subprocess elapsed time, and read Harbor nested Trial timestamps. It produced no accepted proof.",
+    "temporary_copies": "Removed after timing extraction and checksum verification where applicable."
+  },
+  "commands": {
+    "unit_profile": "/usr/bin/time -lp uv run --frozen pytest -q tests/unit --durations=20",
+    "accepted_scenario_package_gate": "uv run --frozen pytest -q tests/acceptance/issue_29 --maxfail=1",
+    "diagnostic_complete_inventory_profile": "/usr/bin/time -lp uv run --frozen pytest -q tests/acceptance/issue_29 --maxfail=1 --durations=25",
+    "diagnostic_production_profile": "/usr/bin/time -lp uv run --frozen pytest -q -p no:model-benchmark-acceptance tests/acceptance/issue_29/test_scenario_authoring.py::test_production_qualify_measures_harbor_and_seals_authenticated_evidence --durations=5",
+    "microbenchmark_executed": "uv run --project /Users/mihai/code/nter/model-benchmarking-issue-29 --frozen python /Users/mihai/code/nter/model-benchmarking-issue-53/research/evidence/issue-53-profile-benchmark.py --repo /Users/mihai/code/nter/model-benchmarking-issue-29 --expected-commit 011c29c37d55e2c19139f9e8b26b67135657fce8 --samples 30",
+    "microbenchmark_reproducer": "cd <strategy-checkout> && shasum -a 256 -c research/evidence/issue-53-verification-profile.sha256 && uv run --project <evidence-checkout> --frozen python <strategy-checkout>/research/evidence/issue-53-profile-benchmark.py --repo <evidence-checkout> --expected-commit 011c29c37d55e2c19139f9e8b26b67135657fce8 --samples 30",
+    "microbenchmark_script": "research/evidence/issue-53-profile-benchmark.py",
+    "microbenchmark_script_sha256": "91ac8a1af6a7f406a4e2116b489de1c0722bdbb5710fe7f7b486a0dc82a831be"
+  },
+  "observations": {
+    "unit_profile": {
+      "passed": 83,
+      "pytest_seconds": 27.66,
+      "wall_seconds": 28.02,
+      "maximum_resident_set_mib": 53.3
+    },
+    "accepted_handoff": {
+      "scenario_package_passed": 19,
+      "scenario_package_seconds": 356.10,
+      "root_suite_passed": 131,
+      "root_suite_seconds": 468.73,
+      "source": "https://github.com/MihaiA24/model-benchmarking/issues/29"
+    },
+    "diagnostic_complete_inventory_rerun": {
+      "passed": 19,
+      "pytest_seconds": 357.61,
+      "wall_seconds": 360.19,
+      "maximum_resident_set_mb_decimal": 71.7,
+      "generated_checksum_verified": true
+    },
+    "warm_dependency_setup": {
+      "project_wheel_build_seconds": 0.396,
+      "locked_packages_installed": 86,
+      "install_seconds": 0.342,
+      "total_seconds": 0.738
+    },
+    "diagnostic_production_case": {
+      "passed": 1,
+      "pytest_call_seconds": 344.44,
+      "pytest_total_seconds": 344.58,
+      "wall_seconds": 344.93,
+      "user_seconds": 29.21,
+      "system_seconds": 14.08,
+      "maximum_resident_set_bytes": 71499776,
+      "subprocess_events": [
+        {"operation": "docker pull exact digest", "seconds": 0.792133},
+        {"operation": "Harbor install-only provisioning", "phase": "provision", "seconds": 27.880139},
+        {"operation": "docker version", "seconds": 0.030402},
+        {"operation": "docker version", "seconds": 0.037532},
+        {"operation": "Harbor measured phase", "phase": "baseline", "seconds": 44.863668},
+        {"operation": "Harbor measured phase", "phase": "hidden-marker", "seconds": 45.118541},
+        {"operation": "Harbor measured phase", "phase": "reference-two-attempts", "seconds": 89.351337},
+        {"operation": "Harbor measured phase", "phase": "malformed-handoff", "seconds": 44.234509},
+        {"operation": "Harbor measured phase", "phase": "unsafe-handoff", "seconds": 44.322825},
+        {"operation": "Harbor measured phase", "phase": "score-mismatch", "seconds": 44.110218},
+        {"operation": "docker events", "seconds": 0.027711}
+      ],
+      "harbor_nested_trial_aggregate": {
+        "trial_count": 7,
+        "total_seconds": 307.105,
+        "median_trial_seconds": 44.128,
+        "environment_setup_seconds": 36.234,
+        "agent_setup_seconds": 0.0,
+        "agent_execution_seconds": 1.266,
+        "verifier_seconds": 114.021,
+        "residual_lifecycle_seconds": 155.585
+      },
+      "derived_case_decomposition": {
+        "registry_pull_seconds": 0.792133,
+        "harbor_install_only_seconds": 27.880139,
+        "trial_environment_setup_seconds": 36.234,
+        "trial_agent_execution_seconds": 1.266,
+        "trial_verifier_seconds": 114.021,
+        "trial_residual_lifecycle_seconds": 155.585,
+        "outer_validation_signing_hashing_test_overhead_upper_bound_seconds": 8.662,
+        "formula": "344.44 - sum(registry pull, install-only, environment setup, agent execution, verifier, residual lifecycle)"
+      }
+    },
+    "deterministic_replay": {
+      "test": "test_authoring_scaffold_check_and_lock_are_reproducible",
+      "seconds": 2.34
+    },
+    "artifact_publication_microbenchmark": {
+      "raw_samples_ms": [119.557042, 105.219042, 90.473583, 96.444167, 93.523375, 104.377541, 89.279792, 90.615333, 91.450166, 101.537541, 115.042833, 111.18025, 145.424667, 100.3475, 100.106042, 115.719458, 107.358166, 134.86925, 108.602833, 111.856792, 112.468375, 92.852583, 99.26725, 95.053, 99.938042, 101.143458, 100.417333, 98.190917, 109.780333, 121.266458],
+      "sample_count": 30,
+      "minimum_ms": 89.279792,
+      "median_ms": 101.340499,
+      "p95_nearest_rank_ms": 134.86925,
+      "maximum_ms": 145.424667,
+      "scope": "canonical JSON, schema validation, atomic writes, SHA-256 manifest, and read-back"
+    },
+    "current_proof_consumption_microbenchmark": {
+      "raw_samples_ms": [37.334084, 20.704583, 12.493125, 11.09275, 11.692417, 12.000166, 10.452333, 8.608666, 13.117125, 12.710375, 11.177208, 10.451708, 13.487542, 12.382167, 10.009042, 11.933625, 10.891417, 10.922, 10.571542, 10.601209, 10.435584, 10.753541, 11.250459, 10.557958, 14.799583, 12.695833, 15.018709, 10.521458, 11.253667, 11.449167],
+      "sample_count": 30,
+      "minimum_ms": 8.608666,
+      "median_ms": 11.252063,
+      "p95_nearest_rank_ms": 20.704583,
+      "maximum_ms": 37.334084,
+      "source_digest_match": true,
+      "expected_source_digest": "source-tree:sha256:a2da97832d1935c9c9ae125283e01c0ebd5c17dbfbb5aaec07def6cdf421a995",
+      "scope": "recompute scoped source tree, checksum read-back, schema validation, parse, and mandatory-count check",
+      "known_gap": "The current artifact does not prove candidate Git SHA, outer ordered gate commands, CI run/request identity, or authoritative supersession."
+    }
+  },
+  "derivation_notes": [
+    "p95 uses nearest-rank over 30 repetitions.",
+    "The residual Harbor lifecycle is not disaggregated by the current result schema and must not be labeled more narrowly without additional instrumentation.",
+    "The outer overhead is an upper bound; the dedicated publication microbenchmark is the separate evidence-publication measurement.",
+    "Current proof-consumption timing is computational only. Human/agent semantic review duration is process latency and is not replaced by this check."
+  ]
+}
