@@ -11,6 +11,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from model_benchmark.declarations.scenario_locks import _dockerfile_images
+from model_benchmark.evidence.capture import CaptureRejected, _read_regular_no_follow
+
 
 CLI = Path(sys.executable).with_name("model-benchmark")
 
@@ -23,6 +26,36 @@ def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
         timeout=30,
         check=False,
     )
+
+
+def test_dockerfile_inventory_includes_every_external_stage_source(tmp_path: Path) -> None:
+    dockerfile = tmp_path / "Dockerfile"
+    first = "python:3.12-slim@sha256:" + "1" * 64
+    copied = "ghcr.io/example/tool@sha256:" + "2" * 64
+    mounted = "docker.io/library/busybox@sha256:" + "3" * 64
+    dockerfile.write_text(
+        f"FROM --platform=linux/amd64 {first} AS build\n"
+        f"COPY --from={copied} \\n  /tool /tool\n"
+        f"RUN --mount=type=bind,from={mounted},source=/,target=/helper true\n"
+        "FROM build AS final\n",
+        encoding="utf-8",
+    )
+
+    assert _dockerfile_images(dockerfile) == {first, copied, mounted}
+
+
+def test_artifact_capture_cannot_follow_a_symlinked_parent(tmp_path: Path) -> None:
+    root = tmp_path / "visible"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    (outside / "result.json").write_text('{"secret":true}\n', encoding="utf-8")
+    (root / "linked").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(CaptureRejected) as rejected:
+        _read_regular_no_follow(root, root / "linked/result.json", 1024)
+
+    assert rejected.value.code == "artifact_unreadable"
 
 
 def test_scaffold_creates_one_checkable_standard_v1_package(tmp_path: Path) -> None:
@@ -96,6 +129,43 @@ def test_check_rejects_unknown_nested_scenario_fields(tmp_path: Path) -> None:
     assert checked.returncode != 0
     summary = json.loads(checked.stdout)
     assert summary["classification"] == "invalid-scenario-schema"
+
+
+def test_profile_exception_is_explicit_and_lock_bound(tmp_path: Path) -> None:
+    package = tmp_path / "scenario"
+    scaffold = _run(
+        "scaffold",
+        str(package),
+        "--scenario-id",
+        "example/profile-exception",
+        "--ecosystem",
+        "python-data-engineering",
+        "--visibility",
+        "private",
+    )
+    assert scaffold.returncode == 0, scaffold.stderr or scaffold.stdout
+    manifest_path = package / "scenario.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["scenario"]["execution_profile_exception"] = {
+        "approval_reference": "benchmark-owner-approval/29",
+        "approved_by": "repository:MihaiA24/model-benchmarking",
+        "deviations": ["additional integrity signal collection"],
+        "id": "integrity-signals-29",
+        "reason": "exercise the explicit exception boundary",
+        "stratum": "exception/integrity-signals-29",
+    }
+    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+
+    locked = _run("lock", str(package))
+    assert locked.returncode == 0, locked.stderr or locked.stdout
+    checked = _run("check", str(package))
+    assert checked.returncode == 0, checked.stderr or checked.stdout
+
+    manifest["scenario"]["execution_profile_exception"]["reason"] = "changed after lock"
+    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    stale = _run("check", str(package))
+    assert stale.returncode != 0
+    assert json.loads(stale.stdout)["classification"] == "stale-package-lock"
 
 
 def test_lock_is_non_circular_byte_reproducible_and_preserves_identities(
@@ -204,7 +274,10 @@ def test_check_rejects_hidden_marker_bytes_in_agent_visible_inputs(
     assert summary["classification"] == "answer-leakage"
 
 
-def test_check_rejects_copied_hidden_assets_without_markers(tmp_path: Path) -> None:
+@pytest.mark.parametrize("hidden", [b"42", b""], ids=["content", "empty"])
+def test_check_rejects_copied_hidden_assets_without_markers(
+    tmp_path: Path, hidden: bytes
+) -> None:
     package = tmp_path / "scenario"
     scaffold = _run(
         "scaffold",
@@ -217,7 +290,6 @@ def test_check_rejects_copied_hidden_assets_without_markers(tmp_path: Path) -> N
         "private",
     )
     assert scaffold.returncode == 0, scaffold.stderr or scaffold.stdout
-    hidden = b"42"
     (package / "tests/expected.txt").write_bytes(hidden)
     (package / "environment/copied-answer.txt").write_bytes(hidden)
 

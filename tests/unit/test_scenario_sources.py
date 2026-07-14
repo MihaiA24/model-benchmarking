@@ -11,7 +11,11 @@ import pytest
 import yaml
 
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
-from model_benchmark.declarations.scenario_sources import normalized_tree_digest
+from model_benchmark.declarations.scenario_sources import (
+    ScenarioSourceError,
+    _apply_seed_asset,
+    normalized_tree_digest,
+)
 
 
 CLI = Path(sys.executable).with_name("model-benchmark")
@@ -164,6 +168,21 @@ def test_check_rejects_a_non_reproducible_baseline(tmp_path: Path) -> None:
 
     assert checked.returncode != 0
     assert json.loads(checked.stdout)["classification"] == "source-reconstruction-failed"
+
+
+def test_seed_asset_cannot_follow_a_symlinked_parent(tmp_path: Path) -> None:
+    root = tmp_path / "baseline"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    (root / "linked").symlink_to(outside, target_is_directory=True)
+    asset = tmp_path / "asset.txt"
+    asset.write_text("secret\n", encoding="utf-8")
+
+    with pytest.raises(ScenarioSourceError, match="cannot apply seed asset"):
+        _apply_seed_asset(root, asset, "linked/escaped.txt")
+
+    assert not (outside / "escaped.txt").exists()
 
 
 @pytest.mark.parametrize(

@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 from copy import deepcopy
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -71,8 +72,8 @@ def test_numeric_projection_includes_every_declared_domain_score() -> None:
 
 def test_structured_result_requires_complete_group_evidence_and_consistent_success() -> None:
     groups = (
-        ("acceptance", "acceptance", True),
-        ("regression", "regression", True),
+        ("acceptance", "acceptance", True, "acceptance", Decimal("1")),
+        ("regression", "regression", True, "regression", Decimal("1")),
     )
     valid: dict[str, object] = {
         "acceptance_score": 1,
@@ -93,11 +94,16 @@ def test_structured_result_requires_complete_group_evidence_and_consistent_succe
         lambda value: value.update({"checks": []}),
         lambda value: value.update({"required_group_statuses": {"acceptance": "pass"}}),
         lambda value: value.update({"task_success": False}),
+        lambda value: value.update({"acceptance_score": 0}),
+        lambda value: value.update({"regression_score": 0}),
         lambda value: value.update({"verifier_complete": False}),
     ):
         malformed = deepcopy(valid)
         mutation(malformed)
-        with pytest.raises(ScenarioPackageError, match="structured verifier|Check Group|task_success"):
+        with pytest.raises(
+            ScenarioPackageError,
+            match="structured verifier|Check Group|task_success|score",
+        ):
             _validate_structured_result(malformed, groups)
 
 
@@ -397,6 +403,12 @@ def test_failed_qualification_cannot_erase_a_prior_immutable_record(
     assert rejected.returncode != 0
     assert json.loads(rejected.stdout)["classification"] == "independent-review-rejected"
     assert output.read_bytes() == original
+    retained = list((output.parent / "scenario-reviews/public").glob("*.json"))
+    assert len(retained) == 2
+    assert {json.loads(path.read_text(encoding="utf-8"))["judgment"] for path in retained} == {
+        "approve",
+        "reject",
+    }
 
 
 def test_suite_must_name_the_trusted_technical_worker(tmp_path: Path) -> None:
@@ -499,6 +511,8 @@ def test_qualification_fails_closed_without_leaving_a_record(
         _qualification_inputs(tmp_path)
     )
     mutation(technical, review)
+    if classification == "independent-review-rejected":
+        _sign_review(review)
     if classification == "invalid-infrastructure":
         _sign_technical(technical)
     _write_document(technical_path, deepcopy(technical))
@@ -509,6 +523,10 @@ def test_qualification_fails_closed_without_leaving_a_record(
     assert completed.returncode != 0
     assert json.loads(completed.stdout)["classification"] == classification
     assert not output.exists()
+    if classification == "independent-review-rejected":
+        retained = list((output.parent / "scenario-reviews/public").glob("*.json"))
+        assert len(retained) == 1
+        assert json.loads(retained[0].read_text(encoding="utf-8"))["judgment"] == "reject"
 
 
 def test_qualification_cannot_overwrite_its_review_input(tmp_path: Path) -> None:

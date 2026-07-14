@@ -258,13 +258,33 @@ def _atomic_write(path: Path, data: bytes) -> None:
         raise RuntimeError(f"read-back mismatch for {path.name}")
 
 
-def _read_regular_no_follow(path: Path, max_bytes: int) -> bytes:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+def _read_regular_no_follow(root: Path, path: Path, max_bytes: int) -> bytes:
     try:
-        descriptor = os.open(path, flags)
-    except OSError as exc:
-        raise CaptureRejected("artifact_unreadable") from exc
+        relative = path.relative_to(root)
+    except ValueError as exc:
+        raise CaptureRejected("unsafe_artifact") from exc
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise CaptureRejected("unsafe_artifact")
+    descriptors: list[int] = []
     try:
+        directory_descriptor = os.open(
+            root,
+            os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        descriptors.append(directory_descriptor)
+        for component in relative.parts[:-1]:
+            directory_descriptor = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_descriptor,
+            )
+            descriptors.append(directory_descriptor)
+        descriptor = os.open(
+            relative.name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=directory_descriptor,
+        )
+        descriptors.append(descriptor)
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
             raise CaptureRejected("unsafe_artifact")
@@ -282,8 +302,11 @@ def _read_regular_no_follow(path: Path, max_bytes: int) -> bytes:
         if len(data) != metadata.st_size or len(data) > max_bytes:
             raise CaptureRejected("artifact_changed_during_capture")
         return data
+    except OSError as exc:
+        raise CaptureRejected("artifact_unreadable") from exc
     finally:
-        os.close(descriptor)
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
 
 
 def _capture_artifact(args: argparse.Namespace) -> int:
@@ -298,9 +321,13 @@ def _capture_artifact(args: argparse.Namespace) -> int:
     )
     if any(getattr(args, field) is None for field in required):
         raise CaptureRejected("invalid_artifact_policy")
-    first = _read_regular_no_follow(args.artifact_source, args.artifact_max_bytes)
+    first = _read_regular_no_follow(
+        args.visibility_root, args.artifact_source, args.artifact_max_bytes
+    )
     time.sleep(args.stability_window_ms / 1000)
-    second = _read_regular_no_follow(args.artifact_source, args.artifact_max_bytes)
+    second = _read_regular_no_follow(
+        args.visibility_root, args.artifact_source, args.artifact_max_bytes
+    )
     if first != second:
         raise CaptureRejected("artifact_changed_during_capture")
     if args.artifact_media_type == "application/json":

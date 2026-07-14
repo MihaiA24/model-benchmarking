@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import stat
 import shutil
 import subprocess
 import tarfile
@@ -135,15 +137,57 @@ def _verify_artifact_digest(path: Path, expected: str, label: str) -> None:
 
 
 def _apply_seed_asset(root: Path, asset_path: Path, destination: str) -> None:
-    relative = _portable_relative_path(destination, "seed asset destination")
-    target = root / relative
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.is_symlink() or (target.exists() and not target.is_file()):
-        raise ScenarioSourceError(f"seed asset destination is unsafe: {relative}")
+    relative = PurePosixPath(
+        _portable_relative_path(destination, "seed asset destination")
+    )
     try:
-        target.write_bytes(asset_path.read_bytes())
+        data = asset_path.read_bytes()
+        root_descriptor = os.open(
+            root,
+            os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+        )
     except OSError as error:
+        raise ScenarioSourceError(f"cannot read seed asset {relative}: {error}") from error
+    descriptors = [root_descriptor]
+    target_descriptor: int | None = None
+    try:
+        directory_descriptor = root_descriptor
+        for component in relative.parts[:-1]:
+            try:
+                os.mkdir(component, mode=0o755, dir_fd=directory_descriptor)
+            except FileExistsError:
+                pass
+            directory_descriptor = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_descriptor,
+            )
+            descriptors.append(directory_descriptor)
+        target_descriptor = os.open(
+            relative.name,
+            os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+            0o644,
+            dir_fd=directory_descriptor,
+        )
+        metadata = os.fstat(target_descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise ScenarioSourceError(f"seed asset destination is unsafe: {relative}")
+        os.ftruncate(target_descriptor, 0)
+        view = memoryview(data)
+        while view:
+            written = os.write(target_descriptor, view)
+            if written <= 0:
+                raise OSError("short seed asset write")
+            view = view[written:]
+    except (OSError, ScenarioSourceError) as error:
+        if isinstance(error, ScenarioSourceError):
+            raise
         raise ScenarioSourceError(f"cannot apply seed asset {relative}: {error}") from error
+    finally:
+        if target_descriptor is not None:
+            os.close(target_descriptor)
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
 
 
 def verify_source_reconstruction(package: Path, manifest: dict[str, Any]) -> None:

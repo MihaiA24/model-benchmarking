@@ -373,11 +373,6 @@ def _validate_review(
                 "stale-independent-review",
                 f"independent review {field} does not match the exact package lock",
             )
-    if review["judgment"] != "approve":
-        raise ScenarioPackageError(
-            "independent-review-rejected",
-            "independent review did not approve the package",
-        )
     reviewer = review["reviewer"]
     assert isinstance(reviewer, dict)
     identity = reviewer["identity"]
@@ -486,6 +481,18 @@ def qualify_scenario_package(
             manifest=manifest,
             trusted_reviewer_identity=trusted_reviewer_identity,
         )
+        review_store = (
+            output.parent
+            / "scenario-reviews"
+            / manifest["scenario"]["visibility"]
+            / f"{review_digest.rsplit(':', 1)[-1]}.json"
+        )
+        _immutable_verified_write(review_store, review_data)
+        if review_value["judgment"] != "approve":
+            raise ScenarioPackageError(
+                "independent-review-rejected",
+                f"independent review rejected the package; evidence retained at {review_store}",
+            )
         validate_scenario_state_transition("candidate", "package_qualified")
         package = lock["package"]
         assert isinstance(package, dict)

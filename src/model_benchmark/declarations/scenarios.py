@@ -764,6 +764,11 @@ def _check_answer_leakage(path: Path, manifest: dict[str, Any]) -> None:
         for hidden in hidden_files
         for marker in marker_pattern.findall(hidden.read_bytes())
     }
+    if any(hidden.stat().st_size == 0 for hidden in hidden_files):
+        raise ScenarioPackageError(
+            "answer-leakage",
+            "hidden verifier assets must be non-empty for leakage validation",
+        )
     hidden_assets = [hidden.read_bytes() for hidden in hidden_files]
     agent_visible = [path / "instruction.md"] + [
         candidate

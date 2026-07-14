@@ -182,15 +182,57 @@ def _resolve_declared_inputs(package: Path, manifest: dict[str, Any]) -> dict[st
 
 
 def _dockerfile_images(path: Path) -> set[str]:
-    references: set[str] = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
-        tokens = line.strip().split()
-        if not tokens or tokens[0].upper() != "FROM":
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise ScenarioLockError(f"cannot read Dockerfile {path}: {error}") from error
+    logical_lines: list[str] = []
+    current = ""
+    for physical_line in content.splitlines():
+        stripped = physical_line.rstrip()
+        if stripped.endswith("\\"):
+            current += stripped[:-1] + " "
             continue
-        candidates = [token for token in tokens[1:] if not token.startswith("--")]
-        if not candidates:
-            raise ScenarioLockError(f"Dockerfile has malformed FROM: {path}")
-        references.add(candidates[0])
+        logical_lines.append(current + physical_line)
+        current = ""
+    if current:
+        raise ScenarioLockError(f"Dockerfile has an unterminated continuation: {path}")
+
+    references: set[str] = set()
+    local_stages: set[str] = set()
+    stage_index = 0
+
+    def add_external(candidate: str) -> None:
+        reference = candidate.strip("\"'")
+        if reference and reference not in local_stages and not reference.isdecimal():
+            references.add(reference)
+
+    for raw_line in logical_lines:
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        instruction, _, arguments = line.partition(" ")
+        if instruction.upper() == "FROM":
+            tokens = arguments.split()
+            candidates = [token for token in tokens if not token.startswith("--")]
+            if not candidates:
+                raise ScenarioLockError(f"Dockerfile has malformed FROM: {path}")
+            add_external(candidates[0])
+            local_stages.add(str(stage_index))
+            stage_index += 1
+            for index, token in enumerate(tokens[:-1]):
+                if token.upper() == "AS":
+                    local_stages.add(tokens[index + 1])
+                    break
+            continue
+        for match in re.finditer(r"(?:^|\s)--from(?:=|\s+)([^\s]+)", arguments):
+            add_external(match.group(1))
+        for match in re.finditer(r"(?:^|\s)--mount=([^\s]+)", arguments):
+            mount = match.group(1).strip("\"'")
+            for option in mount.split(","):
+                key, separator, value = option.partition("=")
+                if separator and key == "from":
+                    add_external(value)
     return references
 
 

@@ -33,6 +33,8 @@ from model_benchmark.declarations.scenarios import (
 
 _TECHNICAL_SCHEMA_NAME = "model-benchmark/scenario-technical-qualification"
 _SCHEMA_VERSION = 1
+_CheckGroup = tuple[str, str, bool, str, Decimal]
+_CheckGroups = tuple[_CheckGroup, ...]
 
 
 def _run(
@@ -208,7 +210,7 @@ def provision_scenario_package(package: Path, *, jobs_dir: Path) -> dict[str, ob
 def _normalized_score(value: object) -> str:
     if isinstance(value, bool):
         return "1" if value else "0"
-    if not isinstance(value, (int, float, str)):
+    if not isinstance(value, (int, float, str, Decimal)):
         raise ScenarioPackageError(
             "invalid-infrastructure",
             "score value is not numeric",
@@ -261,7 +263,7 @@ def _trial_results(phase: Path, *, expected: int, agent: str) -> list[Path]:
 
 def _validate_structured_result(
     structured: dict[str, object],
-    expected_groups: tuple[tuple[str, str, bool], ...],
+    expected_groups: _CheckGroups,
 ) -> None:
     checks = structured.get("checks")
     statuses = structured.get("required_group_statuses")
@@ -299,13 +301,13 @@ def _validate_structured_result(
                 "structured verifier check identity, status, or evidence is invalid",
             )
         parsed_checks[check_id] = (status, tuple(evidence))
-    expected_statuses = {group_id for group_id, _, _ in expected_groups}
+    expected_statuses = {group_id for group_id, _, _, _, _ in expected_groups}
     if set(statuses) != expected_statuses:
         raise ScenarioPackageError(
             "invalid-infrastructure",
             "structured verifier result omits or invents Check Groups",
         )
-    for group_id, evidence_key, _ in expected_groups:
+    for group_id, evidence_key, _, _, _ in expected_groups:
         status = statuses[group_id]
         if status not in {"pass", "fail", "error", "not_evaluable"}:
             raise ScenarioPackageError(
@@ -317,16 +319,33 @@ def _validate_structured_result(
                 "invalid-infrastructure",
                 f"Check Group {group_id} lacks matching raw evidence",
             )
+    for score_name, group_class in (
+        ("acceptance_score", "acceptance"),
+        ("regression_score", "regression"),
+    ):
+        derived = sum(
+            (
+                weight
+                for group_id, _, _, declared_class, weight in expected_groups
+                if declared_class == group_class and statuses[group_id] == "pass"
+            ),
+            Decimal(0),
+        )
+        if _normalized_score(structured.get(score_name)) != _normalized_score(derived):
+            raise ScenarioPackageError(
+                "invalid-infrastructure",
+                f"{score_name} disagrees with declared Check Group outcomes",
+            )
     declared_success = structured.get("task_success")
     required_pass = all(
         statuses[group_id] == "pass"
-        for group_id, _, required in expected_groups
-        if required
+        for group_id, _, required, group_class, _ in expected_groups
+        if required and group_class in {"acceptance", "regression"}
     )
     if not isinstance(declared_success, bool) or declared_success is not required_pass:
         raise ScenarioPackageError(
             "invalid-infrastructure",
-            "task_success disagrees with required Check Group outcomes",
+            "task_success disagrees with required acceptance/regression Check Group outcomes",
         )
 
 
@@ -421,7 +440,7 @@ def _run_record(
     expected_task_digest: str,
     expected_score_names: tuple[str, ...],
     expected_hidden_marker_digests: tuple[str, ...],
-    expected_groups: tuple[tuple[str, str, bool], ...],
+    expected_groups: _CheckGroups,
 ) -> dict[str, object]:
     try:
         trial = json.loads(path.read_text(encoding="utf-8"))
@@ -550,7 +569,7 @@ def _run_phase(
     expected_task_digest: str,
     expected_score_names: tuple[str, ...],
     expected_hidden_marker_digests: tuple[str, ...],
-    expected_groups: tuple[tuple[str, str, bool], ...],
+    expected_groups: _CheckGroups,
     expected_capture_reason: str | None,
 ) -> tuple[list[dict[str, object]], str]:
     phase = jobs_dir / name
@@ -599,7 +618,7 @@ def _run_rejection_phase(
     kind: str,
     expected_score_names: tuple[str, ...],
     expected_hidden_marker_digests: tuple[str, ...],
-    expected_groups: tuple[tuple[str, str, bool], ...],
+    expected_groups: _CheckGroups,
 ) -> tuple[dict[str, object], str]:
     if kind == "malformed":
         solution = (
@@ -661,7 +680,7 @@ def _run_score_mismatch_phase(
     *,
     expected_score_names: tuple[str, ...],
     expected_hidden_marker_digests: tuple[str, ...],
-    expected_groups: tuple[tuple[str, str, bool], ...],
+    expected_groups: _CheckGroups,
 ) -> tuple[dict[str, str], str]:
     reward = {name: 0 for name in expected_score_names}
     structured = dict(reward)
@@ -819,7 +838,13 @@ def measure_scenario_package(
         entry["name"] for entry in declared["baseline_score_vector"]
     )
     expected_groups = tuple(
-        (group["id"], group["evidence_key"], group["required"])
+        (
+            group["id"],
+            group["evidence_key"],
+            group["required"],
+            group["class"],
+            Decimal(str(group["weight"])),
+        )
         for group in manifest["verification"]["check_groups"]
     )
     if set(expected_score_names) != {
@@ -994,7 +1019,13 @@ def measure_scenario_package(
         version=_SCHEMA_VERSION,
     )
     data = canonical_json_bytes(technical)
-    _immutable_verified_write(output, data)
+    try:
+        _immutable_verified_write(output, data)
+    except OSError as error:
+        raise ScenarioPackageError(
+            "qualification-publication-failed",
+            str(error),
+        ) from error
     digest = str(TypedDigest.from_bytes(DigestKind.PACKAGE_QUALIFICATION, data))
     return {
         "jobs_dir": str(jobs_dir),
