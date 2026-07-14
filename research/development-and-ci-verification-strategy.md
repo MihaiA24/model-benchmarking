@@ -1,6 +1,6 @@
 # Review and optimize development verification with caching, concurrency, and explicit fresh gates
 
-**Status:** Working research resolution
+**Status:** Accepted research resolution
 **Decision date:** 2026-07-14
 **Ticket:** [Review and optimize development verification with caching, concurrency, and explicit fresh gates](https://github.com/MihaiA24/model-benchmarking/issues/53)
 **Implementation evidence:** [`011c29c37d55e2c19139f9e8b26b67135657fce8`](https://github.com/MihaiA24/model-benchmarking/commit/011c29c37d55e2c19139f9e8b26b67135657fce8)
@@ -244,9 +244,9 @@ Track median and nearest-rank p95 wall time, CPU time, peak memory, cache hit/mi
 
 Deduplicate work by root seam rather than by each observed symptom:
 
-1. **Implement tiered verification selection and fail-closed proof consumption.** Add the closed-world dependency manifest and developer selector; separate Docker-free development, non-authoritative integration, and complete exact-gate selection; record diagnostic timing/resource/cache metadata; and consume only a live current trusted envelope while any missing field, identity drift, legacy artifact, unavailable currentness lookup, or supersession rejects it. This seam does not produce or publish authoritative envelopes.
-2. **Implement digest-first immutable provisioning and read-only preflight.** Replace unconditional digest pulls with verified local-hit behavior in network-enabled provisioning, seal cache evidence and visibility roots, and make all later integration/qualification/measured preflight fail closed without mutation.
-3. **Implement isolated qualification orchestration and proof publication.** Give phases/shards unique writable state and deterministic aggregation; prove race/failure cleanup and no shared authoritative writers; add bounded qualification concurrency without changing per-Harbor-job `n_concurrent=1`; produce the complete runner envelope and crash-safe currentness/supersession record; and publish explicit GitHub Actions triggers for development, affected integration, merge qualification, release/deployment, and manual fresh qualification.
+1. **[Implement tiered verification selection and fail-closed proof consumption](https://github.com/MihaiA24/model-benchmarking/issues/54).** Add the closed-world dependency manifest and developer selector; separate Docker-free development, non-authoritative integration, and complete exact-gate selection; record diagnostic timing/resource/cache metadata; and consume only a live current trusted envelope while any missing field, identity drift, legacy artifact, unavailable currentness lookup, or supersession rejects it. This seam does not produce or publish authoritative envelopes.
+2. **[Implement digest-first immutable provisioning and read-only preflight](https://github.com/MihaiA24/model-benchmarking/issues/55).** Replace unconditional digest pulls with verified local-hit behavior in network-enabled provisioning, seal cache evidence and visibility roots, and make all later integration/qualification/measured preflight fail closed without mutation.
+3. **[Implement isolated qualification orchestration and proof publication](https://github.com/MihaiA24/model-benchmarking/issues/56).** Give phases/shards unique writable state and deterministic aggregation; prove race/failure cleanup and no shared authoritative writers; add bounded qualification concurrency without changing per-Harbor-job `n_concurrent=1`; produce the complete runner envelope and crash-safe currentness/supersession record; and publish explicit GitHub Actions triggers for development, affected integration, merge qualification, release/deployment, and manual fresh qualification.
 
 These are implementation issues, not Wayfinder children. They should cite this resolution at an immutable commit, use native dependencies where available, and remain blocked where a predecessor has not yet proved the required seam.
 
