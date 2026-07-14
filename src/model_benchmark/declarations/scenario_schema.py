@@ -247,5 +247,5 @@ def validate_scenario_manifest(
             "qualification vectors must declare baseline failure and Reference success"
         )
     authors = provenance["authors"]
-    if len(authors) != len(set(authors)):
-        raise ScenarioContractError("provenance authors must be unique")
+    if not authors or len(authors) != len(set(authors)):
+        raise ScenarioContractError("provenance authors must be non-empty and unique")

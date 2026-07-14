@@ -217,7 +217,7 @@ def test_check_rejects_copied_hidden_assets_without_markers(tmp_path: Path) -> N
         "private",
     )
     assert scaffold.returncode == 0, scaffold.stderr or scaffold.stdout
-    hidden = b"private expected result: 9af8d30e\n"
+    hidden = b"42"
     (package / "tests/expected.txt").write_bytes(hidden)
     (package / "environment/copied-answer.txt").write_bytes(hidden)
 
@@ -225,6 +225,42 @@ def test_check_rejects_copied_hidden_assets_without_markers(tmp_path: Path) -> N
 
     assert checked.returncode != 0
     assert json.loads(checked.stdout)["classification"] == "answer-leakage"
+
+
+def test_check_requires_offline_builds_and_authenticated_authors(tmp_path: Path) -> None:
+    original = tmp_path / "original"
+    scaffold = _run(
+        "scaffold",
+        str(original),
+        "--scenario-id",
+        "example/offline-authored",
+        "--ecosystem",
+        "python-data-engineering",
+        "--visibility",
+        "private",
+    )
+    assert scaffold.returncode == 0, scaffold.stderr or scaffold.stdout
+
+    networked = tmp_path / "networked"
+    shutil.copytree(original, networked)
+    dockerfile = networked / "environment/Dockerfile"
+    dockerfile.write_text(
+        dockerfile.read_text(encoding="utf-8").replace("RUN --network=none", "RUN"),
+        encoding="utf-8",
+    )
+    checked = _run("check", str(networked))
+    assert checked.returncode != 0
+    assert json.loads(checked.stdout)["classification"] == "download-capable-build"
+
+    anonymous = tmp_path / "anonymous"
+    shutil.copytree(original, anonymous)
+    manifest_path = anonymous / "scenario.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["provenance"]["authors"] = []
+    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    checked = _run("check", str(anonymous))
+    assert checked.returncode != 0
+    assert json.loads(checked.stdout)["classification"] == "invalid-scenario-schema"
 
 
 def test_capture_patch_is_git_compatible_for_edge_cases_and_rejects_unsafe_paths(

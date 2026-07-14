@@ -15,13 +15,19 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from model_benchmark.declarations.canonical import canonical_json_bytes
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
+from model_benchmark.declarations.scenarios import ScenarioPackageError
 from model_benchmark.declarations.scenario_qualification import (
     review_signing_bytes,
     technical_signing_bytes,
     validate_scenario_state_transition,
 )
 from model_benchmark.declarations.schemas import SchemaRegistry
-from model_benchmark.runtime.scenario_qualification import _vector
+from model_benchmark.runtime import scenario_qualification as runtime_qualification
+from model_benchmark.runtime.scenario_qualification import (
+    _environment_identity,
+    _validate_structured_result,
+    _vector,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -61,6 +67,94 @@ def test_numeric_projection_includes_every_declared_domain_score() -> None:
         {"name": "regression_score", "value": "1"},
         {"name": "task_success", "value": "1"},
     ]
+
+
+def test_structured_result_requires_complete_group_evidence_and_consistent_success() -> None:
+    groups = (
+        ("acceptance", "acceptance", True),
+        ("regression", "regression", True),
+    )
+    valid: dict[str, object] = {
+        "acceptance_score": 1,
+        "checks": [
+            {"evidence": ["capture/capture.json"], "id": "acceptance", "status": "pass"},
+            {"evidence": ["tests/test.sh"], "id": "regression", "status": "pass"},
+        ],
+        "domain_scores": {},
+        "regression_score": 1,
+        "required_group_statuses": {"acceptance": "pass", "regression": "pass"},
+        "task_success": True,
+        "verifier_complete": True,
+    }
+
+    _validate_structured_result(valid, groups)
+
+    for mutation in (
+        lambda value: value.update({"checks": []}),
+        lambda value: value.update({"required_group_statuses": {"acceptance": "pass"}}),
+        lambda value: value.update({"task_success": False}),
+        lambda value: value.update({"verifier_complete": False}),
+    ):
+        malformed = deepcopy(valid)
+        mutation(malformed)
+        with pytest.raises(ScenarioPackageError, match="structured verifier|Check Group|task_success"):
+            _validate_structured_result(malformed, groups)
+
+
+def test_environment_identity_comes_from_fresh_agent_capture_and_verifier_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trial = {
+        "trial_name": "example-task--nop--1",
+        "started_at": "2026-07-14T10:00:00Z",
+        "finished_at": "2026-07-14T10:01:00Z",
+    }
+
+    def event(identity: str, project: str, service: str) -> str:
+        return json.dumps(
+            {
+                "Actor": {
+                    "Attributes": {
+                        "com.docker.compose.project": project,
+                        "com.docker.compose.service": service,
+                    },
+                    "ID": identity,
+                },
+                "Type": "container",
+                "Action": "create",
+                "id": identity,
+            }
+        )
+
+    agent_project = "example-task--nop--1__env"
+    verifier_project = "example-task--nop--1__verifier__a1b2c3d4"
+    events = "\n".join(
+        (
+            event("agent-container", agent_project, "main"),
+            event("capture-container", agent_project, "capture"),
+            event("verifier-container", verifier_project, "main"),
+        )
+    )
+    monkeypatch.setattr(
+        runtime_qualification,
+        "_run",
+        lambda command, *, timeout, cwd=None: subprocess.CompletedProcess(
+            command, 0, stdout=events, stderr=""
+        ),
+    )
+
+    identity = _environment_identity(trial)
+
+    assert identity.startswith("docker-environment:sha256:")
+    monkeypatch.setattr(
+        runtime_qualification,
+        "_run",
+        lambda command, *, timeout, cwd=None: subprocess.CompletedProcess(
+            command, 0, stdout=event("agent-container", agent_project, "main"), stderr=""
+        ),
+    )
+    with pytest.raises(ScenarioPackageError, match="fresh agent, capture, and verifier"):
+        _environment_identity(trial)
 
 
 def _write_document(path: Path, value: dict[str, object]) -> None:

@@ -2,6 +2,8 @@ schema_version: 1
 id: standard-v1
 trusted_capture:
   source_sha256: artifact:sha256:7a9a29c557952d028ee054479fc272df25026df9df92421029837a97d548b15d
+container_limits:
+  process_count: 256
 harbor_task:
   version: '1.0'
   agent:

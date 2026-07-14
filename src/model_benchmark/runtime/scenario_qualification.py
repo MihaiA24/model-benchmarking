@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -258,6 +259,159 @@ def _trial_results(phase: Path, *, expected: int, agent: str) -> list[Path]:
     return sorted(results)
 
 
+def _validate_structured_result(
+    structured: dict[str, object],
+    expected_groups: tuple[tuple[str, str, bool], ...],
+) -> None:
+    checks = structured.get("checks")
+    statuses = structured.get("required_group_statuses")
+    if (
+        structured.get("verifier_complete") is not True
+        or not isinstance(checks, list)
+        or not isinstance(statuses, dict)
+        or not isinstance(structured.get("domain_scores"), dict)
+    ):
+        raise ScenarioPackageError(
+            "invalid-infrastructure",
+            "structured verifier result is incomplete",
+        )
+    parsed_checks: dict[str, tuple[str, tuple[str, ...]]] = {}
+    for check in checks:
+        if not isinstance(check, dict) or set(check) != {"evidence", "id", "status"}:
+            raise ScenarioPackageError(
+                "invalid-infrastructure",
+                "structured verifier check is malformed",
+            )
+        check_id = check["id"]
+        status = check["status"]
+        evidence = check["evidence"]
+        if (
+            not isinstance(check_id, str)
+            or not check_id
+            or check_id in parsed_checks
+            or status not in {"pass", "fail", "error", "not_evaluable"}
+            or not isinstance(evidence, list)
+            or not evidence
+            or any(not isinstance(item, str) or not item for item in evidence)
+        ):
+            raise ScenarioPackageError(
+                "invalid-infrastructure",
+                "structured verifier check identity, status, or evidence is invalid",
+            )
+        parsed_checks[check_id] = (status, tuple(evidence))
+    expected_statuses = {group_id for group_id, _, _ in expected_groups}
+    if set(statuses) != expected_statuses:
+        raise ScenarioPackageError(
+            "invalid-infrastructure",
+            "structured verifier result omits or invents Check Groups",
+        )
+    for group_id, evidence_key, _ in expected_groups:
+        status = statuses[group_id]
+        if status not in {"pass", "fail", "error", "not_evaluable"}:
+            raise ScenarioPackageError(
+                "invalid-infrastructure",
+                f"invalid status for Check Group {group_id}",
+            )
+        if evidence_key not in parsed_checks or parsed_checks[evidence_key][0] != status:
+            raise ScenarioPackageError(
+                "invalid-infrastructure",
+                f"Check Group {group_id} lacks matching raw evidence",
+            )
+    declared_success = structured.get("task_success")
+    required_pass = all(
+        statuses[group_id] == "pass"
+        for group_id, _, required in expected_groups
+        if required
+    )
+    if not isinstance(declared_success, bool) or declared_success is not required_pass:
+        raise ScenarioPackageError(
+            "invalid-infrastructure",
+            "task_success disagrees with required Check Group outcomes",
+        )
+
+
+def _compose_project_name(value: str) -> str:
+    lowered = value.lower()
+    if not re.match(r"^[a-z0-9]", lowered):
+        lowered = "0" + lowered
+    return re.sub(r"[^a-z0-9_-]", "-", lowered)
+
+
+def _environment_identity(trial: dict[str, object]) -> str:
+    trial_name = trial.get("trial_name")
+    started_at = trial.get("started_at")
+    finished_at = trial.get("finished_at")
+    if not all(isinstance(value, str) and value for value in (trial_name, started_at, finished_at)):
+        raise ScenarioPackageError(
+            "invalid-infrastructure",
+            "Harbor environment timestamps or trial name are missing",
+        )
+    completed = _run(
+        [
+            "docker", "events",
+            "--since", started_at,
+            "--until", str(int(time.time()) + 1),
+            "--filter", "type=container",
+            "--format", "{{json .}}",
+        ],
+        timeout=30,
+    )
+    prefix = _compose_project_name(trial_name)
+    evidence: list[dict[str, str]] = []
+    for line in completed.stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
+        actor = event.get("Actor")
+        attributes = actor.get("Attributes") if isinstance(actor, dict) else None
+        project = (
+            attributes.get("com.docker.compose.project")
+            if isinstance(attributes, dict)
+            else None
+        )
+        if not isinstance(project, str) or not project.startswith(prefix):
+            continue
+        event_type = event.get("Type")
+        action = event.get("Action")
+        identity = event.get("id") or (actor.get("ID") if isinstance(actor, dict) else None)
+        service = attributes.get("com.docker.compose.service", "")
+        if not all(
+            isinstance(value, str) for value in (action, event_type, identity, service)
+        ):
+            raise ScenarioPackageError(
+                "invalid-infrastructure",
+                "Docker environment event is malformed",
+            )
+        evidence.append(
+            {
+                "action": action,
+                "id": identity,
+                "project": project,
+                "service": service,
+                "type": event_type,
+            }
+        )
+    agent_project = _compose_project_name(f"{trial_name}__env")
+    agent_services = {
+        item["service"] for item in evidence if item["project"] == agent_project
+    }
+    verifier_projects = {
+        item["project"]
+        for item in evidence
+        if item["project"].startswith(_compose_project_name(f"{trial_name}__verifier__"))
+    }
+    container_ids = {item["id"] for item in evidence if item["type"] == "container"}
+    if not {"main", "capture"} <= agent_services or len(verifier_projects) != 1 or len(container_ids) < 3:
+        raise ScenarioPackageError(
+            "invalid-infrastructure",
+            "Docker events do not prove fresh agent, capture, and verifier containers",
+        )
+    return "docker-environment:sha256:" + hashlib.sha256(
+        canonical_json_bytes(sorted(evidence, key=lambda item: tuple(item.values())))
+    ).hexdigest()
+
+
 def _run_record(
     path: Path,
     *,
@@ -267,6 +421,7 @@ def _run_record(
     expected_task_digest: str,
     expected_score_names: tuple[str, ...],
     expected_hidden_marker_digests: tuple[str, ...],
+    expected_groups: tuple[tuple[str, str, bool], ...],
 ) -> dict[str, object]:
     try:
         trial = json.loads(path.read_text(encoding="utf-8"))
@@ -317,6 +472,7 @@ def _run_record(
             "invalid-infrastructure",
             "numeric Harbor reward differs from structured verifier output",
         )
+    _validate_structured_result(structured, expected_groups)
     task = native_lock.get("task")
     native_task_digest = task.get("digest") if isinstance(task, dict) else None
     if native_task_digest != expected_task_digest.replace("harbor-task:", "", 1):
@@ -374,12 +530,7 @@ def _run_record(
             "invalid-technical-qualification",
             f"Harbor trial produced {outcome}, expected {expected_outcome}",
         )
-    environment_id = trial.get("id")
-    if not isinstance(environment_id, str) or not environment_id:
-        raise ScenarioPackageError(
-            "invalid-infrastructure",
-            "Harbor trial environment identity is missing",
-        )
+    environment_id = _environment_identity(trial)
     return {
         "environment_id": environment_id,
         "outcome": outcome,
@@ -399,6 +550,7 @@ def _run_phase(
     expected_task_digest: str,
     expected_score_names: tuple[str, ...],
     expected_hidden_marker_digests: tuple[str, ...],
+    expected_groups: tuple[tuple[str, str, bool], ...],
     expected_capture_reason: str | None,
 ) -> tuple[list[dict[str, object]], str]:
     phase = jobs_dir / name
@@ -407,23 +559,37 @@ def _run_phase(
             "qualification-publication-failed",
             f"qualification phase already exists: {phase}",
         )
-    completed = _run(
-        _harbor_command(package, phase, agent=agent, attempts=attempts),
-        timeout=1200,
-    )
-    records = [
-        _run_record(
-            path,
-            expected_outcome=expected_outcome,
-            expected_capture_kind="patch" if agent == "oracle" else "no-op",
-            expected_capture_reason=expected_capture_reason,
-            expected_task_digest=expected_task_digest,
-            expected_score_names=expected_score_names,
-            expected_hidden_marker_digests=expected_hidden_marker_digests,
+    records: list[dict[str, object]] = []
+    outputs: list[str] = []
+    known_results: set[Path] = set()
+    for attempt in range(1, attempts + 1):
+        completed = _run(
+            _harbor_command(package, phase, agent=agent, attempts=1),
+            timeout=1200,
         )
-        for path in _trial_results(phase, expected=attempts, agent=agent)
-    ]
-    return records, completed.stdout + completed.stderr
+        outputs.append(completed.stdout + completed.stderr)
+        result_paths = _trial_results(phase, expected=attempt, agent=agent)
+        fresh_results = set(result_paths) - known_results
+        if len(fresh_results) != 1:
+            raise ScenarioPackageError(
+                "invalid-infrastructure",
+                "Harbor did not produce exactly one fresh trial",
+            )
+        path = fresh_results.pop()
+        known_results.add(path)
+        records.append(
+            _run_record(
+                path,
+                expected_outcome=expected_outcome,
+                expected_capture_kind="patch" if agent == "oracle" else "no-op",
+                expected_capture_reason=expected_capture_reason,
+                expected_task_digest=expected_task_digest,
+                expected_score_names=expected_score_names,
+                expected_hidden_marker_digests=expected_hidden_marker_digests,
+                expected_groups=expected_groups,
+            )
+        )
+    return records, "".join(outputs)
 
 
 def _run_rejection_phase(
@@ -433,6 +599,7 @@ def _run_rejection_phase(
     kind: str,
     expected_score_names: tuple[str, ...],
     expected_hidden_marker_digests: tuple[str, ...],
+    expected_groups: tuple[tuple[str, str, bool], ...],
 ) -> tuple[dict[str, object], str]:
     if kind == "malformed":
         solution = (
@@ -474,6 +641,7 @@ def _run_rejection_phase(
             expected_task_digest=task_digest,
             expected_score_names=expected_score_names,
             expected_hidden_marker_digests=expected_hidden_marker_digests,
+            expected_groups=expected_groups,
             expected_capture_reason=expected_reason,
         )
     return (
@@ -493,6 +661,7 @@ def _run_score_mismatch_phase(
     *,
     expected_score_names: tuple[str, ...],
     expected_hidden_marker_digests: tuple[str, ...],
+    expected_groups: tuple[tuple[str, str, bool], ...],
 ) -> tuple[dict[str, str], str]:
     reward = {name: 0 for name in expected_score_names}
     structured = dict(reward)
@@ -525,6 +694,15 @@ def _run_score_mismatch_phase(
         )
         result_path = _trial_results(phase, expected=1, agent="nop")[0]
         try:
+            trial = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
+        if not isinstance(trial, dict):
+            raise ScenarioPackageError(
+                "invalid-infrastructure",
+                "Harbor trial result is malformed",
+            )
+        try:
             _run_record(
                 result_path,
                 expected_outcome="declared-failure",
@@ -533,6 +711,7 @@ def _run_score_mismatch_phase(
                 expected_task_digest=task_digest,
                 expected_score_names=expected_score_names,
                 expected_hidden_marker_digests=expected_hidden_marker_digests,
+                expected_groups=expected_groups,
             )
         except ScenarioPackageError as error:
             if (
@@ -545,16 +724,7 @@ def _run_score_mismatch_phase(
                 "invalid-technical-qualification",
                 "numeric/structured verifier mismatch was accepted",
             )
-        try:
-            trial = json.loads(result_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as error:
-            raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
-        environment_id = trial.get("id")
-        if not isinstance(environment_id, str) or not environment_id:
-            raise ScenarioPackageError(
-                "invalid-infrastructure",
-                "score-mismatch environment identity is missing",
-            )
+        environment_id = _environment_identity(trial)
     return (
         {"environment_id": environment_id, "status": "passed"},
         completed.stdout + completed.stderr,
@@ -648,6 +818,10 @@ def measure_scenario_package(
     expected_score_names = tuple(
         entry["name"] for entry in declared["baseline_score_vector"]
     )
+    expected_groups = tuple(
+        (group["id"], group["evidence_key"], group["required"])
+        for group in manifest["verification"]["check_groups"]
+    )
     if set(expected_score_names) != {
         entry["name"] for entry in declared["reference_score_vector"]
     }:
@@ -683,6 +857,7 @@ def measure_scenario_package(
         expected_task_digest=expected_task_digest,
         expected_score_names=expected_score_names,
         expected_hidden_marker_digests=expected_hidden_marker_digests,
+        expected_groups=expected_groups,
         expected_capture_reason=None,
     )
     hidden_records, hidden_output = _run_phase(
@@ -695,6 +870,7 @@ def measure_scenario_package(
         expected_task_digest=expected_task_digest,
         expected_score_names=expected_score_names,
         expected_hidden_marker_digests=expected_hidden_marker_digests,
+        expected_groups=expected_groups,
         expected_capture_reason=None,
     )
     reference_records, reference_output = _run_phase(
@@ -707,6 +883,7 @@ def measure_scenario_package(
         expected_task_digest=expected_task_digest,
         expected_score_names=expected_score_names,
         expected_hidden_marker_digests=expected_hidden_marker_digests,
+        expected_groups=expected_groups,
         expected_capture_reason=None,
     )
     malformed_handoff, malformed_output = _run_rejection_phase(
@@ -715,6 +892,7 @@ def measure_scenario_package(
         kind="malformed",
         expected_score_names=expected_score_names,
         expected_hidden_marker_digests=expected_hidden_marker_digests,
+        expected_groups=expected_groups,
     )
     unsafe_handoff, unsafe_output = _run_rejection_phase(
         package,
@@ -722,12 +900,14 @@ def measure_scenario_package(
         kind="unsafe",
         expected_score_names=expected_score_names,
         expected_hidden_marker_digests=expected_hidden_marker_digests,
+        expected_groups=expected_groups,
     )
     score_mismatch, score_mismatch_output = _run_score_mismatch_phase(
         package,
         jobs_dir,
         expected_score_names=expected_score_names,
         expected_hidden_marker_digests=expected_hidden_marker_digests,
+        expected_groups=expected_groups,
     )
     finished = int(time.time())
     pull_events = _docker_pull_events(started, finished)

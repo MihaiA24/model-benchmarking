@@ -200,7 +200,7 @@ def _immutable_verified_write(path: Path, data: bytes) -> None:
 
 def _standard_profile() -> dict[str, Any]:
     profile = _load_yaml(standard_profile_path(), label="standard-v1-profile")
-    if set(profile) != {"schema_version", "id", "trusted_capture", "harbor_task"}:
+    if set(profile) != {"schema_version", "id", "trusted_capture", "container_limits", "harbor_task"}:
         raise ScenarioPackageError(
             "invalid-standard-v1-profile",
             "standard-v1 has unknown or missing fields",
@@ -258,6 +258,17 @@ def _standard_profile() -> dict[str, Any]:
         raise ScenarioPackageError(
             "invalid-standard-v1-profile",
             "standard-v1 trusted capture identity is invalid",
+        )
+    container_limits = profile["container_limits"]
+    if (
+        not isinstance(container_limits, dict)
+        or set(container_limits) != {"process_count"}
+        or not isinstance(container_limits["process_count"], int)
+        or container_limits["process_count"] < 1
+    ):
+        raise ScenarioPackageError(
+            "invalid-standard-v1-profile",
+            "standard-v1 process ceiling is invalid",
         )
     if harbor["agent"]["timeout_sec"] is not None:
         raise ScenarioPackageError(
@@ -342,21 +353,39 @@ def _artifact_collect_hook(submission: dict[str, Any]) -> dict[str, object]:
 
 
 def _capture_compose() -> dict[str, object]:
+    process_count = _standard_profile()["container_limits"]["process_count"]
+    sandbox = {
+        "cap_drop": ["ALL"],
+        "pids_limit": process_count,
+        "read_only": True,
+        "security_opt": ["no-new-privileges:true"],
+    }
     return {
         "services": {
-            "main": {"volumes": ["trial-repository:/workspace"]},
+            "main": {
+                **sandbox,
+                "tmpfs": [
+                    "/solution:rw,exec,nosuid,nodev,size=1m,mode=0755",
+                    "/tmp:rw,noexec,nosuid,nodev,size=64m",
+                ],
+                "volumes": ["trial-repository:/workspace"],
+            },
             "capture": {
+                **sandbox,
                 "build": {"context": ".", "dockerfile": "capture/Dockerfile"},
                 "command": ["sh", "-c", "sleep infinity"],
                 "depends_on": {"main": {"condition": "service_started"}},
                 "network_mode": "none",
-                "cap_drop": ["ALL"],
-                "security_opt": ["no-new-privileges:true"],
-                "tmpfs": ["/tmp"],
-                "volumes": ["trial-repository:/input:ro"],
+                "tmpfs": [
+                    "/tmp:rw,noexec,nosuid,nodev,size=16m",
+                ],
+                "volumes": [
+                    "capture-output:/capture",
+                    "trial-repository:/input:ro",
+                ],
             },
         },
-        "volumes": {"trial-repository": None},
+        "volumes": {"capture-output": None, "trial-repository": None},
     }
 
 
@@ -366,7 +395,7 @@ def _capture_dockerfile() -> str:
         "WORKDIR /opt/capture\n"
         "COPY capture/capture.py capture/policy.json /opt/capture/\n"
         "COPY baseline/ /opt/capture/baseline/\n"
-        "RUN chmod -R a=rX /opt/capture && "
+        "RUN --network=none chmod -R a=rX /opt/capture && "
         "install -d -o 65532 -g 65532 -m 0700 /capture\n"
         "USER 65532:65532\n"
     )
@@ -511,7 +540,7 @@ def _scenario_manifest(
             },
         },
         "provenance": {
-            "authors": [],
+            "authors": [f"urn:model-benchmark:author:{scenario_id}"],
             "source_references": [],
             "licenses": ["NOASSERTION"],
             "contamination_disclosures": [],
@@ -570,36 +599,17 @@ def scaffold_scenario_package(
             f"FROM {image}\n"
             "USER root\n"
             f"COPY baseline/ {environment['workdir']}/\n"
-            f"RUN mkdir -p {environment['workdir']} && "
+            f"RUN --network=none mkdir -p {environment['workdir']} && "
             f"chown {profile['harbor_task']['agent']['user']}:"
             f"{profile['harbor_task']['agent']['user']} {environment['workdir']} && "
-            "chmod -R a+rwX /workspace\n"
+            f"chmod -R a+rwX {environment['workdir']}\n"
             f"USER {profile['harbor_task']['agent']['user']}\n"
             f"WORKDIR {environment['workdir']}\n"
             f"# Example build: {definition['build_example']}\n",
         )
         _write_text(
             path / "environment/docker-compose.yaml",
-            "services:\n"
-            "  main:\n"
-            "    volumes:\n"
-            "      - trial-repository:/workspace\n"
-            "  capture:\n"
-            "    build:\n"
-            "      context: .\n"
-            "      dockerfile: capture/Dockerfile\n"
-            "    command: [\"sh\", \"-c\", \"sleep infinity\"]\n"
-            "    depends_on:\n"
-            "      main:\n"
-            "        condition: service_started\n"
-            "    network_mode: none\n"
-            "    cap_drop: [\"ALL\"]\n"
-            "    security_opt: [\"no-new-privileges:true\"]\n"
-            "    tmpfs: [\"/tmp\"]\n"
-            "    volumes:\n"
-            "      - trial-repository:/input:ro\n"
-            "volumes:\n"
-            "  trial-repository:\n",
+            yaml.safe_dump(json.loads(json.dumps(_capture_compose())), sort_keys=False),
         )
         _write_text(
             path / "environment/capture/Dockerfile",
@@ -630,7 +640,7 @@ def scaffold_scenario_package(
             f"FROM {image}\n"
             "USER root\n"
             "COPY . /tests/\n"
-            "RUN chmod +x /tests/test.sh\n"
+            "RUN --network=none chmod +x /tests/test.sh\n"
             f"USER {profile['harbor_task']['verifier']['user']}\n"
             f"WORKDIR {environment['workdir']}\n"
             f"# Example test: {definition['test_example']}\n",
@@ -640,6 +650,7 @@ def scaffold_scenario_package(
             "#!/bin/sh\n"
             f"# {_HIDDEN_MARKER}\n"
             "set -eu\n"
+            f"prlimit --pid $$ --nproc={profile['container_limits']['process_count']}:{profile['container_limits']['process_count']}\n"
             "mkdir -p /logs/verifier\n"
             "if grep -q '\"status\":\"accepted\"' /capture/capture.json && "
             "grep -q '\"kind\":\"patch\"' /capture/capture.json; then\n"
@@ -648,7 +659,7 @@ def scaffold_scenario_package(
             "  acceptance=0; task_success=false; status=fail\n"
             "fi\n"
             "printf '%s\\n' "
-            "\"{\\\"acceptance_score\\\":${acceptance},\\\"checks\\\":[{\\\"evidence\\\":[],\\\"id\\\":\\\"acceptance\\\",\\\"status\\\":\\\"${status}\\\"},{\\\"evidence\\\":[],\\\"id\\\":\\\"regression\\\",\\\"status\\\":\\\"pass\\\"}],\\\"domain_scores\\\":{},\\\"regression_score\\\":1,\\\"required_group_statuses\\\":{\\\"acceptance\\\":\\\"${status}\\\",\\\"regression\\\":\\\"pass\\\"},\\\"task_success\\\":${task_success},\\\"verifier_complete\\\":true}\" "
+            "\"{\\\"acceptance_score\\\":${acceptance},\\\"checks\\\":[{\\\"evidence\\\":[\\\"capture/capture.json\\\"],\\\"id\\\":\\\"acceptance\\\",\\\"status\\\":\\\"${status}\\\"},{\\\"evidence\\\":[\\\"tests/test.sh\\\"],\\\"id\\\":\\\"regression\\\",\\\"status\\\":\\\"pass\\\"}],\\\"domain_scores\\\":{},\\\"regression_score\\\":1,\\\"required_group_statuses\\\":{\\\"acceptance\\\":\\\"${status}\\\",\\\"regression\\\":\\\"pass\\\"},\\\"task_success\\\":${task_success},\\\"verifier_complete\\\":true}\" "
             "> /logs/verifier/verifier-result.json\n"
             "printf '%s\\n' "
             "\"{\\\"acceptance_score\\\":${acceptance},\\\"regression_score\\\":1,\\\"task_success\\\":${acceptance}}\" "
@@ -708,6 +719,38 @@ def _check_instruction(path: Path, manifest: dict[str, Any]) -> bytes:
     return data
 
 
+def _check_offline_builds(path: Path) -> None:
+    dockerfiles = sorted(path.rglob("Dockerfile"))
+    if not dockerfiles:
+        raise ScenarioPackageError("invalid-build-input", "package has no Dockerfiles")
+    for dockerfile in dockerfiles:
+        try:
+            text = dockerfile.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            raise ScenarioPackageError("invalid-build-input", str(error)) from error
+        logical_lines = re.sub(r"\\\n[ \t]*", " ", text).splitlines()
+        for raw_line in logical_lines:
+            instruction = raw_line.strip()
+            upper = instruction.upper()
+            if upper.startswith("FROM ") and re.search(
+                r"@sha256:[0-9a-f]{64}(?:\s+AS\s+\S+)?$", instruction, re.IGNORECASE
+            ) is None:
+                raise ScenarioPackageError(
+                    "mutable-build-input",
+                    f"Dockerfile FROM must use an immutable digest: {dockerfile}",
+                )
+            if upper.startswith("RUN ") and not upper.startswith("RUN --NETWORK=NONE "):
+                raise ScenarioPackageError(
+                    "download-capable-build",
+                    f"Dockerfile RUN must declare --network=none: {dockerfile}",
+                )
+            if upper.startswith("ADD ") and re.search(r"(?:HTTPS?|GIT)://", instruction, re.IGNORECASE):
+                raise ScenarioPackageError(
+                    "download-capable-build",
+                    f"Dockerfile ADD cannot use a remote source: {dockerfile}",
+                )
+
+
 def _check_answer_leakage(path: Path, manifest: dict[str, Any]) -> None:
     hidden_files = [
         candidate
@@ -721,11 +764,7 @@ def _check_answer_leakage(path: Path, manifest: dict[str, Any]) -> None:
         for hidden in hidden_files
         for marker in marker_pattern.findall(hidden.read_bytes())
     }
-    hidden_assets = [
-        data
-        for hidden in hidden_files
-        if len(data := hidden.read_bytes()) >= 16
-    ]
+    hidden_assets = [hidden.read_bytes() for hidden in hidden_files]
     agent_visible = [path / "instruction.md"] + [
         candidate
         for candidate in (path / "environment").rglob("*")
@@ -857,6 +896,24 @@ def _check_submission_materialization(
             "invalid-submission-materialization",
             "submission materialization services are missing",
         )
+    baseline_path = path / "environment/baseline"
+    if baseline_path.is_symlink() or not baseline_path.is_dir():
+        raise ScenarioPackageError(
+            "invalid-submission-materialization",
+            "capture baseline is missing",
+        )
+    try:
+        baseline_digest = str(normalized_tree_digest(baseline_path))
+    except ScenarioSourceError as error:
+        raise ScenarioPackageError(
+            "invalid-submission-materialization",
+            str(error),
+        ) from error
+    if baseline_digest != manifest["repository"]["baseline_tree_sha256"]:
+        raise ScenarioPackageError(
+            "invalid-submission-materialization",
+            "capture baseline does not equal the Scenario Baseline",
+        )
     if submission["kind"] == "git-patch":
         expected_artifacts = {
             ("capture", "/capture/capture.json"),
@@ -899,24 +956,6 @@ def _check_submission_materialization(
             raise ScenarioPackageError(
                 "invalid-submission-materialization",
                 "capture policy does not match the Submission boundary",
-            )
-        baseline_path = path / "environment/baseline"
-        if baseline_path.is_symlink() or not baseline_path.is_dir():
-            raise ScenarioPackageError(
-                "invalid-submission-materialization",
-                "capture baseline is missing",
-            )
-        try:
-            baseline_digest = str(normalized_tree_digest(baseline_path))
-        except ScenarioSourceError as error:
-            raise ScenarioPackageError(
-                "invalid-submission-materialization",
-                str(error),
-            ) from error
-        if baseline_digest != manifest["repository"]["baseline_tree_sha256"]:
-            raise ScenarioPackageError(
-                "invalid-submission-materialization",
-                "capture baseline does not equal the Scenario Baseline",
             )
         return
     materialization = submission["materialization"]
@@ -1060,6 +1099,7 @@ def _checked_lock_bytes(path: Path) -> tuple[dict[str, Any], bytes, dict[str, An
         raise ScenarioPackageError("source-reconstruction-failed", str(error)) from error
     instruction = _check_instruction(path, manifest)
     _check_answer_leakage(path, manifest)
+    _check_offline_builds(path)
     task = _check_profile(path, manifest)
     _check_submission_materialization(path, task, manifest)
     harbor = _harbor_probe(path)
