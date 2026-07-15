@@ -64,9 +64,7 @@ def sign_review(review: dict[str, Any]) -> None:
     }
     signature = private_key.sign(review_signing_bytes(review))
     encoded_signature = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
-    reviewer["authentication"]["value"] = (
-        f"ed25519:{encoded_key}:{encoded_signature}"
-    )
+    reviewer["authentication"]["value"] = f"ed25519:{encoded_key}:{encoded_signature}"
 
 
 def sign_technical(technical: dict[str, Any]) -> str:
@@ -130,14 +128,14 @@ def build_qualification_case(tmp_path: Path) -> QualificationCase:
         for entry in package_record["files"]
         if entry["path"] == "instruction.md"
     )
-    baseline_vector = manifest["verification"]["qualification"][
-        "baseline_score_vector"
-    ]
+    baseline_vector = manifest["verification"]["qualification"]["baseline_score_vector"]
     reference_vector = manifest["verification"]["qualification"][
         "reference_score_vector"
     ]
 
-    def run_record(environment: str, outcome: str, vector: list[dict[str, str]]) -> dict[str, Any]:
+    def run_record(
+        environment: str, outcome: str, vector: list[dict[str, str]]
+    ) -> dict[str, Any]:
         return {
             "environment_id": environment,
             "outcome": outcome,
@@ -149,6 +147,11 @@ def build_qualification_case(tmp_path: Path) -> QualificationCase:
         "candidate_status": "technically-qualified",
         "harbor": lock["harbor"],
         "identities": lock["identities"],
+        "provisioning": {
+            "manifest_sha256": "provisioning-manifest:sha256:" + "1" * 64,
+            "projected_task_sha256": "harbor-task:sha256:" + "2" * 64,
+            "projection_sha256": "artifact:sha256:" + "3" * 64,
+        },
         "package_payload_sha256": package_record["payload_sha256"],
         "qualified_at": "2026-07-13T20:00:00Z",
         "runs": {

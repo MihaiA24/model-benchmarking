@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -26,8 +25,25 @@ from model_benchmark.declarations.scenario_qualification import technical_signin
 from model_benchmark.declarations.schemas import SchemaRegistry, SchemaValidationError
 from model_benchmark.declarations.scenarios import (
     ScenarioPackageError,
+    _harbor_probe,
     _immutable_verified_write,
     check_scenario_package,
+)
+from model_benchmark.runtime.provisioning import (
+    acquire_store_lease,
+    create_verifier_build_package,
+    ensure_locked_images,
+    harbor_egress_image,
+    harbor_kernel_probe_reference,
+    load_target_config,
+    locked_image_requests,
+    project_runtime_images,
+    project_single_runtime_image,
+    publish_manifest,
+    preflight,
+    prefixed_runtime_image,
+    qualification_authority,
+    remove_project_images,
 )
 
 
@@ -42,18 +58,22 @@ def _run(
     *,
     timeout: int,
     cwd: Path | None = None,
+    environment: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
         completed = subprocess.run(
             command,
             cwd=cwd,
+            env=None if environment is None else {**os.environ, **environment},
             capture_output=True,
             text=True,
             timeout=timeout,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        raise ScenarioPackageError("qualification-runtime-failed", str(error)) from error
+        raise ScenarioPackageError(
+            "qualification-runtime-failed", str(error)
+        ) from error
     if completed.returncode != 0:
         detail = (completed.stderr.strip() or completed.stdout.strip())[-2000:]
         raise ScenarioPackageError(
@@ -86,48 +106,16 @@ def _locked_package(package: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     registry = SchemaRegistry(schema_root_path())
     try:
         lock = registry.validate_bytes((package / "scenario.lock.json").read_bytes())
-        manifest = yaml.safe_load((package / "scenario.yaml").read_text(encoding="utf-8"))
+        manifest = yaml.safe_load(
+            (package / "scenario.yaml").read_text(encoding="utf-8")
+        )
     except (OSError, UnicodeError, yaml.YAMLError, SchemaValidationError) as error:
         raise ScenarioPackageError("invalid-package-lock", str(error)) from error
     if not isinstance(lock, dict) or not isinstance(manifest, dict):
-        raise ScenarioPackageError("invalid-package-lock", "invalid package declarations")
+        raise ScenarioPackageError(
+            "invalid-package-lock", "invalid package declarations"
+        )
     return lock, manifest
-
-
-def _image_references(lock: dict[str, Any]) -> list[str]:
-    resolved = lock["resolved_inputs"]
-    references = [entry["reference"] for entry in resolved["images"]]
-    if not references or len(references) != len(set(references)):
-        raise ScenarioPackageError(
-            "qualification-input-unavailable",
-            "locked image references are missing or duplicated",
-        )
-    return sorted(references)
-
-
-def _inspect_local_images(references: list[str]) -> None:
-    _run(["docker", "version", "--format", "{{.Server.Version}}"], timeout=30)
-    missing: list[str] = []
-    for reference in references:
-        try:
-            completed = subprocess.run(
-                ["docker", "image", "inspect", reference, "--format", "{{.Id}}"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as error:
-            raise ScenarioPackageError(
-                "qualification-runtime-failed", str(error)
-            ) from error
-        if completed.returncode != 0:
-            missing.append(reference)
-    if missing:
-        raise ScenarioPackageError(
-            "qualification-input-unavailable",
-            "locked images are absent from the trusted cache: " + ", ".join(missing),
-        )
 
 
 def _harbor_command(
@@ -158,57 +146,166 @@ def _harbor_command(
         "--quiet",
     ]
     if install_only:
-        command.append("--install-only")
+        command.extend(["--install-only", "--no-delete"])
     return command
 
 
-def provision_scenario_package(package: Path, *, jobs_dir: Path) -> dict[str, object]:
-    """Populate immutable Docker/Harbor caches before the measured window."""
+def provision_scenario_package(
+    package: Path,
+    *,
+    jobs_dir: Path,
+    manifest_output: Path,
+    target_config: Path,
+    qualification_record: Path | None = None,
+) -> dict[str, object]:
+    """Populate one visibility-scoped Docker store and seal its exact identities."""
     package = package.resolve()
     jobs_dir = jobs_dir.resolve()
-    if jobs_dir.is_relative_to(package):
+    manifest_output = manifest_output.resolve()
+    if any(
+        candidate.is_relative_to(package) for candidate in (jobs_dir, manifest_output)
+    ):
         raise ScenarioPackageError(
             "invalid-qualification-output",
-            "qualification jobs must remain outside the package payload",
+            "provisioning outputs must remain outside the package payload",
         )
-    lock, _ = _locked_package(package)
-    references = _image_references(lock)
-    for reference in references:
-        _run(["docker", "pull", reference], timeout=600)
-    jobs_dir.mkdir(parents=True, exist_ok=True)
-    phase = jobs_dir / "provision"
-    if phase.exists():
+    if manifest_output.exists() or manifest_output.is_symlink():
         raise ScenarioPackageError(
             "qualification-publication-failed",
-            f"provisioning directory already exists: {phase}",
+            f"provisioning manifest path already exists: {manifest_output}",
         )
-    _run(
-        _harbor_command(
-            package,
-            phase,
-            agent="nop",
-            attempts=1,
-            install_only=True,
-        ),
-        timeout=900,
-    )
-    trial_path = _trial_results(phase, expected=1, agent="nop")[0]
-    try:
-        trial = json.loads(trial_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
-    if trial.get("exception_info") is not None:
+    if jobs_dir.exists() and any(jobs_dir.iterdir()):
         raise ScenarioPackageError(
-            "qualification-runtime-failed",
-            "Harbor provisioning recorded a trial exception",
+            "qualification-publication-failed",
+            f"provisioning jobs directory is not empty: {jobs_dir}",
         )
-    _inspect_local_images(references)
+    lock, manifest = _locked_package(package)
+    lock_bytes = (package / "scenario.lock.json").read_bytes()
+    visibility = manifest["scenario"]["visibility"]
+    target = load_target_config(target_config.resolve(), visibility=visibility)
+    lifecycle_state, authority_digest = qualification_authority(
+        qualification_record.resolve() if qualification_record is not None else None,
+        lock=lock,
+        lock_bytes=lock_bytes,
+    )
+    phase = jobs_dir / "provision"
+    verifier_phase = jobs_dir / "verifier-provision"
+    verifier_package = jobs_dir / "verifier-package"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    with acquire_store_lease(target, visibility=visibility) as lease:
+        try:
+            locked_images = locked_image_requests(lock)
+            kernel_reference = harbor_kernel_probe_reference()
+            requested_images = ensure_locked_images(lease, locked_images)
+            _run(
+                _harbor_command(
+                    package,
+                    phase,
+                    agent="nop",
+                    attempts=1,
+                    install_only=True,
+                ),
+                timeout=900,
+                environment={"DOCKER_CONTEXT": lease.target.context},
+            )
+            trial_path = _trial_results(phase, expected=1, agent="nop")[0]
+            trial = json.loads(trial_path.read_text(encoding="utf-8"))
+            if trial.get("exception_info") is not None:
+                raise ScenarioPackageError(
+                    "provisioning-runtime-failed",
+                    "Harbor provisioning recorded a trial exception",
+                )
+            trial_name = trial.get("trial_name")
+            if not isinstance(trial_name, str) or not trial_name:
+                raise ScenarioPackageError(
+                    "provisioning-runtime-failed",
+                    "Harbor provisioning omitted the trial identity",
+                )
+            runtime_images = project_runtime_images(
+                lease,
+                project=_compose_project_name(f"{trial_name}__env"),
+                package=package,
+            )
+            create_verifier_build_package(package, verifier_package)
+            _run(
+                _harbor_command(
+                    verifier_package,
+                    verifier_phase,
+                    agent="nop",
+                    attempts=1,
+                    install_only=True,
+                ),
+                timeout=900,
+                environment={"DOCKER_CONTEXT": lease.target.context},
+            )
+            verifier_result = _trial_results(verifier_phase, expected=1, agent="nop")[0]
+            verifier_trial = json.loads(verifier_result.read_text(encoding="utf-8"))
+            if verifier_trial.get("exception_info") is not None:
+                raise ScenarioPackageError(
+                    "provisioning-runtime-failed",
+                    "Harbor verifier provisioning recorded a trial exception",
+                )
+            verifier_trial_name = verifier_trial.get("trial_name")
+            if not isinstance(verifier_trial_name, str) or not verifier_trial_name:
+                raise ScenarioPackageError(
+                    "provisioning-runtime-failed",
+                    "Harbor verifier provisioning omitted the trial identity",
+                )
+            runtime_images.append(
+                project_single_runtime_image(
+                    lease,
+                    project=_compose_project_name(f"{verifier_trial_name}__env"),
+                    package=package,
+                )
+            )
+            runtime_images.append(
+                prefixed_runtime_image(
+                    lease,
+                    prefix=harbor_egress_image(),
+                    role="egress-control",
+                    build_input_sha256=str(
+                        TypedDigest.from_bytes(
+                            DigestKind.ARTIFACT,
+                            canonical_json_bytes(
+                                {
+                                    "harbor_commit": lock["harbor"]["commit"],
+                                    "source": kernel_reference,
+                                }
+                            ),
+                        )
+                    ),
+                )
+            )
+            published = publish_manifest(
+                manifest_output,
+                lease=lease,
+                lock=lock,
+                lock_bytes=lock_bytes,
+                lifecycle_state=lifecycle_state,
+                qualification_record_sha256=authority_digest,
+                requested_images=requested_images,
+                runtime_images=runtime_images,
+            )
+        except BaseException:
+            projects = {
+                _compose_project_name(f"{config.parent.name}__env")
+                for root in (phase, verifier_phase)
+                for config in root.rglob("config.json")
+            }
+            remove_project_images(lease, projects)
+            for candidate in (phase, verifier_phase, verifier_package):
+                shutil.rmtree(candidate, ignore_errors=True)
+            raise
     return {
-        "images": len(references),
-        "jobs_dir": str(phase),
-        "message": f"provisioned locked inputs for {lock['scenario_id']}",
+        "images": len(requested_images) + len(runtime_images),
+        "jobs_dir": str(jobs_dir),
+        "lifecycle_state": lifecycle_state,
+        "manifest_sha256": published["manifest_sha256"],
+        "message": f"provisioned exact locked inputs for {lock['scenario_id']}",
+        "path": published["path"],
         "scenario_id": lock["scenario_id"],
         "status": "provisioned",
+        "visibility_domain": visibility,
     }
 
 
@@ -223,7 +320,9 @@ def _normalized_score(value: object) -> str:
     try:
         decimal = Decimal(str(value))
     except InvalidOperation as error:
-        raise ScenarioPackageError("invalid-infrastructure", "invalid score value") from error
+        raise ScenarioPackageError(
+            "invalid-infrastructure", "invalid score value"
+        ) from error
     if not decimal.is_finite() or decimal < 0 or decimal > 1:
         raise ScenarioPackageError("invalid-infrastructure", "score is outside [0, 1]")
     text = format(decimal.normalize(), "f")
@@ -251,8 +350,15 @@ def _trial_results(phase: Path, *, expected: int, agent: str) -> list[Path]:
             value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
             continue
-        if isinstance(value, dict) and value.get("task_name") and value.get("agent_info"):
-            if not isinstance(value["agent_info"], dict) or value["agent_info"].get("name") != agent:
+        if (
+            isinstance(value, dict)
+            and value.get("task_name")
+            and value.get("agent_info")
+        ):
+            if (
+                not isinstance(value["agent_info"], dict)
+                or value["agent_info"].get("name") != agent
+            ):
                 raise ScenarioPackageError(
                     "invalid-infrastructure",
                     "Harbor trial used an unexpected agent",
@@ -319,7 +425,10 @@ def _validate_structured_result(
                 "invalid-infrastructure",
                 f"invalid status for Check Group {group_id}",
             )
-        if evidence_key not in parsed_checks or parsed_checks[evidence_key][0] != status:
+        if (
+            evidence_key not in parsed_checks
+            or parsed_checks[evidence_key][0] != status
+        ):
             raise ScenarioPackageError(
                 "invalid-infrastructure",
                 f"Check Group {group_id} lacks matching raw evidence",
@@ -394,18 +503,26 @@ def _environment_identity(trial: dict[str, object]) -> str:
     trial_name = trial.get("trial_name")
     started_at = trial.get("started_at")
     finished_at = trial.get("finished_at")
-    if not all(isinstance(value, str) and value for value in (trial_name, started_at, finished_at)):
+    if not all(
+        isinstance(value, str) and value
+        for value in (trial_name, started_at, finished_at)
+    ):
         raise ScenarioPackageError(
             "invalid-infrastructure",
             "Harbor environment timestamps or trial name are missing",
         )
     completed = _run(
         [
-            "docker", "events",
-            "--since", started_at,
-            "--until", str(int(time.time()) + 1),
-            "--filter", "type=container",
-            "--format", "{{json .}}",
+            "docker",
+            "events",
+            "--since",
+            started_at,
+            "--until",
+            str(int(time.time()) + 1),
+            "--filter",
+            "type=container",
+            "--format",
+            "{{json .}}",
         ],
         timeout=30,
     )
@@ -427,7 +544,9 @@ def _environment_identity(trial: dict[str, object]) -> str:
             continue
         event_type = event.get("Type")
         action = event.get("Action")
-        identity = event.get("id") or (actor.get("ID") if isinstance(actor, dict) else None)
+        identity = event.get("id") or (
+            actor.get("ID") if isinstance(actor, dict) else None
+        )
         service = attributes.get("com.docker.compose.service", "")
         if not all(
             isinstance(value, str) for value in (action, event_type, identity, service)
@@ -452,17 +571,28 @@ def _environment_identity(trial: dict[str, object]) -> str:
     verifier_projects = {
         item["project"]
         for item in evidence
-        if item["project"].startswith(_compose_project_name(f"{trial_name}__verifier__"))
+        if item["project"].startswith(
+            _compose_project_name(f"{trial_name}__verifier__")
+        )
     }
     container_ids = {item["id"] for item in evidence if item["type"] == "container"}
-    if not {"main", "capture"} <= agent_services or len(verifier_projects) != 1 or len(container_ids) < 3:
+    if (
+        not {"main", "capture"} <= agent_services
+        or len(verifier_projects) != 1
+        or len(container_ids) < 3
+    ):
         raise ScenarioPackageError(
             "invalid-infrastructure",
             "Docker events do not prove fresh agent, capture, and verifier containers",
         )
-    return "docker-environment:sha256:" + hashlib.sha256(
-        canonical_json_bytes(sorted(evidence, key=lambda item: tuple(item.values())))
-    ).hexdigest()
+    return (
+        "docker-environment:sha256:"
+        + hashlib.sha256(
+            canonical_json_bytes(
+                sorted(evidence, key=lambda item: tuple(item.values()))
+            )
+        ).hexdigest()
+    )
 
 
 def _run_record(
@@ -490,11 +620,15 @@ def _run_record(
         native_reward = json.loads(
             (path.parent / "verifier/reward.json").read_text(encoding="utf-8")
         )
-        native_lock = json.loads((path.parent / "lock.json").read_text(encoding="utf-8"))
+        native_lock = json.loads(
+            (path.parent / "lock.json").read_text(encoding="utf-8")
+        )
         artifact_manifest = json.loads(
             (path.parent / "artifacts/manifest.json").read_text(encoding="utf-8")
         )
-        capture = json.loads((path.parent / capture_destination).read_text(encoding="utf-8"))
+        capture = json.loads(
+            (path.parent / capture_destination).read_text(encoding="utf-8")
+        )
 
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
@@ -548,7 +682,10 @@ def _run_record(
             "Harbor did not collect the trusted capture record",
         )
     if expected_capture_reason is not None:
-        if capture.get("status") != "rejected" or capture.get("reason") != expected_capture_reason:
+        if (
+            capture.get("status") != "rejected"
+            or capture.get("reason") != expected_capture_reason
+        ):
             raise ScenarioPackageError(
                 "invalid-infrastructure",
                 "trusted capture rejection does not match the diagnostic handoff",
@@ -615,7 +752,11 @@ def _run_record(
                 "invalid-infrastructure",
                 "captured patch digest does not match the collected artifact",
             )
-    outcome = "passed" if _normalized_score(rewards.get("task_success")) == "1" else "declared-failure"
+    outcome = (
+        "passed"
+        if _normalized_score(rewards.get("task_success")) == "1"
+        else "declared-failure"
+    )
     if outcome != expected_outcome:
         raise ScenarioPackageError(
             "invalid-technical-qualification",
@@ -643,6 +784,7 @@ def _run_phase(
     expected_hidden_marker_digests: tuple[str, ...],
     expected_groups: _CheckGroups,
     expected_capture_reason: str | None,
+    environment: dict[str, str],
 ) -> tuple[list[dict[str, object]], str]:
     phase = jobs_dir / name
     if phase.exists():
@@ -657,6 +799,7 @@ def _run_phase(
         completed = _run(
             _harbor_command(package, phase, agent=agent, attempts=1),
             timeout=1200,
+            environment=environment,
         )
         outputs.append(completed.stdout + completed.stderr)
         result_paths = _trial_results(phase, expected=attempt, agent=agent)
@@ -692,6 +835,7 @@ def _run_rejection_phase(
     expected_score_names: tuple[str, ...],
     expected_hidden_marker_digests: tuple[str, ...],
     expected_groups: _CheckGroups,
+    environment: dict[str, str],
 ) -> tuple[dict[str, object], str]:
     if kind == "malformed":
         solution = (
@@ -716,13 +860,8 @@ def _run_rejection_phase(
         solution_path = diagnostic / "solution/solve.sh"
         solution_path.write_text(solution, encoding="utf-8")
         solution_path.chmod(0o755)
-        checked = check_scenario_package(diagnostic)
-        task_digest = checked["harbor_task_sha256"]
-        if not isinstance(task_digest, str):
-            raise ScenarioPackageError(
-                "invalid-infrastructure",
-                "diagnostic Harbor task identity is missing",
-            )
+        probe = _harbor_probe(diagnostic)
+        task_digest = str(TypedDigest(DigestKind.HARBOR_TASK, probe["content_hash"]))
         records, output = _run_phase(
             diagnostic,
             jobs_dir,
@@ -735,6 +874,7 @@ def _run_rejection_phase(
             expected_hidden_marker_digests=expected_hidden_marker_digests,
             expected_groups=expected_groups,
             expected_capture_reason=expected_reason,
+            environment=environment,
         )
     return (
         {
@@ -751,80 +891,78 @@ def _run_score_mismatch_phase(
     package: Path,
     jobs_dir: Path,
     *,
+    expected_task_digest: str,
     expected_score_names: tuple[str, ...],
     expected_hidden_marker_digests: tuple[str, ...],
     expected_groups: _CheckGroups,
+    environment: dict[str, str],
 ) -> tuple[dict[str, str], str]:
-    reward = {name: 0 for name in expected_score_names}
-    structured = dict(reward)
-    structured["task_success"] = 1
-    script = (
-        "#!/bin/sh\nset -eu\nmkdir -p /logs/verifier\n"
-        f"printf '%s\\n' {shlex.quote(json.dumps(structured, sort_keys=True))} "
-        "> /logs/verifier/verifier-result.json\n"
-        f"printf '%s\\n' {shlex.quote(json.dumps(reward, sort_keys=True))} "
-        "> /logs/verifier/reward.json\n"
+    phase = jobs_dir / "score-mismatch"
+    completed = _run(
+        _harbor_command(package, phase, agent="nop", attempts=1),
+        timeout=1200,
+        environment=environment,
     )
-    with tempfile.TemporaryDirectory(prefix="scenario-score-mismatch-") as temporary:
-        diagnostic = Path(temporary) / "package"
-        shutil.copytree(package, diagnostic, symlinks=True)
-        (diagnostic / "scenario.lock.json").unlink(missing_ok=True)
-        verifier_path = diagnostic / "tests/test.sh"
-        verifier_path.write_text(script, encoding="utf-8")
-        verifier_path.chmod(0o755)
-        checked = check_scenario_package(diagnostic)
-        task_digest = checked["harbor_task_sha256"]
-        if not isinstance(task_digest, str):
-            raise ScenarioPackageError(
-                "invalid-infrastructure",
-                "score-mismatch Harbor task identity is missing",
-            )
-        phase = jobs_dir / "score-mismatch"
-        completed = _run(
-            _harbor_command(diagnostic, phase, agent="nop", attempts=1),
-            timeout=1200,
+    result_path = _trial_results(phase, expected=1, agent="nop")[0]
+    valid_record = _run_record(
+        result_path,
+        expected_outcome="declared-failure",
+        expected_capture_kind="no-op",
+        expected_capture_reason=None,
+        expected_artifact_destination=None,
+        expected_task_digest=expected_task_digest,
+        expected_score_names=expected_score_names,
+        expected_hidden_marker_digests=expected_hidden_marker_digests,
+        expected_groups=expected_groups,
+    )
+    structured_path = result_path.parent / "verifier/verifier-result.json"
+    try:
+        structured = json.loads(structured_path.read_text(encoding="utf-8"))
+        score_name = next(
+            name for name in expected_score_names if name != "task_success"
         )
-        result_path = _trial_results(phase, expected=1, agent="nop")[0]
-        try:
-            trial = json.loads(result_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as error:
-            raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
-        if not isinstance(trial, dict):
-            raise ScenarioPackageError(
-                "invalid-infrastructure",
-                "Harbor trial result is malformed",
-            )
-        try:
-            _run_record(
-                result_path,
-                expected_outcome="declared-failure",
-                expected_capture_kind="no-op",
-                expected_capture_reason=None,
-                expected_artifact_destination=None,
-                expected_task_digest=task_digest,
-                expected_score_names=expected_score_names,
-                expected_hidden_marker_digests=expected_hidden_marker_digests,
-                expected_groups=expected_groups,
-            )
-        except ScenarioPackageError as error:
-            if (
-                error.classification != "invalid-infrastructure"
-                or "numeric Harbor reward differs" not in str(error)
-            ):
-                raise
-        else:
-            raise ScenarioPackageError(
-                "invalid-technical-qualification",
-                "numeric/structured verifier mismatch was accepted",
-            )
-        environment_id = _environment_identity(trial)
+        structured[score_name] = 1 if structured[score_name] != 1 else 0
+        structured_path.write_text(json.dumps(structured), encoding="utf-8")
+    except (
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        KeyError,
+        StopIteration,
+    ) as error:
+        raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
+    try:
+        _run_record(
+            result_path,
+            expected_outcome="declared-failure",
+            expected_capture_kind="no-op",
+            expected_capture_reason=None,
+            expected_artifact_destination=None,
+            expected_task_digest=expected_task_digest,
+            expected_score_names=expected_score_names,
+            expected_hidden_marker_digests=expected_hidden_marker_digests,
+            expected_groups=expected_groups,
+        )
+    except ScenarioPackageError as error:
+        if (
+            error.classification != "invalid-infrastructure"
+            or "numeric Harbor reward differs" not in str(error)
+        ):
+            raise
+    else:
+        raise ScenarioPackageError(
+            "invalid-technical-qualification",
+            "numeric/structured verifier mismatch was accepted",
+        )
     return (
-        {"environment_id": environment_id, "status": "passed"},
+        {"environment_id": str(valid_record["environment_id"]), "status": "passed"},
         completed.stdout + completed.stderr,
     )
 
 
-def _docker_pull_events(started: int, finished: int) -> str:
+def _docker_pull_events(
+    started: int, finished: int, *, environment: dict[str, str]
+) -> str:
     completed = _run(
         [
             "docker",
@@ -841,6 +979,7 @@ def _docker_pull_events(started: int, finished: int) -> str:
             "{{json .}}",
         ],
         timeout=30,
+        environment=environment,
     )
     return completed.stdout.strip()
 
@@ -854,7 +993,9 @@ def _load_private_key(path: Path) -> Ed25519PrivateKey:
     try:
         key = path.read_bytes()
     except OSError as error:
-        raise ScenarioPackageError("qualification-worker-key-invalid", str(error)) from error
+        raise ScenarioPackageError(
+            "qualification-worker-key-invalid", str(error)
+        ) from error
     if len(key) != 32:
         raise ScenarioPackageError(
             "qualification-worker-key-invalid",
@@ -892,21 +1033,44 @@ def measure_scenario_package(
     jobs_dir: Path,
     output: Path,
     worker_private_key: Path,
+    provisioning_manifest: Path,
+    preflight_output: Path,
 ) -> dict[str, object]:
     """Run baseline, hidden-marker, and Reference qualification through Harbor."""
     package = package.resolve()
     jobs_dir = jobs_dir.resolve()
     output = output.resolve()
     worker_private_key = worker_private_key.resolve()
-    for candidate in (jobs_dir, output):
+    provisioning_manifest = provisioning_manifest.resolve()
+    preflight_output = preflight_output.resolve()
+    for candidate in (jobs_dir, output, preflight_output):
         if candidate.is_relative_to(package):
             raise ScenarioPackageError(
                 "invalid-qualification-output",
                 "qualification evidence must remain outside the package payload",
             )
     lock, manifest = _locked_package(package)
-    references = _image_references(lock)
-    _inspect_local_images(references)
+    receipt = preflight(
+        package,
+        manifest_path=provisioning_manifest,
+        mode="qualification",
+        output=preflight_output,
+    )
+    execution_package = Path(str(receipt["package_path"]))
+    docker_guard = Path(str(receipt["docker_guard_path"]))
+    expected_guard = preflight_output / "bin/docker"
+    if (
+        docker_guard != expected_guard
+        or not docker_guard.is_file()
+        or not os.access(docker_guard, os.X_OK)
+    ):
+        raise ScenarioPackageError(
+            "invalid-infrastructure", "preflight Docker guard is unavailable"
+        )
+    execution_environment = {
+        "DOCKER_CONTEXT": str(receipt["docker_context"]),
+        "PATH": str(docker_guard.parent) + os.pathsep + os.environ.get("PATH", ""),
+    }
     declared = manifest["verification"]["qualification"]
     domain_score_by_group = {
         group_id: score["name"]
@@ -940,7 +1104,9 @@ def measure_scenario_package(
         )
         markers = policy["forbidden_markers"]
         expected_hidden_marker_digests = tuple(
-            sorted(hashlib.sha256(marker.encode("utf-8")).hexdigest() for marker in markers)
+            sorted(
+                hashlib.sha256(marker.encode("utf-8")).hexdigest() for marker in markers
+            )
         )
     except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError) as error:
         raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
@@ -951,9 +1117,9 @@ def measure_scenario_package(
         )
     jobs_dir.mkdir(parents=True, exist_ok=True)
     started = int(time.time())
-    expected_task_digest = lock["harbor"]["task_content_sha256"]
+    expected_task_digest = str(receipt["projected_task_sha256"])
     baseline_records, baseline_output = _run_phase(
-        package,
+        execution_package,
         jobs_dir,
         name="baseline",
         agent="nop",
@@ -964,9 +1130,10 @@ def measure_scenario_package(
         expected_hidden_marker_digests=expected_hidden_marker_digests,
         expected_groups=expected_groups,
         expected_capture_reason=None,
+        environment=execution_environment,
     )
     hidden_records, hidden_output = _run_phase(
-        package,
+        execution_package,
         jobs_dir,
         name="hidden-marker",
         agent="nop",
@@ -977,9 +1144,10 @@ def measure_scenario_package(
         expected_hidden_marker_digests=expected_hidden_marker_digests,
         expected_groups=expected_groups,
         expected_capture_reason=None,
+        environment=execution_environment,
     )
     reference_records, reference_output = _run_phase(
-        package,
+        execution_package,
         jobs_dir,
         name="reference",
         agent="oracle",
@@ -990,32 +1158,39 @@ def measure_scenario_package(
         expected_hidden_marker_digests=expected_hidden_marker_digests,
         expected_groups=expected_groups,
         expected_capture_reason=None,
+        environment=execution_environment,
     )
     malformed_handoff, malformed_output = _run_rejection_phase(
-        package,
+        execution_package,
         jobs_dir,
         kind="malformed",
         expected_score_names=expected_score_names,
         expected_hidden_marker_digests=expected_hidden_marker_digests,
         expected_groups=expected_groups,
+        environment=execution_environment,
     )
     unsafe_handoff, unsafe_output = _run_rejection_phase(
-        package,
+        execution_package,
         jobs_dir,
         kind="unsafe",
         expected_score_names=expected_score_names,
         expected_hidden_marker_digests=expected_hidden_marker_digests,
         expected_groups=expected_groups,
+        environment=execution_environment,
     )
     score_mismatch, score_mismatch_output = _run_score_mismatch_phase(
-        package,
+        execution_package,
         jobs_dir,
+        expected_task_digest=expected_task_digest,
         expected_score_names=expected_score_names,
         expected_hidden_marker_digests=expected_hidden_marker_digests,
         expected_groups=expected_groups,
+        environment=execution_environment,
     )
     finished = int(time.time())
-    pull_events = _docker_pull_events(started, finished)
+    pull_events = _docker_pull_events(
+        started, finished, environment=execution_environment
+    )
     combined_output = (
         baseline_output
         + hidden_output
@@ -1024,12 +1199,19 @@ def measure_scenario_package(
         + unsafe_output
         + score_mismatch_output
     ).lower()
-    if pull_events or "pulling from" in combined_output or "downloading" in combined_output:
+    if (
+        pull_events
+        or "pulling from" in combined_output
+        or "downloading" in combined_output
+    ):
         raise ScenarioPackageError(
             "qualification-download-detected",
             "measured qualification downloaded an image or package",
         )
-    if baseline_records[0]["structured_score_vector"] != declared["baseline_score_vector"]:
+    if (
+        baseline_records[0]["structured_score_vector"]
+        != declared["baseline_score_vector"]
+    ):
         raise ScenarioPackageError(
             "invalid-technical-qualification",
             "measured baseline vector differs from the declared vector",
@@ -1067,8 +1249,16 @@ def measure_scenario_package(
         "candidate_status": "technically-qualified",
         "harbor": lock["harbor"],
         "identities": lock["identities"],
+        "provisioning": {
+            "manifest_sha256": receipt["provisioning_manifest_sha256"],
+            "projected_task_sha256": receipt["projected_task_sha256"],
+            "projection_sha256": receipt["projection_sha256"],
+        },
         "package_payload_sha256": package_record["payload_sha256"],
-        "qualified_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "qualified_at": datetime.now(UTC)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
         "runs": {
             "baseline": baseline_records[0],
             "handoffs": [malformed_handoff, unsafe_handoff],
