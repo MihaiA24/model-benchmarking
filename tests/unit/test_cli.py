@@ -16,37 +16,38 @@ def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_cli_help_is_concise_and_noninteractive() -> None:
+def test_cli_help_exposes_exact_functional_v1_commands() -> None:
     completed = _run("--help")
 
     assert completed.returncode == 0
     assert "usage: model-benchmark" in completed.stdout
+    assert "--home" in completed.stdout
     assert "--json" in completed.stdout
+    for command in ("provision", "preflight", "run", "inspect"):
+        assert command in completed.stdout
+    assert "scenario" not in completed.stdout
     assert completed.stderr == ""
 
 
-def test_cli_exposes_the_scenario_authoring_workflow() -> None:
-    completed = _run("scenario", "--help")
+def test_cli_requires_one_operator_command() -> None:
+    completed = _run()
 
-    assert completed.returncode == 0
-    assert "scaffold" in completed.stdout
-    assert "check" in completed.stdout
-    assert "qualify" in completed.stdout
-    assert "lock" in completed.stdout
-    assert completed.stderr == ""
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert completed.stderr.startswith("usage error:")
 
 
-def test_cli_emits_machine_readable_canonical_summary() -> None:
+def test_cli_usage_failure_is_one_canonical_json_document() -> None:
     completed = _run("--json")
 
-    assert completed.returncode == 0
+    assert completed.returncode == 2
     assert completed.stderr == ""
     summary = json.loads(completed.stdout)
     assert summary == {
-        "modules": ["analysis", "declarations", "evidence", "runtime"],
-        "program": "model-benchmark",
-        "status": "foundation-ready",
-        "version": "0.1.0",
+        "command": "cli",
+        "message": "the following arguments are required: command",
+        "outcome": "rejected",
+        "reason_code": "invalid-cli-usage",
     }
     assert completed.stdout == json.dumps(
         summary,
@@ -55,11 +56,3 @@ def test_cli_emits_machine_readable_canonical_summary() -> None:
         sort_keys=True,
         separators=(",", ":"),
     ) + "\n"
-
-
-def test_cli_human_summary_is_concise() -> None:
-    completed = _run()
-
-    assert completed.returncode == 0
-    assert completed.stdout == "model-benchmark 0.1.0 — foundation ready\n"
-    assert completed.stderr == ""

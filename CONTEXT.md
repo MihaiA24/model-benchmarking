@@ -25,20 +25,40 @@ The diagnostic milestone in which one trusted local operator executes the fixed 
 _Avoid_: Production benchmark, decision-grade comparison, CLI smoke test
 
 **Functional V1 Run Manifest**:
-The versioned non-secret operator declaration that fixes one Functional V1 comparison by pinning its Provider Route, exact model, shared limits, Scenario Package locks, and Functional V1 Condition Locks.
+The versioned non-secret operator declaration that fixes one Functional V1 comparison by pinning its Provider Route, exact model, shared per-cell limits, Scenario Package locks, and Functional V1 Condition Locks.
 _Avoid_: Production Experiment Manifest, mutable configuration, secret store
+
+**Resolved Functional V1 Manifest**:
+The canonical execution declaration produced by resolving a Functional V1 Run Manifest against verified immutable Functional V1 Home inputs and expanding its fixed envelope and 12 Functional V1 Trial Cells.
+_Avoid_: Source YAML, mutable runtime configuration, Functional V1 Run Manifest
+
+**Functional V1 Execution Envelope**:
+The fixed diagnostic-only per-cell resource and provider limits shared by all 12 Functional V1 Trial Cells, including an enforced 30-minute wall-time limit that does not apply to production measured Trials.
+_Avoid_: Execution Profile, production Trial limits, operator override
 
 **Functional V1 Condition Lock**:
 A sealed platform-aware declaration binding one Functional V1 comparison condition to its exact executable or materializer, adapter behavior, native configuration, Provider Route and model mapping, evidence surfaces, and transitive common execution inputs.
 _Avoid_: Harness Profile, shared run limits, ad hoc CLI arguments
+
+**Functional V1 Home**:
+The operator-selected managed local root containing immutable provisioned inputs, Functional V1 Run Workspaces, sealed Functional V1 Run Records, and coordinator lease state for any number of Functional V1 invocations.
+_Avoid_: Run home, Benchmark Home, Run Workspace
 
 **Functional V1 Run Workspace**:
 The write-once unsealed local state of one Functional V1 invocation, containing its immutable header and per-cell start and terminal artifacts until a terminal Functional V1 Run Record can be sealed.
 _Avoid_: Run Ledger, mutable results database, reusable Trial workspace
 
 **Functional V1 Run Record**:
-The immutable index of one Functional V1 invocation, binding its resolved inputs, terminal Trial-cell records, Result Bundle identities, and complete or incomplete terminal state.
+The immutable index of one Functional V1 invocation, binding its resolved inputs, terminal Trial-cell records, Result Bundle identities, and complete or incomplete terminal state. It is complete only when all 12 cells have one durable start, one valid terminal outcome, and one verified Result Bundle identity.
 _Avoid_: Run Ledger, mutable results database, statistical report
+
+**Run ID**:
+An opaque UUIDv7 locator assigned once to a Functional V1 invocation for managed-home lookup, resume, and inspection. It is not a benchmark-input or evidence identity.
+_Avoid_: Run Record identity, manifest digest, Trial ID
+
+**Functional V1 Trial Cell**:
+One fixed slot in a Functional V1 Run, formed by one Scenario Package lock and one Functional V1 Condition Lock. A complete Functional V1 Run contains the fixed 12-cell cross product and does not create production Planned Trial Cells.
+_Avoid_: Planned Trial Cell, Run Cell, retry
 
 **Evaluated repository**:
 The immutable codebase snapshot that a harness may modify while attempting a scenario.

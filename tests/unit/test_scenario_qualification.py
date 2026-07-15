@@ -33,13 +33,13 @@ from model_benchmark.runtime.scenario_qualification import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CLI = Path(sys.executable).with_name("model-benchmark")
+CLI = Path(sys.executable).with_name("model-benchmark-scenario")
 REGISTRY = SchemaRegistry(ROOT / "schemas")
 
 
 def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [CLI, "--json", "scenario", *arguments],
+        [CLI, "--json", *arguments],
         capture_output=True,
         text=True,
         timeout=30,

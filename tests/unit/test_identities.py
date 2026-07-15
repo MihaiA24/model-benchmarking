@@ -41,6 +41,28 @@ def test_scenario_verifier_and_score_contract_identities_remain_independent() ->
     assert len({str(scenario.digest), str(verifier.digest), str(score_contract.digest)}) == 3
 
 
+def test_functional_v1_identity_kinds_are_independent_and_frozen() -> None:
+    kinds = (
+        DigestKind.FUNCTIONAL_V1_MANIFEST,
+        DigestKind.RESOLVED_V1_MANIFEST,
+        DigestKind.FUNCTIONAL_V1_CONDITION,
+        DigestKind.RESULT_BUNDLE,
+        DigestKind.FUNCTIONAL_V1_RUN_RECORD,
+    )
+
+    identities = [TypedDigest.from_bytes(kind, b"same canonical bytes") for kind in kinds]
+
+    assert [identity.kind.value for identity in identities] == [
+        "functional-v1-manifest",
+        "resolved-v1-manifest",
+        "functional-v1-condition",
+        "result-bundle",
+        "functional-v1-run-record",
+    ]
+    assert len({str(identity) for identity in identities}) == len(kinds)
+    assert all(TypedDigest.parse(str(identity)) == identity for identity in identities)
+
+
 @pytest.mark.parametrize(
     "value",
     [

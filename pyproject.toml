@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 model-benchmark = "model_benchmark.cli:main"
+model-benchmark-scenario = "model_benchmark.scenario_cli:main"
 
 [project.entry-points.pytest11]
 model-benchmark-acceptance = "model_benchmark.evidence.pytest_acceptance"
@@ -32,6 +33,7 @@ packages = ["src/model_benchmark"]
 "schemas" = "model_benchmark/published_schemas"
 "profiles" = "model_benchmark/published_profiles"
 "scaffolds" = "model_benchmark/published_scaffolds"
+"templates" = "model_benchmark/published_templates"
 
 [tool.hatch.metadata]
 allow-direct-references = true
