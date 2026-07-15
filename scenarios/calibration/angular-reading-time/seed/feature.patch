@@ -1,0 +1,11 @@
+diff --git a/src/app/features/article/components/article-preview.component.ts b/src/app/features/article/components/article-preview.component.ts
+--- a/src/app/features/article/components/article-preview.component.ts
++++ b/src/app/features/article/components/article-preview.component.ts
+@@ -16,6 +16,7 @@ import { FavoriteButtonComponent } from './favorite-button.component';
+         <h1>{{ article().title }}</h1>
+         <p>{{ article().description }}</p>
+         <span>Read more...</span>
++        <span class="reading-time">{{ getReadingTime(article().body) }} min read</span>
+         <ul class="tag-list">
+           @for (tag of article().tagList; track tag) {
+             <li class="tag-default tag-pill tag-outline">

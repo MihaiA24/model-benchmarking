@@ -1,0 +1,106 @@
+schema_version: 1
+scenario:
+  id: functional-v1/angular-reading-time
+  version: 1.0.0
+  lifecycle_state: candidate
+  visibility: public
+  ecosystem: angular-typescript
+  workload_family: bounded-feature-implementation
+  difficulty: standard
+  execution_profile: standard-v1
+repository:
+  pristine:
+    origin: https://github.com/gothinkster/angular-realworld-example-app
+    commit: dd99ed2cf39c805d719f943c5d7061a5683d98a8
+    archive: seed/pristine.tar
+    archive_sha256: artifact:sha256:be14f51d3acd4c702e302d4b40085e6e5bbb12680147df1f069002f8687b1926
+    tree_sha256: source-tree:sha256:d6dfce02588be0a7376a25c390087ef56bdad4f4cbbb3913e7dcc69ff2c7373a
+    license: MIT
+  seed_inputs:
+  - kind: git-patch
+    path: seed/feature.patch
+    sha256: artifact:sha256:9bbf8bd23a9f2f961cebaaec8903d8b7549636b02fcb3602512f83a5f6bfa69d
+  baseline_tree_sha256: source-tree:sha256:7485d66f5ef4b0ffdaeebc13ca17d1bd001a3d60dd542d30f1e70de4b1d4d18e
+  datasets: []
+instruction:
+  path: instruction.md
+  sha256: artifact:sha256:a90d939899c57547a282f507876816299c9e4b374da9ffa77a6cb680e8189081
+submission:
+  kind: git-patch
+  repository_root: /workspace/repository
+  allowed_paths:
+  - src/app/features/article/components/article-preview.component.ts
+  protected_paths:
+  - .git/**
+  allow_additions: false
+  allow_deletions: false
+  max_files: 1
+  max_bytes: 50000
+  symlinks: reject
+  executable_bits: reject
+  submodules: reject
+  nested_repositories: reject
+  binary_files: reject
+verification:
+  verifier:
+    version: 1.0.0
+  score_contract:
+    version: 1.0.0
+  check_groups:
+  - id: preview-output
+    class: acceptance
+    required: true
+    weight: '1'
+    score_direction: maximize
+    evidence_key: preview-output
+  - id: component-regression
+    class: regression
+    required: true
+    weight: '1'
+    score_direction: maximize
+    evidence_key: component-regression
+  - id: reading-time-boundaries
+    class: domain
+    required: true
+    weight: '1'
+    score_direction: maximize
+    evidence_key: reading-time-boundaries
+  domain_scores:
+  - name: reading_time_behavior
+    check_groups:
+    - reading-time-boundaries
+  qualification:
+    baseline_score_vector:
+    - name: acceptance_score
+      value: '0'
+    - name: reading_time_behavior
+      value: '0'
+    - name: regression_score
+      value: '1'
+    - name: task_success
+      value: '0'
+    reference_score_vector:
+    - name: acceptance_score
+      value: '1'
+    - name: reading_time_behavior
+      value: '1'
+    - name: regression_score
+      value: '1'
+    - name: task_success
+      value: '1'
+  total_scoring:
+    safe_partial: score-declared-groups
+    missing: score-zero
+    malformed: reject-score-zero
+    oversized: reject-score-zero
+    unsafe: reject-score-zero
+provenance:
+  authors:
+  - urn:model-benchmark:author:functional-v1-scenarios
+  source_references:
+  - https://github.com/gothinkster/angular-realworld-example-app/tree/dd99ed2cf39c805d719f943c5d7061a5683d98a8
+  - https://github.com/MihaiA24/model-benchmarking/issues/40
+  licenses:
+  - MIT
+  contamination_disclosures:
+  - The legacy reading-time task and solution intent were publicly disclosed before this diagnostic package was authored.

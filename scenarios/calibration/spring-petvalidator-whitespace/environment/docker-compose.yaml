@@ -1,0 +1,39 @@
+services:
+  main:
+    cap_drop:
+    - ALL
+    pids_limit: 256
+    read_only: true
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /solution:rw,exec,nosuid,nodev,size=1m,mode=0755
+    - /tmp:rw,noexec,nosuid,nodev,size=64m
+    volumes:
+    - trial-repository:/workspace
+  capture:
+    cap_drop:
+    - ALL
+    pids_limit: 256
+    read_only: true
+    security_opt:
+    - no-new-privileges:true
+    build:
+      context: .
+      dockerfile: capture/Dockerfile
+    command:
+    - sh
+    - -c
+    - sleep infinity
+    depends_on:
+      main:
+        condition: service_started
+    network_mode: none
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=16m
+    volumes:
+    - capture-output:/capture
+    - trial-repository:/input:ro
+volumes:
+  capture-output: null
+  trial-repository: null

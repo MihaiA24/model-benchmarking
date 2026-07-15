@@ -1,0 +1,12 @@
+diff --git a/sales_by_genre.py b/sales_by_genre.py
+--- a/sales_by_genre.py
++++ b/sales_by_genre.py
+@@ -40,7 +40,7 @@ def top_genres(input_path: Path) -> list[tuple[str, int]]:
+             SELECT g.Name AS Genre, SUM(il.Quantity) AS UnitsSold
+             FROM Genre AS g
+             JOIN Track AS t ON t.GenreId = g.GenreId
+-            JOIN InvoiceLine AS il ON il.TrackId = t.TrackId
++            JOIN InvoiceLine AS il ON il.TrackId = g.GenreId
+             GROUP BY g.GenreId, g.Name
+             ORDER BY UnitsSold DESC, Genre ASC
+             LIMIT 5
