@@ -47,6 +47,7 @@ class FakeGitHub:
         )
         self.check_runs: list[dict[str, object]] = [self._check(99)]
         self.run: dict[str, object] = {
+            "id": workflow["run_id"],
             "conclusion": "success",
             "head_sha": envelope["candidate_sha"],
             "path": self.gate["workflow_path"],
@@ -54,6 +55,11 @@ class FakeGitHub:
             "status": "completed",
         }
         self.artifact: dict[str, object] = {
+            "id": 20,
+            "name": (
+                f"fresh-proof-{envelope['gate_id']}-"
+                f"{str(envelope['candidate_sha'])[:12]}-{envelope['generation_id']}"
+            ),
             "expired": False,
             "workflow_run": {
                 "head_sha": envelope["candidate_sha"],
@@ -74,6 +80,7 @@ class FakeGitHub:
             "conclusion": conclusion,
             "external_id": self.pointer if pointer is None else pointer,
             "id": check_id,
+            "head_sha": self.envelope["candidate_sha"],
             "name": self.gate["check_name"],
             "status": status,
         }
@@ -109,6 +116,17 @@ def test_exact_matching_live_current_proof_is_accepted(tmp_path: Path) -> None:
     }
 
 
+def test_outer_checksum_manifest_drift_is_rejected(tmp_path: Path) -> None:
+    policy, envelope, envelope_path, bundle_root = _proof(tmp_path)
+    (bundle_root / "sha256sums.txt").write_text("stale\n", encoding="utf-8")
+    api = FakeGitHub(
+        policy=policy, envelope=envelope, envelope_sha256=_digest(envelope_path)
+    )
+
+    with pytest.raises(ProofError, match="outer proof checksum"):
+        _consume(policy, envelope_path, bundle_root, api.get)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -132,6 +150,9 @@ def test_envelope_identity_and_completeness_drift_is_rejected(
     policy, envelope, envelope_path, bundle_root = _proof(tmp_path)
     _mutate(envelope, mutation)
     envelope_path.write_text(json.dumps(envelope, sort_keys=True), encoding="utf-8")
+    (bundle_root / "sha256sums.txt").write_text(
+        f"{_digest(envelope_path)}  proof-envelope.json\n", encoding="utf-8"
+    )
     api_get: Callable[[str, str], object]
     if mutation == "missing-field":
         def empty_api(_repository: str, _path: str) -> object:
@@ -281,6 +302,7 @@ def _proof(
                 "id": command["id"],
                 "outcome": "passed",
                 "started_at": "2026-07-15T10:00:00Z",
+                "timeout_seconds": command["timeout_seconds"],
             }
             for command in commands
         ],
@@ -309,6 +331,9 @@ def _proof(
     }
     envelope_path = bundle_root / "proof-envelope.json"
     envelope_path.write_text(json.dumps(envelope, sort_keys=True), encoding="utf-8")
+    (bundle_root / "sha256sums.txt").write_text(
+        f"{_digest(envelope_path)}  proof-envelope.json\n", encoding="utf-8"
+    )
     return policy, envelope, envelope_path, bundle_root
 
 

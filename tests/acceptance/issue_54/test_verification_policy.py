@@ -43,6 +43,9 @@ def test_closed_world_selection_covers_targeted_and_fail_closed_paths() -> None:
         "verification/policy.py",
         "verification/proof-envelope-v1.schema.json",
         "verification/proof.py",
+        "verification/publisher.py",
+        ".github/actions/fresh-proof/action.yml",
+        "tests/unit/test_proof_publisher.py",
     }
     assert POLICY.audit_paths(set(tracked_paths(ROOT)) | expected_new_paths) == ()
 
@@ -230,6 +233,9 @@ def test_proof_identity_drift_fails_before_reuse(
     elif mutation == "checksum":
         envelope["child_artifacts"][0]["sha256"] = "0" * 64
     envelope_path.write_text(json.dumps(envelope, sort_keys=True), encoding="utf-8")
+    (bundle_root / "sha256sums.txt").write_text(
+        f"{_digest(envelope_path)}  proof-envelope.json\n", encoding="utf-8"
+    )
 
     with pytest.raises(ProofError):
         consume_proof(
@@ -397,6 +403,7 @@ def _proof(tmp_path: Path) -> tuple[dict[str, object], Path, Path]:
                 "id": command["id"],
                 "outcome": "passed",
                 "started_at": "2026-07-15T10:00:00Z",
+                "timeout_seconds": command["timeout_seconds"],
             }
             for command in gate["commands"]
         ],
@@ -425,6 +432,9 @@ def _proof(tmp_path: Path) -> tuple[dict[str, object], Path, Path]:
     }
     envelope_path = bundle_root / "proof-envelope.json"
     envelope_path.write_text(json.dumps(envelope, sort_keys=True), encoding="utf-8")
+    (bundle_root / "sha256sums.txt").write_text(
+        f"{_digest(envelope_path)}  proof-envelope.json\n", encoding="utf-8"
+    )
     return envelope, envelope_path, bundle_root
 
 
@@ -452,6 +462,7 @@ def _api(
             "conclusion": "success",
             "external_id": pointer,
             "id": 99,
+            "head_sha": envelope["candidate_sha"],
             "name": gate["check_name"],
             "status": "completed",
         }
@@ -463,6 +474,7 @@ def _api(
                 "conclusion": None,
                 "external_id": "malformed",
                 "id": 100,
+                "head_sha": envelope["candidate_sha"],
                 "name": gate["check_name"],
                 "status": newer_status,
             }
@@ -474,6 +486,7 @@ def _api(
             return {"check_runs": checks}
         if path == "/actions/runs/10":
             return {
+                "id": 10,
                 "conclusion": "success",
                 "head_sha": envelope["candidate_sha"],
                 "path": gate["workflow_path"],
@@ -482,6 +495,11 @@ def _api(
             }
         if path == "/actions/artifacts/20":
             return {
+                "id": 20,
+                "name": (
+                    f"fresh-proof-issue-28-"
+                    f"{str(envelope['candidate_sha'])[:12]}-{envelope['generation_id']}"
+                ),
                 "expired": False,
                 "workflow_run": {
                     "head_sha": envelope["candidate_sha"],

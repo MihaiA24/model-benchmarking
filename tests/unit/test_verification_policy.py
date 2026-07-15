@@ -37,6 +37,9 @@ def test_policy_classifies_every_tracked_and_issue_owned_path() -> None:
             "verification/policy.py",
             "verification/proof-envelope-v1.schema.json",
             "verification/proof.py",
+            "verification/publisher.py",
+            ".github/actions/fresh-proof/action.yml",
+            "tests/unit/test_proof_publisher.py",
         }
     )
 

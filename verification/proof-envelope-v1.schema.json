@@ -86,6 +86,10 @@
           "started_at": {
             "format": "date-time",
             "type": "string"
+          },
+          "timeout_seconds": {
+            "minimum": 1,
+            "type": "integer"
           }
         },
         "required": [
@@ -95,7 +99,8 @@
           "exit_code",
           "id",
           "outcome",
-          "started_at"
+          "started_at",
+          "timeout_seconds"
         ],
         "type": "object"
       },
