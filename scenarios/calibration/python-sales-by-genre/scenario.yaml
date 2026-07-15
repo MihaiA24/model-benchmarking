@@ -1,0 +1,121 @@
+schema_version: 1
+scenario:
+  id: functional-v1/python-sales-by-genre
+  version: 1.0.0
+  lifecycle_state: candidate
+  visibility: public
+  ecosystem: python-data-engineering
+  workload_family: defect-diagnosis-and-repair
+  difficulty: standard
+  execution_profile: standard-v1
+repository:
+  pristine:
+    origin: urn:model-benchmark:generated:python-sales-by-genre-v1
+    commit: d70ce087b3e07dd9a1c28444f1bee8b6bd1c91aadd37d0194c4e32cdcc8aec50
+    archive: seed/pristine.tar
+    archive_sha256: artifact:sha256:2589eee4e692b79803bff530d5ad496985ad5d9969e28b19ac0b1568c143e2b1
+    tree_sha256: source-tree:sha256:3941a5fa5320f197de14e98dedbae23841be22cb230414f2206e4676e4f1a318
+    license: NOASSERTION
+  seed_inputs:
+  - kind: git-patch
+    path: seed/defect.patch
+    sha256: artifact:sha256:93d53e6dea54b71245812df1b8c5bd7f057ae2c34a9d9a934c849003bdf95d9e
+  - kind: asset
+    path: seed/sales-agent.json
+    sha256: artifact:sha256:8b04004deae4a0d0ba943227dcbd9fa4ff5330f7db776fff337c811901e42363
+    destination: data/sales.json
+  baseline_tree_sha256: source-tree:sha256:15cba8c8b5a8a1907923e7feda9b9d6ec75b3b47a9d040939f2a09b085aad151
+  datasets:
+  - id: sales-agent-v1
+    path: data/sales-agent.json
+    sha256: artifact:sha256:8b04004deae4a0d0ba943227dcbd9fa4ff5330f7db776fff337c811901e42363
+    visibility: agent
+  - id: sales-hidden-a-v1
+    path: data/sales-hidden-a.json
+    sha256: artifact:sha256:21481f802a478b978ce3eaa924687c015936f7157857eeeb0a9ca576cd15ee90
+    visibility: verifier
+  - id: sales-hidden-b-v1
+    path: data/sales-hidden-b.json
+    sha256: artifact:sha256:84ec52d269c782c4ba62aad324b19a6a19cbc5e915fa9d2fb896bf9470c0908d
+    visibility: verifier
+instruction:
+  path: instruction.md
+  sha256: artifact:sha256:835e1448f4849dc14a3ca44e9c2c1bd8ed5dcc9e9ffc239b5687c6dcc2327392
+submission:
+  kind: git-patch
+  repository_root: /workspace/repository
+  allowed_paths:
+  - sales_by_genre.py
+  protected_paths:
+  - .git/**
+  allow_additions: false
+  allow_deletions: false
+  max_files: 1
+  max_bytes: 20000
+  symlinks: reject
+  executable_bits: reject
+  submodules: reject
+  nested_repositories: reject
+  binary_files: reject
+verification:
+  verifier:
+    version: 1.0.0
+  score_contract:
+    version: 1.0.0
+  check_groups:
+  - id: agent-fixture
+    class: acceptance
+    required: true
+    weight: '1'
+    score_direction: maximize
+    evidence_key: agent-fixture
+  - id: report-contract
+    class: regression
+    required: true
+    weight: '1'
+    score_direction: maximize
+    evidence_key: report-contract
+  - id: hidden-fixtures
+    class: domain
+    required: true
+    weight: '1'
+    score_direction: maximize
+    evidence_key: hidden-fixtures
+  domain_scores:
+  - name: aggregation_correctness
+    check_groups:
+    - hidden-fixtures
+  qualification:
+    baseline_score_vector:
+    - name: acceptance_score
+      value: '0'
+    - name: aggregation_correctness
+      value: '0'
+    - name: regression_score
+      value: '1'
+    - name: task_success
+      value: '0'
+    reference_score_vector:
+    - name: acceptance_score
+      value: '1'
+    - name: aggregation_correctness
+      value: '1'
+    - name: regression_score
+      value: '1'
+    - name: task_success
+      value: '1'
+  total_scoring:
+    safe_partial: score-declared-groups
+    missing: score-zero
+    malformed: reject-score-zero
+    oversized: reject-score-zero
+    unsafe: reject-score-zero
+provenance:
+  authors:
+  - urn:model-benchmark:author:functional-v1-scenarios
+  source_references:
+  - https://github.com/MihaiA24/model-benchmarking/issues/40
+  licenses:
+  - NOASSERTION
+  contamination_disclosures:
+  - The legacy sales-by-genre task concept and solution intent were publicly disclosed before this diagnostic package was authored.
