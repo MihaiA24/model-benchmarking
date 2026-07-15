@@ -5,6 +5,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import threading
 from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
@@ -150,7 +151,7 @@ def test_environment_identity_comes_from_fresh_agent_capture_and_verifier_events
     monkeypatch.setattr(
         runtime_qualification,
         "_run",
-        lambda command, *, timeout, cwd=None: subprocess.CompletedProcess(
+        lambda command, **_kwargs: subprocess.CompletedProcess(
             command, 0, stdout=events, stderr=""
         ),
     )
@@ -161,7 +162,7 @@ def test_environment_identity_comes_from_fresh_agent_capture_and_verifier_events
     monkeypatch.setattr(
         runtime_qualification,
         "_run",
-        lambda command, *, timeout, cwd=None: subprocess.CompletedProcess(
+        lambda command, **_kwargs: subprocess.CompletedProcess(
             command,
             0,
             stdout=event("agent-container", agent_project, "main"),
@@ -596,3 +597,230 @@ def test_package_author_cannot_serve_as_independent_reviewer(
     assert completed.returncode != 0
     assert json.loads(completed.stdout)["classification"] == "non-independent-review"
     assert not output.exists()
+
+
+def _write_phase_fixture(
+    root: Path,
+    *,
+    generation_id: str = "generation-a",
+    worker_identity: str = "worker-a",
+    package_payload_sha256: str = "package-a",
+    projected_task_sha256: str = "task-a",
+    projection_sha256: str = "projection-a",
+) -> None:
+    root.mkdir()
+    payloads: dict[str, dict[str, object]] = {
+        "baseline": {"records": []},
+        "hidden-marker": {"records": []},
+        "reference": {"records": []},
+        "malformed": {"handoff": {}},
+        "unsafe": {"handoff": {}},
+        "score-mismatch": {"score_mismatch": {}},
+    }
+    for phase, result in payloads.items():
+        runtime_qualification._write_phase_result(
+            root / f"{phase}.json",
+            generation_id=generation_id,
+            phase=phase,
+            package_payload_sha256=package_payload_sha256,
+            projected_task_sha256=projected_task_sha256,
+            projection_sha256=projection_sha256,
+            worker_identity=worker_identity,
+            result=result,
+        )
+
+
+def _aggregate_fixture(root: Path) -> bytes:
+    _, data = runtime_qualification._aggregate_phase_results(
+        root,
+        generation_id="generation-a",
+        package_payload_sha256="package-a",
+        projected_task_sha256="task-a",
+        projection_sha256="projection-a",
+        worker_identity="worker-a",
+    )
+    return data
+
+
+def test_phase_aggregation_is_deterministic_and_fail_closed(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_phase_fixture(first)
+    _write_phase_fixture(second)
+
+    assert _aggregate_fixture(first) == _aggregate_fixture(second)
+
+    mutations = (
+        ("missing", "baseline.json", None, None),
+        ("duplicate", "unsafe.json", "phase", "malformed"),
+        ("stale", "baseline.json", "generation_id", "generation-old"),
+        ("mixed-input", "baseline.json", "projection_sha256", "projection-b"),
+        ("mixed-package", "baseline.json", "package_payload_sha256", "package-b"),
+        ("mixed-worker", "baseline.json", "worker_identity", "worker-b"),
+    )
+    for label, filename, field, value in mutations:
+        root = tmp_path / label
+        _write_phase_fixture(root)
+        path = root / filename
+        if field is None:
+            path.unlink()
+        else:
+            document = json.loads(path.read_bytes())
+            document[field] = value
+            path.chmod(0o600)
+            path.write_bytes(canonical_json_bytes(document))
+
+        with pytest.raises(ScenarioPackageError) as captured:
+            _aggregate_fixture(root)
+
+        assert captured.value.classification == "invalid-qualification-aggregate"
+
+
+def test_phase_environments_are_disjoint_and_drop_provider_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-enter-qualification")
+    guard = tmp_path / "preflight/bin/docker"
+    guard.parent.mkdir(parents=True)
+    guard.write_text("#!/bin/sh\n", encoding="utf-8")
+    compose_plugins = tmp_path / "host-cli-plugins"
+    compose_plugins.mkdir()
+    context = {
+        "host": "unix:///tmp/docker.sock",
+        "skip_tls_verify": False,
+        "tls_material": {},
+    }
+
+    first = runtime_qualification._phase_environment(
+        context,
+        tmp_path / "first",
+        docker_guard=guard,
+        docker_compose_plugin_directory=compose_plugins,
+    )
+    second = runtime_qualification._phase_environment(
+        context,
+        tmp_path / "second",
+        docker_guard=guard,
+        docker_compose_plugin_directory=compose_plugins,
+    )
+
+    assert "OPENAI_API_KEY" not in first
+    assert "OPENAI_API_KEY" not in second
+    writable_roots = {
+        "HOME",
+        "TMPDIR",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+        "DOCKER_CONFIG",
+        "HARBOR_HOME",
+    }
+    assert {first[name] for name in writable_roots}.isdisjoint(
+        {second[name] for name in writable_roots}
+    )
+    assert all(Path(first[name]).is_dir() for name in writable_roots)
+    assert first["DOCKER_HOST"] == second["DOCKER_HOST"]
+    assert json.loads(
+        (Path(first["DOCKER_CONFIG"]) / "config.json").read_text(encoding="utf-8")
+    ) == {"cliPluginsExtraDirs": [str(compose_plugins.resolve())]}
+    assert not (Path(first["DOCKER_CONFIG"]) / "credentials.json").exists()
+
+
+def test_serial_and_bounded_phase_modes_have_equivalent_meaning() -> None:
+    tasks = {
+        name: (lambda name=name: ({"phase": name}, name))
+        for name in runtime_qualification._QUALIFICATION_PHASES
+    }
+
+    serial = runtime_qualification._execute_phase_tasks(
+        tasks,
+        max_parallel=1,
+        cancel=threading.Event(),
+    )
+    bounded = runtime_qualification._execute_phase_tasks(
+        tasks,
+        max_parallel=3,
+        cancel=threading.Event(),
+    )
+
+    assert bounded == serial
+
+
+def test_bounded_phase_failure_cancels_siblings() -> None:
+    cancel = threading.Event()
+    peer_started = threading.Event()
+    peer_cancelled = threading.Event()
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def track(task: Any) -> Any:
+        def run() -> tuple[dict[str, object], str]:
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            try:
+                return task()
+            finally:
+                with lock:
+                    active -= 1
+
+        return run
+
+    def peer() -> tuple[dict[str, object], str]:
+        peer_started.set()
+        assert cancel.wait(2)
+        peer_cancelled.set()
+        return {}, ""
+
+    def fail() -> tuple[dict[str, object], str]:
+        assert peer_started.wait(2)
+        raise RuntimeError("injected phase failure")
+
+    tasks = {
+        "peer": track(peer),
+        "failure": track(fail),
+        "queued": track(peer),
+    }
+    with pytest.raises(RuntimeError, match="injected phase failure"):
+        runtime_qualification._execute_phase_tasks(
+            tasks,
+            max_parallel=2,
+            cancel=cancel,
+        )
+
+    assert cancel.is_set()
+    assert peer_cancelled.is_set()
+    assert peak <= 2
+
+
+def test_cleanup_failure_is_quarantined(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resource = {"id": "container-a", "kind": "container", "project": "phase-a"}
+    monkeypatch.setattr(
+        runtime_qualification,
+        "_owned_resources",
+        lambda *_args, **_kwargs: [resource],
+    )
+
+    def fail_remove(*_args: Any, **_kwargs: Any) -> Any:
+        raise ScenarioPackageError("qualification-runtime-failed", "injected cleanup")
+
+    monkeypatch.setattr(runtime_qualification, "_run", fail_remove)
+
+    with pytest.raises(ScenarioPackageError) as captured:
+        runtime_qualification._cleanup_qualification_resources(
+            tmp_path,
+            generation_id="generation-a",
+            environment={},
+        )
+
+    assert captured.value.classification == "qualification-cleanup-failed"
+    quarantine = json.loads((tmp_path / "quarantine.json").read_bytes())
+    assert quarantine["status"] == "quarantined"
+    assert quarantine["resources"] == [resource]

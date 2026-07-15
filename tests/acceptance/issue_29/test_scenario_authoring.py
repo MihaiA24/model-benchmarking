@@ -410,6 +410,8 @@ def test_production_qualify_measures_harbor_and_seals_authenticated_evidence(
         str(tmp_path / "measured-jobs"),
         "--worker-private-key",
         str(worker_key),
+        "--max-parallel",
+        "3",
         "--provisioning-manifest",
         str(provisioning_manifest),
         "--preflight-output",
@@ -417,6 +419,8 @@ def test_production_qualify_measures_harbor_and_seals_authenticated_evidence(
     )
     assert measured.returncode == 0, measured.stderr or measured.stdout
     measurement = json.loads(measured.stdout)
+    assert measurement["max_parallel"] == 3
+    assert len(measurement["generation_id"]) == 32
     technical: Any = REGISTRY.validate_bytes(technical_path.read_bytes())
     runs = technical["runs"]
     assert technical["provisioning"]["manifest_sha256"].startswith(
