@@ -25,21 +25,6 @@ from verification.policy import (  # noqa: E402
     load_policy,
     tracked_paths,
 )
-from verification.proof import (  # noqa: E402
-    GitHubApi,
-    ProofError,
-    consume_proof,
-    encode_pointer,
-)
-from verification.publisher import (  # noqa: E402
-    PublicationError,
-    fail_proof,
-    finalize_proof,
-    prepare_proof,
-    revoke_proof,
-)
-
-
 class DevelopmentRunError(RuntimeError):
     """A Docker-free development command violated its execution contract."""
 
@@ -59,10 +44,7 @@ _FORBIDDEN_COMMAND_TOKENS = {
 }
 _SECRET_MARKERS = (
     "API_KEY",
-    "ACCESS_TOKEN",
-    "AUTH_TOKEN",
-    "GITHUB_TOKEN",
-    "GH_TOKEN",
+    "TOKEN",
     "MODEL_BENCHMARK_LIVE_ATTESTATION",
     "OPENAI_",
     "ANTHROPIC_",
@@ -77,7 +59,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         policy = load_policy(policy_path)
         if arguments.action == "audit-policy":
-            missing = policy.audit_paths(tracked_paths(PROJECT_ROOT))
+            paths = tracked_paths(PROJECT_ROOT)
+            missing = policy.audit_paths(paths)
             if missing:
                 raise PolicyError(
                     "tracked paths lack policy classification: " + ", ".join(missing)
@@ -85,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
             _emit(
                 {
                     "authority": "none",
-                    "classified_path_count": len(tracked_paths(PROJECT_ROOT)),
+                    "classified_path_count": len(paths),
                     "policy_sha256": policy.sha256,
                     "schema": "verification-policy-audit-v1",
                 }
@@ -99,126 +82,10 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             _emit(run_development(policy, selection))
             return 0
-        if arguments.action == "consume-proof":
-            api = GitHubApi()
-            result = consume_proof(
-                policy=policy,
-                project_root=PROJECT_ROOT,
-                schema_path=arguments.schema.resolve(),
-                envelope_path=arguments.envelope.resolve(),
-                bundle_root=arguments.bundle_root.resolve(),
-                api_get=api.get,
-            )
-            _emit(result)
-            return 0
-        if arguments.action in {
-            "prepare-proof",
-            "finalize-proof",
-            "fail-proof",
-            "revoke-proof",
-        }:
-            return _publication_action(arguments, policy)
         parser.error(f"unsupported action: {arguments.action}")
-    except (DevelopmentRunError, PolicyError, ProofError, PublicationError) as error:
+    except (DevelopmentRunError, PolicyError) as error:
         print(f"verification failed: {error}", file=sys.stderr)
         return 2
-
-
-def _publication_action(arguments: argparse.Namespace, policy: Policy) -> int:
-    api = GitHubApi()
-    if arguments.action == "prepare-proof":
-        state = prepare_proof(
-            policy=policy,
-            project_root=PROJECT_ROOT,
-            schema_path=arguments.schema.resolve(),
-            publication_root=arguments.publication_root.resolve(),
-            state_path=arguments.state.resolve(),
-            gate_id=arguments.gate,
-            candidate_sha=arguments.candidate_sha,
-            run_id=_required_positive(arguments.run_id, "run ID"),
-            run_attempt=_required_positive(arguments.run_attempt, "run attempt"),
-            requester=arguments.requester,
-            reason=arguments.reason,
-            worker_class=arguments.worker_class,
-            worker_identity=arguments.worker_identity,
-            docker_daemon=arguments.docker_daemon or None,
-            api=api,
-        )
-        outputs = {
-            "artifact-name": state.artifact_name,
-            "bundle-path": state.bundle_path,
-            "check-run-id": str(state.check_run_id),
-            "envelope-sha256": state.envelope_sha256,
-            "generation-id": state.generation_id,
-            "state-path": str(arguments.state.resolve()),
-        }
-        _write_action_outputs(arguments.github_output, outputs)
-        _emit({"authority": "fresh_authoritative", **outputs})
-        return 0
-    if arguments.action == "finalize-proof":
-        pointer = finalize_proof(
-            policy=policy,
-            schema_path=arguments.schema.resolve(),
-            state_path=arguments.state.resolve(),
-            artifact_id=arguments.artifact_id,
-            artifact_digest=arguments.artifact_digest,
-            api=api,
-        )
-        outputs = {
-            "artifact-id": str(pointer.artifact_id),
-            "envelope-sha256": pointer.envelope_sha256,
-            "generation-id": pointer.generation_id,
-            "proof-pointer": encode_pointer(pointer),
-        }
-        _write_action_outputs(arguments.github_output, outputs)
-        _emit({"authority": "fresh_authoritative", **outputs})
-        return 0
-    if arguments.action == "fail-proof":
-        fail_proof(
-            policy=policy,
-            state_path=arguments.state.resolve(),
-            reason=arguments.failure_reason,
-            api=api,
-        )
-        _emit({"authority": "fresh_authoritative", "failed": True})
-        return 0
-    check_run_id = revoke_proof(
-        policy=policy,
-        gate_id=arguments.gate,
-        candidate_sha=arguments.candidate_sha,
-        generation_id=arguments.generation_id,
-        requester=arguments.requester,
-        reason=arguments.reason,
-        api=api,
-    )
-    _emit(
-        {
-            "authority": "fresh_authoritative",
-            "check_run_id": check_run_id,
-            "generation_id": arguments.generation_id,
-            "revoked": True,
-        }
-    )
-    return 0
-
-
-def _required_positive(value: int | None, field: str) -> int:
-    if value is None or value < 1:
-        raise PublicationError(f"{field} must be a positive integer")
-    return value
-
-
-def _write_action_outputs(path: Path | None, values: dict[str, str]) -> None:
-    if path is None:
-        return
-    if any("\n" in key or "\n" in value for key, value in values.items()):
-        raise PublicationError("GitHub action output contains a newline")
-    try:
-        with path.open("a", encoding="utf-8") as output:
-            for key, value in values.items():
-                output.write(f"{key}={value}\n")
-    except OSError as error:
-        raise PublicationError(f"cannot write GitHub action outputs: {error}") from error
 
 
 def run_development(policy: Policy, selection: object) -> dict[str, object]:
@@ -303,13 +170,9 @@ def _rss_bytes(value: float) -> int:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description=(
-            "Select development verification, publish a fresh proof, or consume "
-            "trusted current proof."
-        ),
+        description="Audit, select, and run Docker-free local development verification.",
     )
     default_policy = PROJECT_ROOT / "verification/policy.json"
-    default_schema = PROJECT_ROOT / "verification/proof-envelope-v1.schema.json"
     subparsers = parser.add_subparsers(dest="action", required=True)
 
     audit = subparsers.add_parser("audit-policy")
@@ -321,53 +184,6 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--base")
         command.add_argument("--head")
         command.add_argument("--changed-paths-file", type=Path)
-
-    consume = subparsers.add_parser("consume-proof")
-    consume.add_argument("--policy", type=Path, default=default_policy)
-    consume.add_argument("--schema", type=Path, default=default_schema)
-    consume.add_argument("--envelope", type=Path, required=True)
-    consume.add_argument("--bundle-root", type=Path, required=True)
-
-    prepare = subparsers.add_parser("prepare-proof")
-    prepare.add_argument("--policy", type=Path, default=default_policy)
-    prepare.add_argument("--schema", type=Path, default=default_schema)
-    prepare.add_argument("--gate", required=True)
-    prepare.add_argument("--candidate-sha", required=True)
-    prepare.add_argument("--run-id", type=int, default=os.environ.get("GITHUB_RUN_ID"))
-    prepare.add_argument(
-        "--run-attempt",
-        type=int,
-        default=os.environ.get("GITHUB_RUN_ATTEMPT"),
-    )
-    prepare.add_argument("--requester", required=True)
-    prepare.add_argument("--reason", required=True)
-    prepare.add_argument("--worker-class", required=True)
-    prepare.add_argument("--worker-identity", required=True)
-    prepare.add_argument("--docker-daemon", default="")
-    prepare.add_argument("--publication-root", type=Path, required=True)
-    prepare.add_argument("--state", type=Path, required=True)
-    prepare.add_argument("--github-output", type=Path)
-
-    finalize = subparsers.add_parser("finalize-proof")
-    finalize.add_argument("--policy", type=Path, default=default_policy)
-    finalize.add_argument("--schema", type=Path, default=default_schema)
-    finalize.add_argument("--state", type=Path, required=True)
-    finalize.add_argument("--artifact-id", type=int, required=True)
-    finalize.add_argument("--artifact-digest", required=True)
-    finalize.add_argument("--github-output", type=Path)
-
-    fail = subparsers.add_parser("fail-proof")
-    fail.add_argument("--policy", type=Path, default=default_policy)
-    fail.add_argument("--state", type=Path, required=True)
-    fail.add_argument("--failure-reason", required=True)
-
-    revoke = subparsers.add_parser("revoke-proof")
-    revoke.add_argument("--policy", type=Path, default=default_policy)
-    revoke.add_argument("--gate", required=True)
-    revoke.add_argument("--candidate-sha", required=True)
-    revoke.add_argument("--generation-id", required=True)
-    revoke.add_argument("--requester", required=True)
-    revoke.add_argument("--reason", required=True)
     return parser
 
 

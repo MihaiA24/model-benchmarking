@@ -132,3 +132,14 @@ def test_harbor_imports_are_confined_to_supported_adapter_seam() -> None:
             if not harbor_import_is_allowed(path, adapter_root, imported):
                 violations.append(f"{path.relative_to(ROOT)}: forbidden import {imported}")
     assert violations == []
+
+
+def test_runtime_modules_do_not_import_developer_verification() -> None:
+    violations: list[str] = []
+    for path in sorted((SOURCE_ROOT / "runtime").rglob("*.py")):
+        for imported in _imports(path):
+            if imported == "verification" or imported.startswith("verification."):
+                violations.append(
+                    f"{path.relative_to(ROOT)}: runtime imports {imported}"
+                )
+    assert violations == []

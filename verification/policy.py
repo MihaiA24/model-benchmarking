@@ -13,17 +13,6 @@ class PolicyError(ValueError):
     """The repository verification policy or changed-path input is invalid."""
 
 
-DOMAINS = (
-    "development",
-    "cached_integration",
-    "fresh_authoritative",
-    "ci_acceptance",
-    "trial_verifier",
-    "runtime_preflight",
-    "provisioning_preflight",
-)
-
-
 @dataclass(frozen=True)
 class Change:
     status: str
@@ -36,7 +25,6 @@ class Selection:
     changes: tuple[Change, ...]
     development: tuple[str, ...]
     cached_integration: tuple[str, ...]
-    fresh_gates: tuple[str, ...]
     fallback: bool
     reasons: tuple[str, ...]
 
@@ -46,10 +34,6 @@ class Policy:
     path: Path
     value: dict[str, object]
     sha256: str
-
-    @property
-    def repository(self) -> str:
-        return _string(self.value["repository"], "repository")
 
     @property
     def broad_development_slice(self) -> str:
@@ -70,10 +54,6 @@ class Policy:
         )
 
     @property
-    def fresh_gates(self) -> dict[str, dict[str, object]]:
-        return _indexed(self.value["fresh_gates"], "fresh_gates")
-
-    @property
     def path_rules(self) -> tuple[dict[str, object], ...]:
         rules = self.value["path_rules"]
         assert isinstance(rules, list)
@@ -86,7 +66,6 @@ class Policy:
         normalized = tuple(changes)
         development: set[str] = set()
         cached: set[str] = set()
-        gates: set[str] = set()
         reasons: list[str] = []
         fallback = False
 
@@ -112,20 +91,17 @@ class Policy:
                     cached.update(
                         _string_list(rule["cached_integration"], "cached_integration")
                     )
-                    gates.update(_string_list(rule["fresh_gates"], "fresh_gates"))
             if not matched:
                 fallback = True
                 reasons.append(f"unclassified path requires closed-world fallback: {change.path}")
 
         if fallback:
             development = {self.broad_development_slice}
-            gates.update(self.fresh_gates)
 
         return Selection(
             changes=normalized,
             development=tuple(sorted(development)),
             cached_integration=tuple(sorted(cached)),
-            fresh_gates=tuple(sorted(gates)),
             fallback=fallback,
             reasons=tuple(sorted(set(reasons))),
         )
@@ -153,9 +129,6 @@ class Policy:
                 "shape": "verification-selection-diagnostics-v1",
             },
             "fallback": selection.fallback,
-            "fresh_authoritative": [
-                self.fresh_gates[name] for name in selection.fresh_gates
-            ],
             "policy_sha256": self.sha256,
             "reasons": list(selection.reasons),
             "schema": "verification-selection-v1",
@@ -184,23 +157,17 @@ def load_policy(path: Path) -> Policy:
         "broad_development_slice",
         "cached_integration_slices",
         "development_slices",
-        "domains",
-        "fresh_gates",
         "non_authoritative",
         "path_rules",
-        "repository",
         "version",
     }
     if set(value) != required:
         raise PolicyError("verification policy has unknown or missing fields")
     if value["version"] != 1 or value["non_authoritative"] is not True:
         raise PolicyError("unsupported verification policy")
-    if tuple(_string_list(value["domains"], "domains")) != DOMAINS:
-        raise PolicyError("verification policy domains are incomplete or reordered")
 
     development = _indexed(value["development_slices"], "development_slices")
     cached = _indexed(value["cached_integration_slices"], "cached_integration_slices")
-    gates = _indexed(value["fresh_gates"], "fresh_gates")
     broad = _string(value["broad_development_slice"], "broad_development_slice")
     if broad not in development:
         raise PolicyError("broad development slice is undefined")
@@ -215,100 +182,6 @@ def load_policy(path: Path) -> Policy:
         if slice_value["authority"] != "diagnostic":
             raise PolicyError(f"integration slice {name} must be diagnostic")
         _commands(slice_value["commands"], name)
-    for name, gate in gates.items():
-        _strict_keys(
-            gate,
-            {
-                "check_name",
-                "commands",
-                "docker_required",
-                "id",
-                "trusted_app_slug",
-                "worker_classes",
-                "workflow_path",
-            },
-            name,
-        )
-        _string(gate["check_name"], f"{name}.check_name")
-        _string(gate["trusted_app_slug"], f"{name}.trusted_app_slug")
-        _string(gate["workflow_path"], f"{name}.workflow_path")
-        _string_list(gate["worker_classes"], f"{name}.worker_classes")
-        if not isinstance(gate["docker_required"], bool):
-            raise PolicyError(f"{name}.docker_required must be boolean")
-        raw_commands = gate["commands"]
-        if not isinstance(raw_commands, list) or not raw_commands:
-            raise PolicyError(f"{name}.commands must be a non-empty list")
-        command_ids: set[str] = set()
-        artifact_paths: set[str] = set()
-        for command in raw_commands:
-            if not isinstance(command, dict):
-                raise PolicyError(f"{name}.commands entries must be objects")
-            _strict_keys(
-                command,
-                {
-                    "acceptance_artifact",
-                    "artifacts",
-                    "case_inventory",
-                    "command",
-                    "id",
-                    "timeout_seconds",
-                },
-                f"{name}.commands",
-            )
-            command_id = _string(command["id"], f"{name}.command.id")
-            if command_id in command_ids:
-                raise PolicyError(f"duplicate command id in {name}: {command_id}")
-            command_ids.add(command_id)
-            _string(command["command"], f"{name}.{command_id}.command")
-            timeout_seconds = command["timeout_seconds"]
-            if (
-                not isinstance(timeout_seconds, int)
-                or isinstance(timeout_seconds, bool)
-                or timeout_seconds < 1
-            ):
-                raise PolicyError(
-                    f"{name}.{command_id}.timeout_seconds must be positive"
-                )
-            declared_artifacts = _string_list(
-                command["artifacts"],
-                f"{name}.{command_id}.artifacts",
-            )
-            normalized_artifacts = tuple(
-                _normalize_path(path) for path in declared_artifacts
-            )
-            if len(normalized_artifacts) != len(set(normalized_artifacts)):
-                raise PolicyError(f"duplicate artifact in {name}: {command_id}")
-            duplicate_artifacts = artifact_paths.intersection(normalized_artifacts)
-            if duplicate_artifacts:
-                raise PolicyError(
-                    f"artifact declared by multiple commands in {name}: "
-                    + ", ".join(sorted(duplicate_artifacts))
-                )
-            artifact_paths.update(normalized_artifacts)
-
-            inventory = command["case_inventory"]
-            artifact = command["acceptance_artifact"]
-            if inventory not in {"none", "required"}:
-                raise PolicyError(f"invalid case inventory in {name}: {command_id}")
-            if inventory == "required":
-                acceptance_path = _normalize_path(
-                    _string(
-                        artifact,
-                        f"{name}.{command_id}.acceptance_artifact",
-                    )
-                )
-                checksum_path = str(
-                    PurePosixPath(acceptance_path).with_name("sha256sums.txt")
-                )
-                required_artifacts = {acceptance_path, checksum_path}
-                if not required_artifacts.issubset(normalized_artifacts):
-                    raise PolicyError(
-                        f"mandatory artifact inventory is incomplete: {command_id}"
-                    )
-            elif artifact is not None:
-                raise PolicyError(
-                    f"non-case command cannot name an acceptance artifact: {command_id}"
-                )
 
     rules = value["path_rules"]
     if not isinstance(rules, list) or not rules:
@@ -323,8 +196,6 @@ def load_policy(path: Path) -> Policy:
                 "cached_integration",
                 "classification",
                 "development",
-                "domains",
-                "fresh_gates",
                 "id",
                 "patterns",
             },
@@ -338,27 +209,21 @@ def load_policy(path: Path) -> Policy:
         if not patterns:
             raise PolicyError(f"path rule has no patterns: {rule_id}")
         classification = rule["classification"]
-        domains = _string_list(rule["domains"], f"{rule_id}.domains")
         selected_development = _string_list(
             rule["development"], f"{rule_id}.development"
         )
         selected_cached = _string_list(
             rule["cached_integration"], f"{rule_id}.cached_integration"
         )
-        selected_gates = _string_list(rule["fresh_gates"], f"{rule_id}.fresh_gates")
         if classification == "non_normative_docs":
-            if domains or selected_development or selected_cached or selected_gates:
+            if selected_development or selected_cached:
                 raise PolicyError(f"docs-only rule selects verification work: {rule_id}")
-        elif classification != "normative" or not domains or not selected_development:
+        elif classification != "normative" or not selected_development:
             raise PolicyError(f"normative path rule is incomplete: {rule_id}")
-        if not set(domains).issubset(DOMAINS):
-            raise PolicyError(f"unknown domain in path rule: {rule_id}")
         if not set(selected_development).issubset(development):
             raise PolicyError(f"unknown development slice in path rule: {rule_id}")
         if not set(selected_cached).issubset(cached):
             raise PolicyError(f"unknown integration slice in path rule: {rule_id}")
-        if not set(selected_gates).issubset(gates):
-            raise PolicyError(f"unknown gate in path rule: {rule_id}")
 
     return Policy(path=path, value=value, sha256=hashlib.sha256(data).hexdigest())
 
