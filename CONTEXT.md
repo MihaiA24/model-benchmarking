@@ -8,6 +8,10 @@ This context compares autonomous coding-agent harnesses on reproducible real-cod
 A system under evaluation that autonomously attempts a scenario through its own non-interactive CLI. OMP, OpenCode, and Hermes are harnesses.
 _Avoid_: Agent, runner
 
+**Raw API Baseline**:
+A minimal single-request OpenAI-compatible control condition that receives the same Developer Brief and one declared target file, writes only the returned replacement for that file, and passes the resulting Submission to the same Verifier path. It is not a Harness and is not eligible for Harness ranking.
+_Avoid_: Harness, autonomous agent, fourth harness
+
 **Benchmark substrate**:
 A reusable execution framework that owns task expansion, isolated environments, trial lifecycle, verification, and raw result capture without owning the experiment's comparison design.
 _Avoid_: Harness, experiment coordinator
@@ -15,6 +19,26 @@ _Avoid_: Harness, experiment coordinator
 **Experiment coordinator**:
 The project-owned layer that declares comparable conditions, binds harness adapters to scenarios, preserves paired-trial identity, and seals result evidence while delegating execution to the benchmark substrate.
 _Avoid_: Runner, harness
+
+**Functional V1**:
+The diagnostic milestone in which one trusted local operator executes the fixed comparison conditions through the selected Legacy Calibration Suite slice and obtains verified Result Bundles without making a statistically defensible ranking claim.
+_Avoid_: Production benchmark, decision-grade comparison, CLI smoke test
+
+**Functional V1 Run Manifest**:
+The versioned non-secret operator declaration that fixes one Functional V1 comparison by pinning its Provider Route, exact model, shared limits, Scenario Package locks, and Functional V1 Condition Locks.
+_Avoid_: Production Experiment Manifest, mutable configuration, secret store
+
+**Functional V1 Condition Lock**:
+A sealed platform-aware declaration binding one Functional V1 comparison condition to its exact executable or materializer, adapter behavior, native configuration, Provider Route and model mapping, evidence surfaces, and transitive common execution inputs.
+_Avoid_: Harness Profile, shared run limits, ad hoc CLI arguments
+
+**Functional V1 Run Workspace**:
+The write-once unsealed local state of one Functional V1 invocation, containing its immutable header and per-cell start and terminal artifacts until a terminal Functional V1 Run Record can be sealed.
+_Avoid_: Run Ledger, mutable results database, reusable Trial workspace
+
+**Functional V1 Run Record**:
+The immutable index of one Functional V1 invocation, binding its resolved inputs, terminal Trial-cell records, Result Bundle identities, and complete or incomplete terminal state.
+_Avoid_: Run Ledger, mutable results database, statistical report
 
 **Evaluated repository**:
 The immutable codebase snapshot that a harness may modify while attempting a scenario.
