@@ -40,19 +40,68 @@ class GitHubApi:
         self._token = token or _github_token()
 
     def get(self, repository: str, path: str) -> object:
+        return _strict_json(
+            self._request(repository, path, method="GET"),
+            "GitHub response",
+        )
+
+    def post(
+        self,
+        repository: str,
+        path: str,
+        value: dict[str, object],
+    ) -> object:
+        return _strict_json(
+            self._request(repository, path, method="POST", value=value),
+            "GitHub response",
+        )
+
+    def patch(
+        self,
+        repository: str,
+        path: str,
+        value: dict[str, object],
+    ) -> object:
+        return _strict_json(
+            self._request(repository, path, method="PATCH", value=value),
+            "GitHub response",
+        )
+
+    def download(self, repository: str, path: str) -> bytes:
+        return self._request(repository, path, method="GET")
+
+    def _request(
+        self,
+        repository: str,
+        path: str,
+        *,
+        method: str,
+        value: dict[str, object] | None = None,
+    ) -> bytes:
+        data = None
+        if value is not None:
+            data = json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
         request = urllib.request.Request(
             f"https://api.github.com/repos/{repository}{path}",
+            data=data,
+            method=method,
             headers={
                 "Accept": "application/vnd.github+json",
                 "Authorization": f"Bearer {self._token}",
+                "Content-Type": "application/json",
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                return _strict_json(response.read(), "GitHub response")
-        except (OSError, urllib.error.URLError, json.JSONDecodeError) as error:
-            raise ProofError(f"live GitHub currentness lookup failed: {error}") from error
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return response.read()
+        except (OSError, urllib.error.URLError) as error:
+            raise ProofError(f"GitHub API request failed: {error}") from error
 
 
 def consume_proof(
@@ -74,6 +123,10 @@ def consume_proof(
 
     envelope_bytes = _read(envelope_path, "proof envelope")
     envelope_sha256 = _sha256(envelope_bytes)
+    outer_checksum = _read(bundle_root / "sha256sums.txt", "outer checksum manifest")
+    expected_checksum = f"{envelope_sha256}  proof-envelope.json\n".encode("utf-8")
+    if outer_checksum != expected_checksum:
+        raise ProofError("outer proof checksum manifest is malformed or stale")
     envelope = _strict_json(envelope_bytes, "proof envelope")
     if not isinstance(envelope, dict):
         raise ProofError("proof envelope must be an object")
@@ -215,17 +268,36 @@ def _verify_commands(
     assert isinstance(raw_commands, list)
     assert isinstance(expected_commands, list)
     observed_identity = [
-        (_object(command, "command")["id"], _object(command, "command")["command"])
+        (
+            _object(command, "command")["id"],
+            _object(command, "command")["command"],
+            _object(command, "command")["timeout_seconds"],
+        )
         for command in raw_commands
     ]
     expected_identity = [
-        (_object(command, "policy command")["id"], _object(command, "policy command")["command"])
+        (
+            _object(command, "policy command")["id"],
+            _object(command, "policy command")["command"],
+            _object(command, "policy command")["timeout_seconds"],
+        )
         for command in expected_commands
     ]
     if observed_identity != expected_identity:
         raise ProofError("proof ordered commands drift from policy")
 
     artifacts = _artifact_map(envelope, bundle_root)
+    declared_artifacts = {
+        _safe_relative(_string(path, "policy artifact path"))
+        for raw in expected_commands
+        for path in _string_list(
+            _object(raw, "policy command")["artifacts"],
+            "policy command artifacts",
+        )
+    }
+    if set(artifacts) != declared_artifacts:
+        raise ProofError("proof child artifacts drift from policy inventory")
+
     for raw, expected in zip(raw_commands, expected_commands, strict=True):
         command = _object(raw, "command")
         policy_command = _object(expected, "policy command")
@@ -365,7 +437,11 @@ def _verify_currentness(
     if not candidates:
         raise ProofError("no trusted current Check Run exists")
     current = max(candidates, key=lambda item: int(item["id"]))
-    if current.get("status") != "completed" or current.get("conclusion") != "success":
+    if (
+        current.get("head_sha") != candidate_sha
+        or current.get("status") != "completed"
+        or current.get("conclusion") != "success"
+    ):
         raise ProofError("newest trusted Check Run is not completed successfully")
 
     pointer = parse_pointer(current.get("external_id"))
@@ -387,7 +463,8 @@ def _verify_currentness(
         "workflow run",
     )
     if (
-        run.get("head_sha") != envelope["candidate_sha"]
+        run.get("id") != pointer.run_id
+        or run.get("head_sha") != envelope["candidate_sha"]
         or run.get("path") != gate["workflow_path"]
         or run.get("run_attempt") != pointer.run_attempt
         or run.get("status") != "completed"
@@ -401,7 +478,13 @@ def _verify_currentness(
     )
     artifact_run = artifact.get("workflow_run")
     if (
-        artifact.get("expired") is not False
+        artifact.get("id") != pointer.artifact_id
+        or artifact.get("name")
+        != (
+            f"fresh-proof-{envelope['gate_id']}-"
+            f"{str(envelope['candidate_sha'])[:12]}-{envelope['generation_id']}"
+        )
+        or artifact.get("expired") is not False
         or not isinstance(artifact_run, dict)
         or artifact_run.get("id") != pointer.run_id
         or artifact_run.get("head_sha") != envelope["candidate_sha"]
@@ -505,6 +588,14 @@ def _string(value: object, field: str) -> str:
     if not isinstance(value, str) or not value:
         raise ProofError(f"{field} must be a non-empty string")
     return value
+
+
+def _string_list(value: object, field: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or not item for item in value
+    ):
+        raise ProofError(f"{field} must be a string list")
+    return tuple(value)
 
 
 def _integer(value: object, field: str) -> int:

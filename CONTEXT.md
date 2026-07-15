@@ -86,6 +86,26 @@ _Avoid_: Mutable portfolio, benchmark result
 A Suite-owned sealed record proving that one Scenario Package is authorable, reproducible, solvable, verifier-consistent, leak-reviewed, and eligible for a Suite roster independently of any experiment-varying Harness, Provider Route, model, Worker Profile, or Production Experiment Manifest.
 _Avoid_: Qualification Bundle, Trial result
 
+**Fresh Authoritative Gate**:
+A policy-declared complete ordered verification gate executed against one exact candidate source identity by an eligible Worker. Only its current Fresh Proof Generation may authorize fixed-head proof consumption.
+_Avoid_: Development slice, cached integration, acceptance test
+
+**Proof Envelope**:
+An immutable runner-produced record binding one Fresh Authoritative Gate execution to its candidate, policy, schema, workflow, Worker, command outcomes, mandatory cases, and child evidence. It is evidence, not the authority for its own currentness.
+_Avoid_: Acceptance artifact, child evidence, current proof
+
+**Child Verification Artifact**:
+A policy-declared, checksum-bound output produced by one ordered command of a Fresh Authoritative Gate and included in its Proof Envelope. It cannot authorize reuse independently of that envelope and its current Check Run.
+_Avoid_: Discovered output, Proof Envelope, reusable proof
+
+**Fresh Proof Generation**:
+One attempt to publish a Proof Envelope for an exact repository, candidate SHA, gate, policy digest, and generation identity. Its currentness comes from the newest trusted Check Run, never artifact age or filename.
+_Avoid_: Qualification Generation, workflow run, latest artifact
+
+**Proof Revocation**:
+An append-only newer failed trusted Check Run that supersedes the exact current successful Fresh Proof Generation after matching its candidate, gate, policy, and generation identities. It never changes or deletes the immutable Proof Envelope.
+_Avoid_: Artifact deletion, proof mutation
+
 **Suite Compatibility Record**:
 A sealed dimension-by-dimension assessment of whether two Suite Releases have identical, proven-equivalent, incompatible, or unassessed Scenario, scoring, weighting, estimand, claim, and analysis semantics.
 _Avoid_: SemVer inference, blanket compatibility flag

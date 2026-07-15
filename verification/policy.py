@@ -239,12 +239,20 @@ def load_policy(path: Path) -> Policy:
         if not isinstance(raw_commands, list) or not raw_commands:
             raise PolicyError(f"{name}.commands must be a non-empty list")
         command_ids: set[str] = set()
+        artifact_paths: set[str] = set()
         for command in raw_commands:
             if not isinstance(command, dict):
                 raise PolicyError(f"{name}.commands entries must be objects")
             _strict_keys(
                 command,
-                {"acceptance_artifact", "case_inventory", "command", "id"},
+                {
+                    "acceptance_artifact",
+                    "artifacts",
+                    "case_inventory",
+                    "command",
+                    "id",
+                    "timeout_seconds",
+                },
                 f"{name}.commands",
             )
             command_id = _string(command["id"], f"{name}.command.id")
@@ -252,14 +260,55 @@ def load_policy(path: Path) -> Policy:
                 raise PolicyError(f"duplicate command id in {name}: {command_id}")
             command_ids.add(command_id)
             _string(command["command"], f"{name}.{command_id}.command")
+            timeout_seconds = command["timeout_seconds"]
+            if (
+                not isinstance(timeout_seconds, int)
+                or isinstance(timeout_seconds, bool)
+                or timeout_seconds < 1
+            ):
+                raise PolicyError(
+                    f"{name}.{command_id}.timeout_seconds must be positive"
+                )
+            declared_artifacts = _string_list(
+                command["artifacts"],
+                f"{name}.{command_id}.artifacts",
+            )
+            normalized_artifacts = tuple(
+                _normalize_path(path) for path in declared_artifacts
+            )
+            if len(normalized_artifacts) != len(set(normalized_artifacts)):
+                raise PolicyError(f"duplicate artifact in {name}: {command_id}")
+            duplicate_artifacts = artifact_paths.intersection(normalized_artifacts)
+            if duplicate_artifacts:
+                raise PolicyError(
+                    f"artifact declared by multiple commands in {name}: "
+                    + ", ".join(sorted(duplicate_artifacts))
+                )
+            artifact_paths.update(normalized_artifacts)
+
             inventory = command["case_inventory"]
             artifact = command["acceptance_artifact"]
             if inventory not in {"none", "required"}:
                 raise PolicyError(f"invalid case inventory in {name}: {command_id}")
             if inventory == "required":
-                _string(artifact, f"{name}.{command_id}.acceptance_artifact")
+                acceptance_path = _normalize_path(
+                    _string(
+                        artifact,
+                        f"{name}.{command_id}.acceptance_artifact",
+                    )
+                )
+                checksum_path = str(
+                    PurePosixPath(acceptance_path).with_name("sha256sums.txt")
+                )
+                required_artifacts = {acceptance_path, checksum_path}
+                if not required_artifacts.issubset(normalized_artifacts):
+                    raise PolicyError(
+                        f"mandatory artifact inventory is incomplete: {command_id}"
+                    )
             elif artifact is not None:
-                raise PolicyError(f"non-case command cannot name an artifact: {command_id}")
+                raise PolicyError(
+                    f"non-case command cannot name an acceptance artifact: {command_id}"
+                )
 
     rules = value["path_rules"]
     if not isinstance(rules, list) or not rules:
