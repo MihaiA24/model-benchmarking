@@ -6,10 +6,15 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import uuid
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -53,23 +58,83 @@ _CheckGroup = tuple[str, str, bool, str, Decimal, str | None]
 _CheckGroups = tuple[_CheckGroup, ...]
 
 
+def _terminate_process(
+    process: subprocess.Popen[str], *, grace_seconds: int = 10
+) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+
+
 def _run(
     command: list[str],
     *,
     timeout: int,
     cwd: Path | None = None,
     environment: dict[str, str] | None = None,
+    cancel: threading.Event | None = None,
+    inherit_environment: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=cwd,
-            env=None if environment is None else {**os.environ, **environment},
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
+    process_environment = None
+    if environment is not None:
+        process_environment = (
+            {**os.environ, **environment} if inherit_environment else environment
         )
+    try:
+        if cancel is None:
+            completed = subprocess.run(
+                command,
+                cwd=cwd,
+                env=process_environment,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        else:
+            process = subprocess.Popen(
+                command,
+                cwd=cwd,
+                env=process_environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
+            deadline = time.monotonic() + timeout
+            while True:
+                if cancel.is_set():
+                    _terminate_process(process)
+                    raise ScenarioPackageError(
+                        "qualification-cancelled",
+                        "qualification phase was cancelled after a sibling failure",
+                    )
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _terminate_process(process)
+                    raise subprocess.TimeoutExpired(command, timeout)
+                try:
+                    stdout, stderr = process.communicate(timeout=min(0.2, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            completed = subprocess.CompletedProcess(
+                command, process.returncode, stdout, stderr
+            )
+    except ScenarioPackageError:
+        raise
     except (OSError, subprocess.TimeoutExpired) as error:
         raise ScenarioPackageError(
             "qualification-runtime-failed", str(error)
@@ -125,6 +190,7 @@ def _harbor_command(
     agent: str,
     attempts: int,
     install_only: bool = False,
+    job_name: str | None = None,
 ) -> list[str]:
     command = [
         _harbor_executable(),
@@ -145,6 +211,8 @@ def _harbor_command(
         "--yes",
         "--quiet",
     ]
+    if job_name is not None:
+        command.extend(["--job-name", job_name])
     if install_only:
         command.extend(["--install-only", "--no-delete"])
     return command
@@ -499,7 +567,12 @@ def _compose_project_name(value: str) -> str:
     return re.sub(r"[^a-z0-9_-]", "-", lowered)
 
 
-def _environment_identity(trial: dict[str, object]) -> str:
+def _environment_identity(
+    trial: dict[str, object],
+    *,
+    environment: dict[str, str] | None = None,
+    event_log: Path | None = None,
+) -> str:
     trial_name = trial.get("trial_name")
     started_at = trial.get("started_at")
     finished_at = trial.get("finished_at")
@@ -511,24 +584,33 @@ def _environment_identity(trial: dict[str, object]) -> str:
             "invalid-infrastructure",
             "Harbor environment timestamps or trial name are missing",
         )
-    completed = _run(
-        [
-            "docker",
-            "events",
-            "--since",
-            started_at,
-            "--until",
-            str(int(time.time()) + 1),
-            "--filter",
-            "type=container",
-            "--format",
-            "{{json .}}",
-        ],
-        timeout=30,
-    )
+    if event_log is None:
+        completed = _run(
+            [
+                "docker",
+                "events",
+                "--since",
+                started_at,
+                "--until",
+                str(int(time.time()) + 1),
+                "--filter",
+                "type=container",
+                "--format",
+                "{{json .}}",
+            ],
+            timeout=30,
+            environment=environment,
+            inherit_environment=environment is None,
+        )
+        event_output = completed.stdout
+    else:
+        try:
+            event_output = event_log.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
     prefix = _compose_project_name(trial_name)
     evidence: list[dict[str, str]] = []
-    for line in completed.stdout.splitlines():
+    for line in event_output.splitlines():
         try:
             event = json.loads(line)
         except json.JSONDecodeError as error:
@@ -606,6 +688,8 @@ def _run_record(
     expected_score_names: tuple[str, ...],
     expected_hidden_marker_digests: tuple[str, ...],
     expected_groups: _CheckGroups,
+    environment: dict[str, str] | None = None,
+    event_log: Path | None = None,
 ) -> dict[str, object]:
     capture_destination = (
         "artifacts/capture/materialization.json"
@@ -614,6 +698,14 @@ def _run_record(
     )
     try:
         trial = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
+    if trial.get("exception_info") is not None:
+        raise ScenarioPackageError(
+            "qualification-runtime-failed",
+            "Harbor trial recorded an exception",
+        )
+    try:
         structured = json.loads(
             (path.parent / "verifier/verifier-result.json").read_text(encoding="utf-8")
         )
@@ -632,11 +724,6 @@ def _run_record(
 
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
-    if trial.get("exception_info") is not None:
-        raise ScenarioPackageError(
-            "qualification-runtime-failed",
-            "Harbor trial recorded an exception",
-        )
     verifier = trial.get("verifier_result")
     rewards = verifier.get("rewards") if isinstance(verifier, dict) else None
     if (
@@ -762,13 +849,80 @@ def _run_record(
             "invalid-technical-qualification",
             f"Harbor trial produced {outcome}, expected {expected_outcome}",
         )
-    environment_id = _environment_identity(trial)
+    environment_id = _environment_identity(
+        trial, environment=environment, event_log=event_log
+    )
     return {
         "environment_id": environment_id,
         "outcome": outcome,
         "reward_score_vector": reward_vector,
         "structured_score_vector": structured_vector,
     }
+
+
+def _run_with_docker_event_capture(
+    command: list[str],
+    *,
+    timeout: int,
+    environment: dict[str, str],
+    cancel: threading.Event | None,
+    event_log: Path,
+) -> subprocess.CompletedProcess[str]:
+    event_log.parent.mkdir(parents=True, exist_ok=True)
+    event_error = event_log.with_suffix(".stderr")
+    if event_log.exists() or event_error.exists():
+        raise ScenarioPackageError(
+            "qualification-publication-failed",
+            f"Docker event capture path already exists: {event_log}",
+        )
+    with event_log.open("w", encoding="utf-8") as output_stream, event_error.open(
+        "w", encoding="utf-8"
+    ) as error_stream:
+        collector = subprocess.Popen(
+            [
+                "docker",
+                "events",
+                "--since",
+                str(int(time.time())),
+                "--format",
+                "{{json .}}",
+            ],
+            stdout=output_stream,
+            stderr=error_stream,
+            text=True,
+            env=environment,
+            start_new_session=sys.platform != "win32",
+        )
+        try:
+            completed = _run(
+                command,
+                timeout=timeout,
+                environment=environment,
+                cancel=cancel,
+                inherit_environment=False,
+            )
+        finally:
+            _terminate_process(collector, grace_seconds=1)
+    event_log.chmod(0o444)
+    event_error.chmod(0o444)
+    expected_exit_codes = {
+        0,
+        -signal.SIGTERM,
+        -signal.SIGKILL,
+        128 + signal.SIGTERM,
+        128 + signal.SIGKILL,
+    }
+    if collector.returncode not in expected_exit_codes:
+        try:
+            message = event_error.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError):
+            message = ""
+        raise ScenarioPackageError(
+            "invalid-infrastructure",
+            message
+            or f"Docker event capture failed with exit {collector.returncode}",
+        )
+    return completed
 
 
 def _run_phase(
@@ -785,6 +939,7 @@ def _run_phase(
     expected_groups: _CheckGroups,
     expected_capture_reason: str | None,
     environment: dict[str, str],
+    cancel: threading.Event | None = None,
 ) -> tuple[list[dict[str, object]], str]:
     phase = jobs_dir / name
     if phase.exists():
@@ -796,10 +951,27 @@ def _run_phase(
     outputs: list[str] = []
     known_results: set[Path] = set()
     for attempt in range(1, attempts + 1):
-        completed = _run(
-            _harbor_command(package, phase, agent=agent, attempts=1),
+        if cancel is not None and cancel.is_set():
+            raise ScenarioPackageError(
+                "qualification-cancelled",
+                "qualification phase was cancelled before execution",
+            )
+        event_log = (
+            Path(environment["XDG_STATE_HOME"])
+            / f"docker-events-{attempt}.jsonl"
+        )
+        completed = _run_with_docker_event_capture(
+            _harbor_command(
+                package,
+                phase,
+                agent=agent,
+                attempts=1,
+                job_name=f"{name}-{attempt}",
+            ),
             timeout=1200,
             environment=environment,
+            cancel=cancel,
+            event_log=event_log,
         )
         outputs.append(completed.stdout + completed.stderr)
         result_paths = _trial_results(phase, expected=attempt, agent=agent)
@@ -809,11 +981,11 @@ def _run_phase(
                 "invalid-infrastructure",
                 "Harbor did not produce exactly one fresh trial",
             )
-        path = fresh_results.pop()
-        known_results.add(path)
+        result_path = fresh_results.pop()
+        known_results.add(result_path)
         records.append(
             _run_record(
-                path,
+                result_path,
                 expected_outcome=expected_outcome,
                 expected_capture_kind="patch" if agent == "oracle" else "no-op",
                 expected_capture_reason=expected_capture_reason,
@@ -822,6 +994,8 @@ def _run_phase(
                 expected_score_names=expected_score_names,
                 expected_hidden_marker_digests=expected_hidden_marker_digests,
                 expected_groups=expected_groups,
+                environment=environment,
+                event_log=event_log,
             )
         )
     return records, "".join(outputs)
@@ -836,6 +1010,8 @@ def _run_rejection_phase(
     expected_hidden_marker_digests: tuple[str, ...],
     expected_groups: _CheckGroups,
     environment: dict[str, str],
+    scratch_dir: Path | None = None,
+    cancel: threading.Event | None = None,
 ) -> tuple[dict[str, object], str]:
     if kind == "malformed":
         solution = (
@@ -853,9 +1029,13 @@ def _run_rejection_phase(
     else:
         raise AssertionError(kind)
 
-    with tempfile.TemporaryDirectory(prefix=f"scenario-{kind}-handoff-") as temporary:
+    with tempfile.TemporaryDirectory(
+        prefix=f"scenario-{kind}-handoff-",
+        dir=scratch_dir,
+    ) as temporary:
         diagnostic = Path(temporary) / "package"
         shutil.copytree(package, diagnostic, symlinks=True)
+        _make_tree_writable(diagnostic)
         (diagnostic / "scenario.lock.json").unlink(missing_ok=True)
         solution_path = diagnostic / "solution/solve.sh"
         solution_path.write_text(solution, encoding="utf-8")
@@ -875,6 +1055,7 @@ def _run_rejection_phase(
             expected_groups=expected_groups,
             expected_capture_reason=expected_reason,
             environment=environment,
+            cancel=cancel,
         )
     return (
         {
@@ -896,12 +1077,22 @@ def _run_score_mismatch_phase(
     expected_hidden_marker_digests: tuple[str, ...],
     expected_groups: _CheckGroups,
     environment: dict[str, str],
+    cancel: threading.Event | None = None,
 ) -> tuple[dict[str, str], str]:
     phase = jobs_dir / "score-mismatch"
-    completed = _run(
-        _harbor_command(package, phase, agent="nop", attempts=1),
+    event_log = Path(environment["XDG_STATE_HOME"]) / "docker-events-1.jsonl"
+    completed = _run_with_docker_event_capture(
+        _harbor_command(
+            package,
+            phase,
+            agent="nop",
+            attempts=1,
+            job_name="score-mismatch-1",
+        ),
         timeout=1200,
         environment=environment,
+        cancel=cancel,
+        event_log=event_log,
     )
     result_path = _trial_results(phase, expected=1, agent="nop")[0]
     valid_record = _run_record(
@@ -914,6 +1105,8 @@ def _run_score_mismatch_phase(
         expected_score_names=expected_score_names,
         expected_hidden_marker_digests=expected_hidden_marker_digests,
         expected_groups=expected_groups,
+        environment=environment,
+        event_log=event_log,
     )
     structured_path = result_path.parent / "verifier/verifier-result.json"
     try:
@@ -942,6 +1135,8 @@ def _run_score_mismatch_phase(
             expected_score_names=expected_score_names,
             expected_hidden_marker_digests=expected_hidden_marker_digests,
             expected_groups=expected_groups,
+            environment=environment,
+            event_log=event_log,
         )
     except ScenarioPackageError as error:
         if (
@@ -960,28 +1155,21 @@ def _run_score_mismatch_phase(
     )
 
 
-def _docker_pull_events(
-    started: int, finished: int, *, environment: dict[str, str]
-) -> str:
-    completed = _run(
-        [
-            "docker",
-            "events",
-            "--since",
-            str(started),
-            "--until",
-            str(max(finished, started + 1)),
-            "--filter",
-            "type=image",
-            "--filter",
-            "event=pull",
-            "--format",
-            "{{json .}}",
-        ],
-        timeout=30,
-        environment=environment,
-    )
-    return completed.stdout.strip()
+def _docker_pull_events(event_logs: list[Path]) -> str:
+    pulls: set[str] = set()
+    for path in event_logs:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as error:
+            raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
+        for line in lines:
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
+            if event.get("Type") == "image" and event.get("Action") == "pull":
+                pulls.add(line)
+    return "\n".join(sorted(pulls))
 
 
 def _load_private_key(path: Path) -> Ed25519PrivateKey:
@@ -1027,6 +1215,562 @@ def _sign_technical(
     return identity
 
 
+_QUALIFICATION_PHASES = (
+    "baseline",
+    "hidden-marker",
+    "reference",
+    "malformed",
+    "unsafe",
+    "score-mismatch",
+)
+_PHASE_RESULT_SCHEMA = "model-benchmark/qualification-phase-result/v1"
+_PHASE_AGGREGATE_SCHEMA = "model-benchmark/qualification-phase-aggregate/v1"
+
+
+def _make_tree_writable(root: Path) -> None:
+    for candidate in sorted(root.rglob("*")):
+        if candidate.is_symlink():
+            continue
+        if candidate.is_dir():
+            candidate.chmod(0o700)
+        elif candidate.is_file():
+            executable = candidate.stat().st_mode & 0o111
+            candidate.chmod(0o700 if executable else 0o600)
+    root.chmod(0o700)
+
+
+def _make_tree_read_only(root: Path) -> None:
+    for candidate in sorted(root.rglob("*"), reverse=True):
+        if candidate.is_symlink():
+            continue
+        if candidate.is_dir():
+            candidate.chmod(0o555)
+        elif candidate.is_file():
+            executable = candidate.stat().st_mode & 0o111
+            candidate.chmod(0o555 if executable else 0o444)
+    root.chmod(0o555)
+
+
+def _worker_identity(private_key: Ed25519PrivateKey) -> str:
+    public_key = private_key.public_key().public_bytes_raw()
+    return "ed25519:sha256:" + hashlib.sha256(public_key).hexdigest()
+
+
+def _inspect_docker_context(context: str) -> dict[str, object]:
+    completed = _run(
+        ["docker", "context", "inspect", context],
+        timeout=30,
+    )
+    try:
+        values = json.loads(completed.stdout)
+        value = values[0]
+        endpoint = value["Endpoints"]["docker"]
+        host = endpoint["Host"]
+        skip_tls_verify = endpoint.get("SkipTLSVerify", False)
+        tls_material = value.get("TLSMaterial", {})
+    except (json.JSONDecodeError, IndexError, KeyError, TypeError) as error:
+        raise ScenarioPackageError(
+            "invalid-infrastructure",
+            "Docker context inspection is incomplete",
+        ) from error
+    if (
+        len(values) != 1
+        or not isinstance(host, str)
+        or not host
+        or not isinstance(skip_tls_verify, bool)
+        or not isinstance(tls_material, dict)
+    ):
+        raise ScenarioPackageError(
+            "invalid-infrastructure",
+            "Docker context inspection is malformed",
+        )
+    return {
+        "host": host,
+        "skip_tls_verify": skip_tls_verify,
+        "tls_material": tls_material,
+    }
+
+
+def _docker_compose_plugin_directory() -> Path:
+    completed = _run(
+        ["docker", "info", "--format", "{{json .ClientInfo.Plugins}}"],
+        timeout=30,
+    )
+    try:
+        plugins = json.loads(completed.stdout)
+        paths = [
+            Path(plugin["Path"]).resolve()
+            for plugin in plugins
+            if isinstance(plugin, dict) and plugin.get("Name") == "compose"
+        ]
+    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        raise ScenarioPackageError(
+            "invalid-infrastructure",
+            "Docker Compose plugin discovery is malformed",
+        ) from error
+    if len(paths) != 1 or not paths[0].is_file():
+        raise ScenarioPackageError(
+            "invalid-infrastructure",
+            "exactly one Docker Compose plugin is required",
+        )
+    return paths[0].parent
+
+
+def _phase_environment(
+    context: dict[str, object],
+    root: Path,
+    *,
+    docker_guard: Path,
+    docker_compose_plugin_directory: Path,
+) -> dict[str, str]:
+    root.mkdir(parents=True)
+    directories = {
+        "HOME": root / "home",
+        "TMPDIR": root / "scratch",
+        "XDG_CACHE_HOME": root / "cache",
+        "XDG_CONFIG_HOME": root / "config",
+        "XDG_DATA_HOME": root / "data",
+        "XDG_STATE_HOME": root / "state",
+        "DOCKER_CONFIG": root / "docker",
+        "HARBOR_HOME": root / "harbor",
+    }
+    for directory in directories.values():
+        directory.mkdir(mode=0o700)
+    environment = {
+        name: str(directory) for name, directory in directories.items()
+    }
+    _immutable_verified_write(
+        directories["DOCKER_CONFIG"] / "config.json",
+        canonical_json_bytes(
+            {
+                "cliPluginsExtraDirs": [
+                    str(docker_compose_plugin_directory.resolve())
+                ]
+            }
+        ),
+    )
+    environment.update(
+        {
+            "DOCKER_HOST": str(context["host"]),
+            "LANG": os.environ.get("LANG", "C.UTF-8"),
+            "LC_ALL": os.environ.get("LC_ALL", "C.UTF-8"),
+            "PATH": str(docker_guard.parent)
+            + os.pathsep
+            + os.environ.get("PATH", ""),
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUNBUFFERED": "1",
+            "PYTHONUTF8": "1",
+        }
+    )
+    tls_material = context["tls_material"]
+    if tls_material:
+        certificate_root = root / "docker-tls"
+        certificate_root.mkdir(mode=0o700)
+        for name, value in sorted(tls_material.items()):
+            if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+                raise ScenarioPackageError(
+                    "invalid-infrastructure",
+                    "Docker context TLS material has an unsafe name",
+                )
+            if isinstance(value, list) and all(
+                isinstance(item, str) for item in value
+            ):
+                content = "\n".join(value)
+            elif isinstance(value, str):
+                content = value
+            else:
+                raise ScenarioPackageError(
+                    "invalid-infrastructure",
+                    "Docker context TLS material is malformed",
+                )
+            certificate = certificate_root / name
+            certificate.write_text(content, encoding="utf-8")
+            certificate.chmod(0o600)
+        environment["DOCKER_CERT_PATH"] = str(certificate_root)
+        environment["DOCKER_TLS"] = "1"
+        if context["skip_tls_verify"] is False:
+            environment["DOCKER_TLS_VERIFY"] = "1"
+    return environment
+
+
+def _write_phase_result(
+    path: Path,
+    *,
+    generation_id: str,
+    phase: str,
+    package_payload_sha256: str,
+    projected_task_sha256: str,
+    projection_sha256: str,
+    worker_identity: str,
+    result: dict[str, object],
+) -> None:
+    value = {
+        "generation_id": generation_id,
+        "package_payload_sha256": package_payload_sha256,
+        "phase": phase,
+        "projected_task_sha256": projected_task_sha256,
+        "projection_sha256": projection_sha256,
+        "result": result,
+        "schema": _PHASE_RESULT_SCHEMA,
+        "worker_identity": worker_identity,
+    }
+    data = canonical_json_bytes(value)
+    try:
+        _immutable_verified_write(path, data)
+        if path.read_bytes() != data:
+            raise OSError("phase result digest read-back failed")
+    except OSError as error:
+        raise ScenarioPackageError(
+            "qualification-publication-failed", str(error)
+        ) from error
+
+
+def _aggregate_phase_results(
+    results_dir: Path,
+    *,
+    generation_id: str,
+    package_payload_sha256: str,
+    projected_task_sha256: str,
+    projection_sha256: str,
+    worker_identity: str,
+) -> tuple[dict[str, object], bytes]:
+    expected_paths = {f"{name}.json" for name in _QUALIFICATION_PHASES}
+    actual_paths = {path.name for path in results_dir.glob("*.json")}
+    if actual_paths != expected_paths:
+        raise ScenarioPackageError(
+            "invalid-qualification-aggregate",
+            "qualification phase results are missing, duplicated, or unexpected",
+        )
+    expected_binding = {
+        "generation_id": generation_id,
+        "package_payload_sha256": package_payload_sha256,
+        "projected_task_sha256": projected_task_sha256,
+        "projection_sha256": projection_sha256,
+        "schema": _PHASE_RESULT_SCHEMA,
+        "worker_identity": worker_identity,
+    }
+    expected_shapes = {
+        "baseline": {"records"},
+        "hidden-marker": {"records"},
+        "reference": {"records"},
+        "malformed": {"handoff"},
+        "unsafe": {"handoff"},
+        "score-mismatch": {"score_mismatch"},
+    }
+    phases: dict[str, dict[str, object]] = {}
+    for path in sorted(results_dir.glob("*.json")):
+        try:
+            data = path.read_bytes()
+            value = json.loads(data)
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise ScenarioPackageError(
+                "invalid-qualification-aggregate", str(error)
+            ) from error
+        if not isinstance(value, dict) or canonical_json_bytes(value) != data:
+            raise ScenarioPackageError(
+                "invalid-qualification-aggregate",
+                "qualification phase result is not canonical",
+            )
+        phase = value.get("phase")
+        result = value.get("result")
+        binding = {
+            key: value.get(key) for key in expected_binding
+        }
+        if binding != expected_binding:
+            raise ScenarioPackageError(
+                "invalid-qualification-aggregate",
+                "qualification phase result has a stale generation, mixed input, package, or worker",
+            )
+        if (
+            phase not in expected_shapes
+            or phase in phases
+            or path.name != f"{phase}.json"
+            or not isinstance(result, dict)
+            or set(result) != expected_shapes[phase]
+        ):
+            raise ScenarioPackageError(
+                "invalid-qualification-aggregate",
+                "qualification phase result identity or payload is invalid",
+            )
+        phases[phase] = result
+    if set(phases) != set(_QUALIFICATION_PHASES):
+        raise ScenarioPackageError(
+            "invalid-qualification-aggregate",
+            "qualification phase result set is incomplete",
+        )
+    aggregate: dict[str, object] = {
+        "binding": expected_binding,
+        "phases": [
+            {"name": name, "result": phases[name]}
+            for name in sorted(phases)
+        ],
+        "schema": _PHASE_AGGREGATE_SCHEMA,
+    }
+    return aggregate, canonical_json_bytes(aggregate)
+
+
+def _validate_aggregate_meaning(
+    aggregate: dict[str, object],
+    declared: dict[str, object],
+) -> dict[str, dict[str, object]]:
+    try:
+        items = aggregate["phases"]
+        if not isinstance(items, list):
+            raise TypeError("aggregate phases are not a list")
+        phase_results = {
+            item["name"]: item["result"]
+            for item in items
+            if isinstance(item, dict)
+        }
+        baseline_records = phase_results["baseline"]["records"]
+        hidden_records = phase_results["hidden-marker"]["records"]
+        reference_records = phase_results["reference"]["records"]
+        malformed_handoff = phase_results["malformed"]["handoff"]
+        unsafe_handoff = phase_results["unsafe"]["handoff"]
+        score_mismatch = phase_results["score-mismatch"]["score_mismatch"]
+        if (
+            not isinstance(baseline_records, list)
+            or len(baseline_records) != 1
+            or not isinstance(hidden_records, list)
+            or len(hidden_records) != 1
+            or not isinstance(reference_records, list)
+            or len(reference_records) != 2
+            or any(
+                not isinstance(record, dict)
+                for record in [
+                    *baseline_records,
+                    *hidden_records,
+                    *reference_records,
+                    malformed_handoff,
+                    unsafe_handoff,
+                    score_mismatch,
+                ]
+            )
+        ):
+            raise TypeError("aggregate phase payloads are incomplete")
+        if (
+            baseline_records[0]["structured_score_vector"]
+            != declared["baseline_score_vector"]
+        ):
+            raise ValueError("measured baseline vector differs from the declared vector")
+        if any(
+            record["structured_score_vector"] != declared["reference_score_vector"]
+            for record in reference_records
+        ):
+            raise ValueError("measured Reference vector differs from the declared vector")
+        environment_ids = {
+            baseline_records[0]["environment_id"],
+            hidden_records[0]["environment_id"],
+            *(record["environment_id"] for record in reference_records),
+            malformed_handoff["environment_id"],
+            unsafe_handoff["environment_id"],
+            score_mismatch["environment_id"],
+        }
+        if (
+            len(environment_ids) != 7
+            or any(not isinstance(value, str) or not value for value in environment_ids)
+        ):
+            raise ValueError(
+                "qualification did not use seven fresh Harbor environments"
+            )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ScenarioPackageError(
+            "invalid-qualification-aggregate", str(error)
+        ) from error
+    return phase_results
+
+
+def _execute_phase_tasks(
+    tasks: dict[str, Callable[[], tuple[dict[str, object], str]]],
+    *,
+    max_parallel: int,
+    cancel: threading.Event,
+) -> dict[str, tuple[dict[str, object], str]]:
+    if max_parallel not in {1, 2, 3}:
+        raise ScenarioPackageError(
+            "invalid-qualification-arguments",
+            "max_parallel must be 1, 2, or 3",
+        )
+
+    def guarded(
+        task: Callable[[], tuple[dict[str, object], str]],
+    ) -> tuple[dict[str, object], str]:
+        if cancel.is_set():
+            raise ScenarioPackageError(
+                "qualification-cancelled",
+                "qualification phase was cancelled before execution",
+            )
+        return task()
+
+    completed: dict[str, tuple[dict[str, object], str]] = {}
+    if max_parallel == 1:
+        try:
+            for name, task in tasks.items():
+                completed[name] = guarded(task)
+        except BaseException:
+            cancel.set()
+            raise
+        return completed
+
+    with ThreadPoolExecutor(
+        max_workers=max_parallel,
+        thread_name_prefix="scenario-qualification",
+    ) as executor:
+        futures: dict[Future[tuple[dict[str, object], str]], str] = {
+            executor.submit(guarded, task): name for name, task in tasks.items()
+        }
+        try:
+            for future in as_completed(futures):
+                completed[futures[future]] = future.result()
+        except BaseException:
+            cancel.set()
+            for future in futures:
+                future.cancel()
+            raise
+    return completed
+
+
+def _trial_names(run_root: Path) -> set[str]:
+    names: set[str] = set()
+    for path in sorted(run_root.rglob("*.json")):
+        if path.name not in {"config.json", "result.json"}:
+            continue
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        trial_name = value.get("trial_name") if isinstance(value, dict) else None
+        if isinstance(trial_name, str) and trial_name:
+            names.add(trial_name)
+    return names
+
+
+def _owned_resources(
+    run_root: Path,
+    *,
+    environment: dict[str, str],
+) -> list[dict[str, str]]:
+    trial_names = _trial_names(run_root)
+    if not trial_names:
+        return []
+    agent_projects = {
+        _compose_project_name(f"{trial_name}__env")
+        for trial_name in trial_names
+    }
+    verifier_prefixes = {
+        _compose_project_name(f"{trial_name}__verifier__")
+        for trial_name in trial_names
+    }
+    commands = {
+        "container": [
+            "docker",
+            "container",
+            "ls",
+            "--all",
+            "--filter",
+            "label=com.docker.compose.project",
+            "--format",
+            '{{.ID}}\t{{.Label "com.docker.compose.project"}}',
+        ],
+        "network": [
+            "docker",
+            "network",
+            "ls",
+            "--filter",
+            "label=com.docker.compose.project",
+            "--format",
+            '{{.ID}}\t{{.Label "com.docker.compose.project"}}',
+        ],
+        "volume": [
+            "docker",
+            "volume",
+            "ls",
+            "--filter",
+            "label=com.docker.compose.project",
+            "--format",
+            '{{.Name}}\t{{.Label "com.docker.compose.project"}}',
+        ],
+    }
+    resources: list[dict[str, str]] = []
+    for kind, command in commands.items():
+        completed = _run(
+            command,
+            timeout=30,
+            environment=environment,
+            inherit_environment=False,
+        )
+        for line in completed.stdout.splitlines():
+            identity, separator, project = line.partition("\t")
+            if not separator or not identity or not project:
+                continue
+            if project in agent_projects or any(
+                project.startswith(prefix) for prefix in verifier_prefixes
+            ):
+                resources.append(
+                    {"id": identity, "kind": kind, "project": project}
+                )
+    order = {"container": 0, "network": 1, "volume": 2}
+    return sorted(
+        resources,
+        key=lambda item: (order[item["kind"]], item["project"], item["id"]),
+    )
+
+
+def _cleanup_qualification_resources(
+    run_root: Path,
+    *,
+    generation_id: str,
+    environment: dict[str, str],
+) -> None:
+    try:
+        resources = _owned_resources(run_root, environment=environment)
+        removals = {
+            "container": ["docker", "container", "rm", "--force"],
+            "network": ["docker", "network", "rm"],
+            "volume": ["docker", "volume", "rm", "--force"],
+        }
+        errors: list[str] = []
+        for resource in resources:
+            try:
+                _run(
+                    [*removals[resource["kind"]], resource["id"]],
+                    timeout=30,
+                    environment=environment,
+                    inherit_environment=False,
+                )
+            except ScenarioPackageError as error:
+                errors.append(str(error))
+        remaining = _owned_resources(run_root, environment=environment)
+    except ScenarioPackageError as error:
+        resources = []
+        remaining = []
+        errors = [str(error)]
+        enumeration_failed = True
+    else:
+        enumeration_failed = False
+    if not enumeration_failed and not remaining:
+        return
+    quarantine = {
+        "errors": errors,
+        "generation_id": generation_id,
+        "resources": remaining or resources,
+        "status": "quarantined",
+    }
+    try:
+        _immutable_verified_write(
+            run_root / "quarantine.json", canonical_json_bytes(quarantine)
+        )
+    except OSError as error:
+        raise ScenarioPackageError(
+            "qualification-cleanup-failed",
+            f"qualification resources could not be quarantined: {error}",
+        ) from error
+    raise ScenarioPackageError(
+        "qualification-cleanup-failed",
+        "qualification resources could not all be removed and were quarantined",
+    )
+
+
 def measure_scenario_package(
     package: Path,
     *,
@@ -1035,8 +1779,14 @@ def measure_scenario_package(
     worker_private_key: Path,
     provisioning_manifest: Path,
     preflight_output: Path,
+    max_parallel: int = 1,
 ) -> dict[str, object]:
-    """Run baseline, hidden-marker, and Reference qualification through Harbor."""
+    """Run isolated Scenario Package qualification phases through Harbor."""
+    if max_parallel not in {1, 2, 3}:
+        raise ScenarioPackageError(
+            "invalid-qualification-arguments",
+            "max_parallel must be 1, 2, or 3",
+        )
     package = package.resolve()
     jobs_dir = jobs_dir.resolve()
     output = output.resolve()
@@ -1049,6 +1799,19 @@ def measure_scenario_package(
                 "invalid-qualification-output",
                 "qualification evidence must remain outside the package payload",
             )
+    if worker_private_key.is_relative_to(package):
+        raise ScenarioPackageError(
+            "invalid-qualification-input",
+            "qualification worker credentials must remain outside the package payload",
+        )
+    if output.exists() or output.is_symlink():
+        raise ScenarioPackageError(
+            "qualification-publication-failed",
+            f"technical qualification path already exists: {output}",
+        )
+
+    private_key = _load_private_key(worker_private_key)
+    worker_identity = _worker_identity(private_key)
     lock, manifest = _locked_package(package)
     receipt = preflight(
         package,
@@ -1067,10 +1830,21 @@ def measure_scenario_package(
         raise ScenarioPackageError(
             "invalid-infrastructure", "preflight Docker guard is unavailable"
         )
-    execution_environment = {
-        "DOCKER_CONTEXT": str(receipt["docker_context"]),
-        "PATH": str(docker_guard.parent) + os.pathsep + os.environ.get("PATH", ""),
-    }
+    guard_sha256 = hashlib.sha256(docker_guard.read_bytes()).hexdigest()
+    docker_guard.chmod(0o555)
+    expected_task_digest = str(receipt["projected_task_sha256"])
+    if str(
+        TypedDigest(
+            DigestKind.HARBOR_TASK,
+            _harbor_probe(execution_package)["content_hash"],
+        )
+    ) != expected_task_digest:
+        raise ScenarioPackageError(
+            "invalid-infrastructure",
+            "preflight package projection changed before qualification",
+        )
+    _make_tree_read_only(execution_package)
+
     declared = manifest["verification"]["qualification"]
     domain_score_by_group = {
         group_id: score["name"]
@@ -1105,138 +1879,214 @@ def measure_scenario_package(
         markers = policy["forbidden_markers"]
         expected_hidden_marker_digests = tuple(
             sorted(
-                hashlib.sha256(marker.encode("utf-8")).hexdigest() for marker in markers
+                hashlib.sha256(marker.encode("utf-8")).hexdigest()
+                for marker in markers
             )
         )
     except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError) as error:
         raise ScenarioPackageError("invalid-infrastructure", str(error)) from error
-    if jobs_dir.exists() and any(jobs_dir.iterdir()):
-        raise ScenarioPackageError(
-            "qualification-publication-failed",
-            f"qualification jobs directory is not empty: {jobs_dir}",
+
+    generation_id = uuid.uuid4().hex
+    run_root = jobs_dir / "runs" / generation_id
+    run_root.mkdir(parents=True)
+    phases_root = run_root / "phases"
+    results_root = run_root / "results"
+    phases_root.mkdir()
+    results_root.mkdir()
+    docker_context = _inspect_docker_context(str(receipt["docker_context"]))
+    docker_compose_plugin_directory = _docker_compose_plugin_directory()
+    phase_environments = {
+        name: _phase_environment(
+            docker_context,
+            run_root / "state" / name,
+            docker_guard=docker_guard,
+            docker_compose_plugin_directory=docker_compose_plugin_directory,
         )
-    jobs_dir.mkdir(parents=True, exist_ok=True)
-    started = int(time.time())
-    expected_task_digest = str(receipt["projected_task_sha256"])
-    baseline_records, baseline_output = _run_phase(
-        execution_package,
-        jobs_dir,
-        name="baseline",
-        agent="nop",
-        attempts=1,
-        expected_outcome="declared-failure",
-        expected_task_digest=expected_task_digest,
-        expected_score_names=expected_score_names,
-        expected_hidden_marker_digests=expected_hidden_marker_digests,
-        expected_groups=expected_groups,
-        expected_capture_reason=None,
-        environment=execution_environment,
-    )
-    hidden_records, hidden_output = _run_phase(
-        execution_package,
-        jobs_dir,
-        name="hidden-marker",
-        agent="nop",
-        attempts=1,
-        expected_outcome="declared-failure",
-        expected_task_digest=expected_task_digest,
-        expected_score_names=expected_score_names,
-        expected_hidden_marker_digests=expected_hidden_marker_digests,
-        expected_groups=expected_groups,
-        expected_capture_reason=None,
-        environment=execution_environment,
-    )
-    reference_records, reference_output = _run_phase(
-        execution_package,
-        jobs_dir,
-        name="reference",
-        agent="oracle",
-        attempts=2,
-        expected_outcome="passed",
-        expected_task_digest=expected_task_digest,
-        expected_score_names=expected_score_names,
-        expected_hidden_marker_digests=expected_hidden_marker_digests,
-        expected_groups=expected_groups,
-        expected_capture_reason=None,
-        environment=execution_environment,
-    )
-    malformed_handoff, malformed_output = _run_rejection_phase(
-        execution_package,
-        jobs_dir,
-        kind="malformed",
-        expected_score_names=expected_score_names,
-        expected_hidden_marker_digests=expected_hidden_marker_digests,
-        expected_groups=expected_groups,
-        environment=execution_environment,
-    )
-    unsafe_handoff, unsafe_output = _run_rejection_phase(
-        execution_package,
-        jobs_dir,
-        kind="unsafe",
-        expected_score_names=expected_score_names,
-        expected_hidden_marker_digests=expected_hidden_marker_digests,
-        expected_groups=expected_groups,
-        environment=execution_environment,
-    )
-    score_mismatch, score_mismatch_output = _run_score_mismatch_phase(
-        execution_package,
-        jobs_dir,
-        expected_task_digest=expected_task_digest,
-        expected_score_names=expected_score_names,
-        expected_hidden_marker_digests=expected_hidden_marker_digests,
-        expected_groups=expected_groups,
-        environment=execution_environment,
-    )
-    finished = int(time.time())
-    pull_events = _docker_pull_events(
-        started, finished, environment=execution_environment
-    )
-    combined_output = (
-        baseline_output
-        + hidden_output
-        + reference_output
-        + malformed_output
-        + unsafe_output
-        + score_mismatch_output
-    ).lower()
-    if (
-        pull_events
-        or "pulling from" in combined_output
-        or "downloading" in combined_output
-    ):
-        raise ScenarioPackageError(
-            "qualification-download-detected",
-            "measured qualification downloaded an image or package",
-        )
-    if (
-        baseline_records[0]["structured_score_vector"]
-        != declared["baseline_score_vector"]
-    ):
-        raise ScenarioPackageError(
-            "invalid-technical-qualification",
-            "measured baseline vector differs from the declared vector",
-        )
-    if any(
-        record["structured_score_vector"] != declared["reference_score_vector"]
-        for record in reference_records
-    ):
-        raise ScenarioPackageError(
-            "invalid-technical-qualification",
-            "measured Reference vector differs from the declared vector",
-        )
-    environment_ids = {
-        baseline_records[0]["environment_id"],
-        hidden_records[0]["environment_id"],
-        *(record["environment_id"] for record in reference_records),
-        malformed_handoff["environment_id"],
-        unsafe_handoff["environment_id"],
-        score_mismatch["environment_id"],
+        for name in _QUALIFICATION_PHASES
     }
-    if len(environment_ids) != 7:
-        raise ScenarioPackageError(
-            "invalid-technical-qualification",
-            "qualification did not use seven fresh Harbor environments",
+    coordinator_environment = _phase_environment(
+        docker_context,
+        run_root / "state" / "coordinator",
+        docker_guard=docker_guard,
+        docker_compose_plugin_directory=docker_compose_plugin_directory,
+    )
+    package_payload_sha256 = str(lock["package"]["payload_sha256"])
+    projection_sha256 = str(receipt["projection_sha256"])
+    cancel = threading.Event()
+    cleanup_attempted = False
+    common_arguments = {
+        "expected_score_names": expected_score_names,
+        "expected_hidden_marker_digests": expected_hidden_marker_digests,
+        "expected_groups": expected_groups,
+    }
+
+    def standard_phase(
+        name: str,
+        *,
+        agent: str,
+        attempts: int,
+        expected_outcome: str,
+    ) -> tuple[dict[str, object], str]:
+        records, command_output = _run_phase(
+            execution_package,
+            phases_root,
+            name=name,
+            agent=agent,
+            attempts=attempts,
+            expected_outcome=expected_outcome,
+            expected_task_digest=expected_task_digest,
+            expected_capture_reason=None,
+            environment=phase_environments[name],
+            cancel=cancel,
+            **common_arguments,
         )
+        return {"records": records}, command_output
+
+    def rejection_phase(kind: str) -> tuple[dict[str, object], str]:
+        handoff, command_output = _run_rejection_phase(
+            execution_package,
+            phases_root,
+            kind=kind,
+            environment=phase_environments[kind],
+            scratch_dir=Path(phase_environments[kind]["TMPDIR"]),
+            cancel=cancel,
+            **common_arguments,
+        )
+        return {"handoff": handoff}, command_output
+
+    def score_mismatch_phase() -> tuple[dict[str, object], str]:
+        score_mismatch, command_output = _run_score_mismatch_phase(
+            execution_package,
+            phases_root,
+            expected_task_digest=expected_task_digest,
+            environment=phase_environments["score-mismatch"],
+            cancel=cancel,
+            **common_arguments,
+        )
+        return {"score_mismatch": score_mismatch}, command_output
+
+    phase_calls: dict[str, Callable[[], tuple[dict[str, object], str]]] = {
+        "baseline": lambda: standard_phase(
+            "baseline",
+            agent="nop",
+            attempts=1,
+            expected_outcome="declared-failure",
+        ),
+        "hidden-marker": lambda: standard_phase(
+            "hidden-marker",
+            agent="nop",
+            attempts=1,
+            expected_outcome="declared-failure",
+        ),
+        "reference": lambda: standard_phase(
+            "reference",
+            agent="oracle",
+            attempts=2,
+            expected_outcome="passed",
+        ),
+        "malformed": lambda: rejection_phase("malformed"),
+        "unsafe": lambda: rejection_phase("unsafe"),
+        "score-mismatch": score_mismatch_phase,
+    }
+
+    def persist_phase(
+        name: str,
+        call: Callable[[], tuple[dict[str, object], str]],
+    ) -> tuple[dict[str, object], str]:
+        result, command_output = call()
+        _write_phase_result(
+            results_root / f"{name}.json",
+            generation_id=generation_id,
+            phase=name,
+            package_payload_sha256=package_payload_sha256,
+            projected_task_sha256=expected_task_digest,
+            projection_sha256=projection_sha256,
+            worker_identity=worker_identity,
+            result=result,
+        )
+        return result, command_output
+
+    tasks = {
+        name: (lambda name=name, call=call: persist_phase(name, call))
+        for name, call in phase_calls.items()
+    }
+    try:
+        completed = _execute_phase_tasks(
+            tasks,
+            max_parallel=max_parallel,
+            cancel=cancel,
+        )
+        pull_events = _docker_pull_events(
+            sorted(run_root.rglob("docker-events-*.jsonl"))
+        )
+        combined_output = "".join(
+            completed[name][1] for name in _QUALIFICATION_PHASES
+        ).lower()
+        if (
+            pull_events
+            or "pulling from" in combined_output
+            or "downloading" in combined_output
+        ):
+            raise ScenarioPackageError(
+                "qualification-download-detected",
+                "measured qualification downloaded an image or package",
+            )
+        if str(
+            TypedDigest(
+                DigestKind.HARBOR_TASK,
+                _harbor_probe(execution_package)["content_hash"],
+            )
+        ) != expected_task_digest:
+            raise ScenarioPackageError(
+                "invalid-infrastructure",
+                "immutable qualification package changed during execution",
+            )
+        if hashlib.sha256(docker_guard.read_bytes()).hexdigest() != guard_sha256:
+            raise ScenarioPackageError(
+                "invalid-infrastructure",
+                "preflight Docker guard changed during qualification",
+            )
+        aggregate, aggregate_bytes = _aggregate_phase_results(
+            results_root,
+            generation_id=generation_id,
+            package_payload_sha256=package_payload_sha256,
+            projected_task_sha256=expected_task_digest,
+            projection_sha256=projection_sha256,
+            worker_identity=worker_identity,
+        )
+        phase_results = _validate_aggregate_meaning(aggregate, declared)
+        baseline_records = phase_results["baseline"]["records"]
+        hidden_records = phase_results["hidden-marker"]["records"]
+        reference_records = phase_results["reference"]["records"]
+        malformed_handoff = phase_results["malformed"]["handoff"]
+        unsafe_handoff = phase_results["unsafe"]["handoff"]
+        score_mismatch = phase_results["score-mismatch"]["score_mismatch"]
+        cleanup_attempted = True
+        _cleanup_qualification_resources(
+            run_root,
+            generation_id=generation_id,
+            environment=coordinator_environment,
+        )
+        aggregate_path = run_root / "aggregate.json"
+        _immutable_verified_write(aggregate_path, aggregate_bytes)
+        if aggregate_path.read_bytes() != aggregate_bytes:
+            raise ScenarioPackageError(
+                "qualification-publication-failed",
+                "qualification aggregate digest read-back failed",
+            )
+    except BaseException as error:
+        cancel.set()
+        if not cleanup_attempted:
+            try:
+                _cleanup_qualification_resources(
+                    run_root,
+                    generation_id=generation_id,
+                    environment=coordinator_environment,
+                )
+            except ScenarioPackageError as cleanup_error:
+                raise cleanup_error from error
+        raise
+
     package_record = lock["package"]
     resolved = lock["resolved_inputs"]
     instruction = next(
@@ -1282,7 +2132,12 @@ def measure_scenario_package(
             "seed_inputs": resolved["seed_inputs"],
         },
     }
-    identity = _sign_technical(technical, _load_private_key(worker_private_key))
+    identity = _sign_technical(technical, private_key)
+    if identity != worker_identity:
+        raise ScenarioPackageError(
+            "invalid-technical-qualification",
+            "qualification worker identity changed during aggregation",
+        )
     registry.validate_value(
         technical,
         name=_TECHNICAL_SCHEMA_NAME,
@@ -1298,7 +2153,9 @@ def measure_scenario_package(
         ) from error
     digest = str(TypedDigest.from_bytes(DigestKind.PACKAGE_QUALIFICATION, data))
     return {
+        "generation_id": generation_id,
         "jobs_dir": str(jobs_dir),
+        "max_parallel": max_parallel,
         "message": f"measured technical qualification: {lock['scenario_id']}",
         "path": str(output),
         "scenario_id": lock["scenario_id"],

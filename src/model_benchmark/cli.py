@@ -50,6 +50,7 @@ def _configure_scenario_parser(parser: argparse.ArgumentParser) -> None:
     qualify.add_argument("--preflight-output", type=Path)
     qualify.add_argument("--measure-output", type=Path)
     qualify.add_argument("--worker-private-key", type=Path)
+    qualify.add_argument("--max-parallel", type=int, choices=(1, 2, 3))
     qualify.add_argument("--technical-evidence", type=Path)
     qualify.add_argument("--trusted-worker-identity")
     qualify.add_argument("--review", type=Path)
@@ -148,6 +149,11 @@ def _run_scenario(arguments: argparse.Namespace) -> dict[str, object]:
                 output=arguments.preflight_output,
                 qualification_record=arguments.qualification_record,
             )
+        if arguments.max_parallel is not None and arguments.measure_output is None:
+            raise ScenarioPackageError(
+                "invalid-qualification-arguments",
+                "--max-parallel is valid only with --measure-output",
+            )
         if arguments.measure_output is not None:
             if any(
                 value is None
@@ -173,6 +179,7 @@ def _run_scenario(arguments: argparse.Namespace) -> dict[str, object]:
                 worker_private_key=arguments.worker_private_key,
                 provisioning_manifest=arguments.provisioning_manifest,
                 preflight_output=arguments.preflight_output,
+                max_parallel=arguments.max_parallel or 1,
             )
         if any(
             value is None
