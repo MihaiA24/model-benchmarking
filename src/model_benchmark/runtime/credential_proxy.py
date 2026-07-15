@@ -387,7 +387,12 @@ class CredentialProxy:
                 if any(field in request_value for field in _ROUTE_CONTROL_FIELDS):
                     self._reject_after_read(started_ns, "route-control-forbidden", 400)
                     return
-                if request_value.get("model") != state.config.model:
+                model_field = (
+                    "name"
+                    if urlsplit(self.path).path.endswith("/api/show")
+                    else "model"
+                )
+                if request_value.get(model_field) != state.config.model:
                     self._reject_after_read(started_ns, "model-mismatch", 400)
                     return
 
