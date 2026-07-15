@@ -1,9 +1,8 @@
 """PROTOTYPE — discard after the Functional V1 envelope decision.
 
-Question: do the proposed capacity-preflight calculation, one-attempt cell states,
-global fail-closed transition, and candidate limit values form a small enough local
-scheduler contract for Functional V1 on the current Apple Silicon workstation and
-a representative native Linux/amd64 worker?
+Question: does one fixed three-slot native Linux/amd64 envelope, with only token
+and cost thresholds configurable inside strict caps, give Functional V1 enough
+capacity admission and failure behavior without becoming a general scheduler?
 
 This module is pure. The terminal shell in ``tui.py`` owns all I/O.
 """
@@ -32,11 +31,16 @@ VALID_DISPOSITIONS = {
     "valid_limit_outcome",
 }
 
+MINIMUM_CPU_CORES = 8
+MINIMUM_MEMORY_MIB = 24_576
+MINIMUM_FREE_DISK_MIB = 51_200
 GLOBAL_CPU_RESERVE = 2
 GLOBAL_MEMORY_RESERVE_MIB = 2_048
 GLOBAL_DISK_RESERVE_MIB = 10_240
 PER_SLOT_MEMORY_OVERHEAD_MIB = 1_024
 PER_SLOT_DISK_OVERHEAD_MIB = 1_024
+TOKEN_THRESHOLD_CAP = 500_000
+COST_THRESHOLD_CAP_USD = Decimal("20.00")
 
 
 @dataclass(frozen=True)
@@ -51,26 +55,15 @@ class Envelope:
     stop_after_cost_usd_per_trial: Decimal
 
 
-CANDIDATE_DEFAULTS = Envelope(
-    max_parallel=2,
+V1_TEMPLATE = Envelope(
+    max_parallel=3,
     cpu_cores_per_trial=2,
     memory_mib_per_trial=4_096,
     writable_disk_mib_per_trial=8_192,
-    wall_time_seconds_per_trial=2_700,
+    wall_time_seconds_per_trial=1_800,
     requests_per_trial=64,
-    provider_tokens_per_trial=500_000,
+    provider_tokens_per_trial=100_000,
     stop_after_cost_usd_per_trial=Decimal("5.00"),
-)
-
-CANDIDATE_HARD_CAPS = Envelope(
-    max_parallel=2,
-    cpu_cores_per_trial=4,
-    memory_mib_per_trial=8_192,
-    writable_disk_mib_per_trial=16_384,
-    wall_time_seconds_per_trial=7_200,
-    requests_per_trial=128,
-    provider_tokens_per_trial=1_000_000,
-    stop_after_cost_usd_per_trial=Decimal("20.00"),
 )
 
 
@@ -116,7 +109,7 @@ class Cell:
 @dataclass(frozen=True)
 class PrototypeState:
     host: HostProfile
-    envelope: Envelope = CANDIDATE_DEFAULTS
+    envelope: Envelope = V1_TEMPLATE
     cells: tuple[Cell, ...] = tuple(Cell(key) for key in CELL_KEYS)
     scheduler: Literal[
         "idle",
@@ -157,51 +150,62 @@ def capacity_for(host: HostProfile, envelope: Envelope) -> Capacity:
     )
 
 
-def _positive_integer_fields(envelope: Envelope) -> tuple[tuple[str, int], ...]:
-    return (
-        ("max_parallel", envelope.max_parallel),
-        ("cpu_cores_per_trial", envelope.cpu_cores_per_trial),
-        ("memory_mib_per_trial", envelope.memory_mib_per_trial),
-        ("writable_disk_mib_per_trial", envelope.writable_disk_mib_per_trial),
-        ("wall_time_seconds_per_trial", envelope.wall_time_seconds_per_trial),
-        ("requests_per_trial", envelope.requests_per_trial),
-        ("provider_tokens_per_trial", envelope.provider_tokens_per_trial),
-    )
-
-
 def preflight(host: HostProfile, envelope: Envelope) -> PreflightReport:
     failures: list[str] = []
     warnings: list[str] = []
-    for name, value in _positive_integer_fields(envelope):
-        if value < 1:
-            failures.append(f"{name} must be positive")
-    if envelope.stop_after_cost_usd_per_trial <= 0:
-        failures.append("stop_after_cost_usd_per_trial must be positive")
 
-    for name, value in _positive_integer_fields(envelope):
-        cap = getattr(CANDIDATE_HARD_CAPS, name)
-        if value > cap:
-            failures.append(f"{name}={value} exceeds candidate hard cap {cap}")
-    if (
-        envelope.stop_after_cost_usd_per_trial
-        > CANDIDATE_HARD_CAPS.stop_after_cost_usd_per_trial
-    ):
+    fixed_fields = (
+        "max_parallel",
+        "cpu_cores_per_trial",
+        "memory_mib_per_trial",
+        "writable_disk_mib_per_trial",
+        "wall_time_seconds_per_trial",
+        "requests_per_trial",
+    )
+    for name in fixed_fields:
+        actual = getattr(envelope, name)
+        expected = getattr(V1_TEMPLATE, name)
+        if actual != expected:
+            failures.append(f"{name} must equal fixed V1 value {expected}, got {actual}")
+
+    if not 1 <= envelope.provider_tokens_per_trial <= TOKEN_THRESHOLD_CAP:
         failures.append(
-            "stop_after_cost_usd_per_trial exceeds candidate hard cap "
-            f"{CANDIDATE_HARD_CAPS.stop_after_cost_usd_per_trial}"
+            "provider_tokens_per_trial must be between 1 and "
+            f"{TOKEN_THRESHOLD_CAP}"
+        )
+    if not Decimal("0.01") <= envelope.stop_after_cost_usd_per_trial <= COST_THRESHOLD_CAP_USD:
+        failures.append(
+            "stop_after_cost_usd_per_trial must be between $0.01 and "
+            f"${COST_THRESHOLD_CAP_USD}"
         )
 
-    if host.container_platform not in {"linux/arm64", "linux/amd64"}:
-        failures.append(f"unsupported container platform {host.container_platform}")
+    if host.container_platform != "linux/amd64":
+        failures.append(
+            f"Functional V1 requires linux/amd64, got {host.container_platform}"
+        )
+    if host.cpu_cores < MINIMUM_CPU_CORES:
+        failures.append(
+            f"worker requires at least {MINIMUM_CPU_CORES} CPU, got {host.cpu_cores}"
+        )
+    if host.memory_mib < MINIMUM_MEMORY_MIB:
+        failures.append(
+            f"worker requires at least {MINIMUM_MEMORY_MIB} MiB RAM, got {host.memory_mib}"
+        )
+    if host.writable_disk_free_mib < MINIMUM_FREE_DISK_MIB:
+        failures.append(
+            "worker requires at least "
+            f"{MINIMUM_FREE_DISK_MIB} MiB free Docker storage, "
+            f"got {host.writable_disk_free_mib}"
+        )
     if not host.hard_storage_quota:
-        failures.append("writable-disk hard enforcement unavailable")
+        failures.append("Docker overlay2/XFS pquota enforcement probe failed")
     if not host.qualified_egress_backend:
-        failures.append("guarded-public-web enforcement backend is not qualified")
+        failures.append("native Linux guarded-public-web enforcement probe failed")
 
     capacity = capacity_for(host, envelope)
-    if envelope.max_parallel > capacity.safe_parallel:
+    if capacity.safe_parallel < V1_TEMPLATE.max_parallel:
         failures.append(
-            f"max_parallel={envelope.max_parallel} exceeds safe capacity "
+            f"fixed max_parallel={V1_TEMPLATE.max_parallel} exceeds safe capacity "
             f"{capacity.safe_parallel} (cpu={capacity.by_cpu}, "
             f"memory={capacity.by_memory}, disk={capacity.by_disk})"
         )
@@ -285,30 +289,39 @@ def _global_abort(
     return _event(state, f"global fail-closed: {disposition} ({reason})")
 
 
+def _cycle_tokens(value: int) -> int:
+    values = (100_000, 250_000, 500_000)
+    return values[(values.index(value) + 1) % len(values)] if value in values else values[0]
+
+
+def _cycle_cost(value: Decimal) -> Decimal:
+    values = (Decimal("5.00"), Decimal("10.00"), Decimal("20.00"))
+    return values[(values.index(value) + 1) % len(values)] if value in values else values[0]
+
+
 def reduce(state: PrototypeState, action: Action) -> PrototypeState:
     if action.kind == "reset":
         return PrototypeState(host=state.host)
     if action.kind == "select_host" and action.host is not None:
         return PrototypeState(host=action.host)
-    if action.kind == "defaults":
+    if action.kind == "template":
         return _event(
-            replace(state, envelope=CANDIDATE_DEFAULTS, preflight=None),
-            "loaded candidate defaults",
+            replace(state, envelope=V1_TEMPLATE, preflight=None),
+            "loaded V1 template envelope",
         )
-    if action.kind == "hard_caps":
-        return _event(
-            replace(state, envelope=CANDIDATE_HARD_CAPS, preflight=None),
-            "loaded candidate per-field hard caps",
-        )
-    if action.kind in {"parallel_down", "parallel_up"}:
-        delta = -1 if action.kind == "parallel_down" else 1
-        envelope = replace(
-            state.envelope,
-            max_parallel=max(1, state.envelope.max_parallel + delta),
-        )
+    if action.kind == "tokens":
+        value = _cycle_tokens(state.envelope.provider_tokens_per_trial)
+        envelope = replace(state.envelope, provider_tokens_per_trial=value)
         return _event(
             replace(state, envelope=envelope, preflight=None),
-            f"set max_parallel={envelope.max_parallel}",
+            f"set provider_tokens_per_trial={value}",
+        )
+    if action.kind == "cost":
+        value = _cycle_cost(state.envelope.stop_after_cost_usd_per_trial)
+        envelope = replace(state.envelope, stop_after_cost_usd_per_trial=value)
+        return _event(
+            replace(state, envelope=envelope, preflight=None),
+            f"set stop_after_cost_usd_per_trial=${value}",
         )
     if action.kind == "preflight":
         report = preflight(state.host, state.envelope)

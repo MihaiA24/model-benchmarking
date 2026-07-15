@@ -2,7 +2,8 @@
 
     uv run python prototypes/functional-v1-safety-envelope/tui.py
 
-Drive the candidate capacity and one-attempt state model by hand. Nothing persists.
+Drive the fixed native Linux envelope and one-attempt state model by hand.
+Nothing persists.
 """
 
 from __future__ import annotations
@@ -15,11 +16,15 @@ from pathlib import Path
 
 from model import (
     Action,
-    CANDIDATE_DEFAULTS,
-    CANDIDATE_HARD_CAPS,
+    COST_THRESHOLD_CAP_USD,
     Envelope,
     HostProfile,
+    MINIMUM_CPU_CORES,
+    MINIMUM_FREE_DISK_MIB,
+    MINIMUM_MEMORY_MIB,
     PrototypeState,
+    TOKEN_THRESHOLD_CAP,
+    V1_TEMPLATE,
     capacity_for,
     reduce,
 )
@@ -74,10 +79,10 @@ def _probe_storage_quota() -> tuple[bool, str]:
         timeout=20,
     )
     if completed.returncode == 0:
-        return True, "Docker writable-layer quota probe passed"
+        return True, "Docker overlay2/XFS pquota probe passed"
     detail = (completed.stderr or completed.stdout).strip().splitlines()
     reason = detail[0] if detail else f"Docker exited {completed.returncode}"
-    return False, f"Docker writable-layer quota probe failed: {reason}"
+    return False, f"Docker overlay2/XFS pquota probe failed: {reason}"
 
 
 def observed_host() -> HostProfile:
@@ -88,7 +93,7 @@ def observed_host() -> HostProfile:
         disk_free_mib = shutil.disk_usage(Path.cwd()).free // (1024 * 1024)
         return HostProfile(
             profile_id="observed-local",
-            label="Observed current Docker host",
+            label="Observed current non-target Docker host",
             container_platform=f"linux/{platform_arch}",
             cpu_cores=cpus,
             memory_mib=memory_bytes // (1024 * 1024),
@@ -99,13 +104,13 @@ def observed_host() -> HostProfile:
             observed=True,
             notes=(
                 storage_note,
-                "current engine has no qualified guarded-public-web backend yet",
+                "Functional V1 target is now native Linux/amd64 only",
             ),
         )
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         return HostProfile(
             profile_id="observed-local-unavailable",
-            label="Observed current Docker host",
+            label="Observed current non-target Docker host",
             container_platform="unavailable",
             cpu_cores=0,
             memory_mib=0,
@@ -120,19 +125,19 @@ def observed_host() -> HostProfile:
 
 def representative_linux() -> HostProfile:
     return HostProfile(
-        profile_id="representative-linux-amd64",
-        label="Representative qualified Linux/amd64 floor",
+        profile_id="minimum-qualified-linux-amd64",
+        label="Minimum qualified native Linux/amd64 worker",
         container_platform="linux/amd64",
-        cpu_cores=8,
-        memory_mib=16_384,
-        writable_disk_free_mib=102_400,
-        engine="native Docker / cgroup v2 / quota-capable storage",
+        cpu_cores=MINIMUM_CPU_CORES,
+        memory_mib=MINIMUM_MEMORY_MIB,
+        writable_disk_free_mib=MINIMUM_FREE_DISK_MIB,
+        engine="native Docker / cgroup v2 / overlay2 on XFS pquota",
         hard_storage_quota=True,
         qualified_egress_backend=True,
         observed=False,
         notes=(
-            "modeled contract floor, not a measurement from this workstation",
-            "requires native quota and guarded-egress qualification before use",
+            "modeled contract floor, not measured on this workstation",
+            "preflight must prove quota and guarded-egress enforcement",
         ),
     )
 
@@ -170,7 +175,10 @@ def render(state: PrototypeState) -> None:
         print("\x1b[2J\x1b[H", end="")
     capacity = capacity_for(state.host, state.envelope)
     print(f"{BOLD}Functional V1 safety-envelope prototype{RESET}")
-    print(f"{DIM}Throwaway: capacity admission, fail-closed scheduling, and resume semantics{RESET}\n")
+    print(
+        f"{DIM}Throwaway: fixed native Linux admission, fail-closed scheduling, "
+        f"and resume semantics{RESET}\n"
+    )
     print(f"{BOLD}Host{RESET}")
     print(f"  {state.host.label} ({'observed' if state.host.observed else 'modeled'})")
     print(f"  platform={state.host.container_platform} engine={state.host.engine}")
@@ -185,17 +193,21 @@ def render(state: PrototypeState) -> None:
     for note in state.host.notes:
         print(f"  {DIM}{note}{RESET}")
 
-    print(f"\n{BOLD}Selected envelope{RESET}")
+    print(f"\n{BOLD}V1 envelope{RESET}")
     for field in fields(state.envelope):
         print(f"  {field.name}: {_value(getattr(state.envelope, field.name))}")
+    print(
+        f"  configurable caps: tokens={TOKEN_THRESHOLD_CAP:,} "
+        f"cost=${COST_THRESHOLD_CAP_USD}"
+    )
     print(
         "  capacity: "
         f"cpu={capacity.by_cpu} memory={capacity.by_memory} disk={capacity.by_disk} "
         f"=> safe_parallel={capacity.safe_parallel}"
     )
     print(
-        "  reserves: cpu=2 memory=2,048 MiB disk=10,240 MiB; "
-        "per-slot overhead: memory=1,024 MiB disk=1,024 MiB"
+        "  minimum worker: 8 CPU / 24,576 MiB / 51,200 MiB free; "
+        "fixed max_parallel=3"
     )
 
     print(f"\n{BOLD}Preflight and run{RESET}")
@@ -219,20 +231,19 @@ def render(state: PrototypeState) -> None:
         print(f"  {event}")
 
     print(f"\n{BOLD}Actions{RESET}")
-    print("  [1] observed host  [2] Linux floor  [d] defaults  [h] field hard caps")
-    print("  [[] parallel -     []] parallel +  [p] preflight [s] schedule")
-    print("  [c] complete        [f] harness     [l] limit     [i] infrastructure")
-    print("  [x] integrity       [o] operator    [k] crash     [r] resume")
-    print("  [n] reset           [v] values      [q] quit")
+    print("  [1] observed Mac  [2] Linux floor  [d] V1 template")
+    print("  [t] cycle tokens  [$] cycle cost   [p] preflight  [s] schedule")
+    print("  [c] complete      [f] harness      [l] limit      [i] infrastructure")
+    print("  [x] integrity     [o] operator     [k] crash      [r] resume")
+    print("  [n] reset         [v] values       [q] quit")
 
 
 def show_values() -> None:
     print()
-    for line in _envelope_lines("Candidate defaults", CANDIDATE_DEFAULTS):
+    for line in _envelope_lines("V1 manifest template", V1_TEMPLATE):
         print(line)
-    print()
-    for line in _envelope_lines("Candidate per-field hard caps", CANDIDATE_HARD_CAPS):
-        print(line)
+    print(f"\n  token threshold cap: {TOKEN_THRESHOLD_CAP:,}")
+    print(f"  cost threshold cap: ${COST_THRESHOLD_CAP_USD}")
     input("\nEnter to return: ")
 
 
@@ -243,10 +254,9 @@ def main() -> int:
     actions = {
         "1": lambda: Action("select_host", host=current),
         "2": lambda: Action("select_host", host=linux),
-        "d": lambda: Action("defaults"),
-        "h": lambda: Action("hard_caps"),
-        "[": lambda: Action("parallel_down"),
-        "]": lambda: Action("parallel_up"),
+        "d": lambda: Action("template"),
+        "t": lambda: Action("tokens"),
+        "$": lambda: Action("cost"),
         "p": lambda: Action("preflight"),
         "s": lambda: Action("schedule"),
         "c": lambda: Action("complete"),
