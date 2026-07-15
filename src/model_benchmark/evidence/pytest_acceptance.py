@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from model_benchmark.declarations.canonical import canonical_json_bytes
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
 from model_benchmark.declarations.schemas import SchemaRegistry
 from model_benchmark.evidence.attestation import (
@@ -39,7 +40,7 @@ _SELECTION_OPTIONS = (
     "stepwise",
     "collectonly",
 )
-_MANDATORY_DOCKER_ISSUES = {29}
+_MANDATORY_DOCKER_ISSUES = {29, 55}
 
 
 @dataclass
@@ -136,12 +137,16 @@ def _acceptance_state(config: pytest.Config) -> _AcceptanceState | None:
     project_root = Path(config.rootpath).resolve()
     acceptance_root = (project_root / "tests/acceptance").resolve()
     targets = [Path(argument.split("::", 1)[0]).resolve() for argument in config.args]
-    acceptance_targets = [path for path in targets if path.is_relative_to(acceptance_root)]
+    acceptance_targets = [
+        path for path in targets if path.is_relative_to(acceptance_root)
+    ]
     if not acceptance_targets:
         return None
     states = _recognized_issue_states(project_root, list(config.args))
     if len(states) != 1 or not states[0].issue_path.is_dir():
-        raise pytest.UsageError("acceptance proof path must be tests/acceptance/issue_N")
+        raise pytest.UsageError(
+            "acceptance proof path must be tests/acceptance/issue_N"
+        )
     return states[0]
 
 
@@ -158,7 +163,9 @@ def _remove_authoritative_outputs(state: _AcceptanceState) -> None:
 def _require_docker() -> bytes:
     docker = shutil.which("docker")
     if docker is None:
-        raise pytest.UsageError("--require-docker requested but docker is not installed")
+        raise pytest.UsageError(
+            "--require-docker requested but docker is not installed"
+        )
     try:
         completed = subprocess.run(
             [docker, "info", "--format", "{{json .ServerVersion}}"],
@@ -170,7 +177,9 @@ def _require_docker() -> bytes:
     except (OSError, subprocess.TimeoutExpired) as error:
         raise pytest.UsageError(f"Docker daemon probe failed: {error}") from error
     if completed.returncode != 0 or not completed.stdout.strip():
-        detail = completed.stderr.strip() or "Docker daemon did not return a server version"
+        detail = (
+            completed.stderr.strip() or "Docker daemon did not return a server version"
+        )
         raise pytest.UsageError(detail)
     return completed.stdout.strip().encode("utf-8")
 
@@ -248,9 +257,7 @@ def pytest_configure(config: pytest.Config) -> None:
                     or not resolved.is_relative_to(state.project_root)
                     or not resolved.exists()
                 ):
-                    raise pytest.UsageError(
-                        f"invalid acceptance input path: {value}"
-                    )
+                    raise pytest.UsageError(f"invalid acceptance input path: {value}")
                 state.input_paths.append(resolved)
             state.launcher_command, launcher_inputs = _launcher_provenance(state)
             state.extra_inputs.extend(launcher_inputs)
@@ -258,15 +265,21 @@ def pytest_configure(config: pytest.Config) -> None:
         if config.getoption("require_docker") or (
             state is not None and state.issue in _MANDATORY_DOCKER_ISSUES
         ):
-            docker_identity = TypedDigest.from_bytes(DigestKind.ARTIFACT, _require_docker())
+            docker_identity = TypedDigest.from_bytes(
+                DigestKind.ARTIFACT, _require_docker()
+            )
             if state is not None:
                 state.extra_inputs.append(
-                    VerificationInput(name="docker-server-version", digest=docker_identity)
+                    VerificationInput(
+                        name="docker-server-version", digest=docker_identity
+                    )
                 )
 
         if config.getoption("run_live"):
             if state is None:
-                raise pytest.UsageError("--run-live requires an exact issue acceptance path")
+                raise pytest.UsageError(
+                    "--run-live requires an exact issue acceptance path"
+                )
             attestation_value = os.environ.get("MODEL_BENCHMARK_LIVE_ATTESTATION")
             if not attestation_value:
                 raise pytest.UsageError(
@@ -287,7 +300,9 @@ def pytest_configure(config: pytest.Config) -> None:
             state.extra_inputs.append(
                 VerificationInput(
                     name="live-prerequisite-attestation",
-                    digest=TypedDigest.from_bytes(DigestKind.ARTIFACT, attestation_bytes),
+                    digest=TypedDigest.from_bytes(
+                        DigestKind.ARTIFACT, attestation_bytes
+                    ),
                 )
             )
     except BaseException:
@@ -319,6 +334,29 @@ def pytest_deselected(items: list[pytest.Item]) -> None:
     state = _state(items[0].config)
     if state is not None:
         state.invalid_mandatory_result = True
+
+
+@pytest.fixture
+def acceptance_observation(
+    request: pytest.FixtureRequest,
+) -> Any:
+    state = _state(request.config)
+    if state is None:
+        raise RuntimeError("acceptance observations require an exact issue gate")
+
+    def record(name: str, value: object) -> None:
+        if not name or any(item.name == name for item in state.extra_inputs):
+            raise RuntimeError(f"invalid or duplicate acceptance observation: {name!r}")
+        state.extra_inputs.append(
+            VerificationInput(
+                name=name,
+                digest=TypedDigest.from_bytes(
+                    DigestKind.ARTIFACT, canonical_json_bytes(value)
+                ),
+            )
+        )
+
+    return record
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
@@ -364,7 +402,9 @@ def _tree_digest(paths: list[Path], project_root: Path) -> TypedDigest:
                 if "__pycache__" in path.parts:
                     continue
                 if path.is_symlink():
-                    raise RuntimeError(f"acceptance input cannot contain symlinks: {path}")
+                    raise RuntimeError(
+                        f"acceptance input cannot contain symlinks: {path}"
+                    )
                 if path.is_file():
                     files.append(path)
     for path in sorted(set(files)):
@@ -466,4 +506,6 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
         reporter = session.config.pluginmanager.get_plugin("terminalreporter")
         if reporter is not None:
-            reporter.write_line(f"acceptance artifact publication failed: {error}", red=True)
+            reporter.write_line(
+                f"acceptance artifact publication failed: {error}", red=True
+            )

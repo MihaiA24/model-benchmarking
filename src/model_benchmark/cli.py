@@ -32,9 +32,7 @@ def _configure_scenario_parser(parser: argparse.ArgumentParser) -> None:
             "python-data-engineering",
         ),
     )
-    scaffold.add_argument(
-        "--visibility", required=True, choices=("public", "private")
-    )
+    scaffold.add_argument("--visibility", required=True, choices=("public", "private"))
     check = subcommands.add_parser("check", help="validate a Scenario Package")
     check.add_argument("path", type=Path)
     qualify = subcommands.add_parser(
@@ -42,7 +40,14 @@ def _configure_scenario_parser(parser: argparse.ArgumentParser) -> None:
     )
     qualify.add_argument("path", type=Path)
     qualify.add_argument("--provision", action="store_true")
+    qualify.add_argument(
+        "--preflight", choices=("integration", "qualification", "measured")
+    )
     qualify.add_argument("--jobs-dir", type=Path)
+    qualify.add_argument("--target-config", type=Path)
+    qualify.add_argument("--qualification-record", type=Path)
+    qualify.add_argument("--provisioning-manifest", type=Path)
+    qualify.add_argument("--preflight-output", type=Path)
     qualify.add_argument("--measure-output", type=Path)
     qualify.add_argument("--worker-private-key", type=Path)
     qualify.add_argument("--technical-evidence", type=Path)
@@ -83,10 +88,13 @@ def _run_scenario(arguments: argparse.Namespace) -> dict[str, object]:
             "trusted_reviewer_identity",
             "output",
         )
-        seal_requested = any(getattr(arguments, field) is not None for field in seal_fields)
+        seal_requested = any(
+            getattr(arguments, field) is not None for field in seal_fields
+        )
         selected_phases = sum(
             (
                 arguments.provision,
+                arguments.preflight is not None,
                 arguments.measure_output is not None,
                 seal_requested,
             )
@@ -94,24 +102,65 @@ def _run_scenario(arguments: argparse.Namespace) -> dict[str, object]:
         if selected_phases != 1:
             raise ScenarioPackageError(
                 "invalid-qualification-arguments",
-                "scenario qualify requires exactly one of --provision, --measure-output, or sealing arguments",
+                "scenario qualify requires exactly one of --provision, --preflight, --measure-output, or sealing arguments",
             )
         if arguments.provision:
-            if arguments.jobs_dir is None:
+            if any(
+                value is None
+                for value in (
+                    arguments.jobs_dir,
+                    arguments.target_config,
+                    arguments.provisioning_manifest,
+                )
+            ):
                 raise ScenarioPackageError(
                     "invalid-qualification-arguments",
-                    "--provision requires --jobs-dir",
+                    "--provision requires --jobs-dir, --target-config, and --provisioning-manifest",
                 )
             from model_benchmark.runtime.scenario_qualification import (
                 provision_scenario_package,
             )
 
-            return provision_scenario_package(package.root, jobs_dir=arguments.jobs_dir)
-        if arguments.measure_output is not None:
-            if arguments.jobs_dir is None or arguments.worker_private_key is None:
+            return provision_scenario_package(
+                package.root,
+                jobs_dir=arguments.jobs_dir,
+                manifest_output=arguments.provisioning_manifest,
+                target_config=arguments.target_config,
+                qualification_record=arguments.qualification_record,
+            )
+        if arguments.preflight is not None:
+            if (
+                arguments.provisioning_manifest is None
+                or arguments.preflight_output is None
+                or arguments.preflight == "measured"
+                and arguments.qualification_record is None
+            ):
                 raise ScenarioPackageError(
                     "invalid-qualification-arguments",
-                    "--measure-output requires --jobs-dir and --worker-private-key",
+                    "--preflight requires --provisioning-manifest and --preflight-output; measured preflight also requires --qualification-record",
+                )
+            from model_benchmark.runtime.provisioning import preflight
+
+            return preflight(
+                package.root,
+                manifest_path=arguments.provisioning_manifest,
+                mode=arguments.preflight,
+                output=arguments.preflight_output,
+                qualification_record=arguments.qualification_record,
+            )
+        if arguments.measure_output is not None:
+            if any(
+                value is None
+                for value in (
+                    arguments.jobs_dir,
+                    arguments.worker_private_key,
+                    arguments.provisioning_manifest,
+                    arguments.preflight_output,
+                )
+            ):
+                raise ScenarioPackageError(
+                    "invalid-qualification-arguments",
+                    "--measure-output requires --jobs-dir, --worker-private-key, --provisioning-manifest, and --preflight-output",
                 )
             from model_benchmark.runtime.scenario_qualification import (
                 measure_scenario_package,
@@ -122,6 +171,8 @@ def _run_scenario(arguments: argparse.Namespace) -> dict[str, object]:
                 jobs_dir=arguments.jobs_dir,
                 output=arguments.measure_output,
                 worker_private_key=arguments.worker_private_key,
+                provisioning_manifest=arguments.provisioning_manifest,
+                preflight_output=arguments.preflight_output,
             )
         if any(
             value is None
@@ -173,7 +224,9 @@ def main(argv: list[str] | None = None) -> int:
             if arguments.json:
                 _emit(error.summary(), True)
             else:
-                print(f"scenario error [{error.classification}]: {error}", file=sys.stderr)
+                print(
+                    f"scenario error [{error.classification}]: {error}", file=sys.stderr
+                )
             return 2
         _emit(summary, arguments.json)
         return 0

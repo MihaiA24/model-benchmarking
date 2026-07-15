@@ -70,7 +70,9 @@ def test_numeric_projection_includes_every_declared_domain_score() -> None:
     ]
 
 
-def test_structured_result_requires_complete_group_evidence_and_consistent_success() -> None:
+def test_structured_result_requires_complete_group_evidence_and_consistent_success() -> (
+    None
+):
     groups = (
         ("acceptance", "acceptance", True, "acceptance", Decimal("1"), None),
         ("regression", "regression", True, "regression", Decimal("1"), None),
@@ -78,7 +80,11 @@ def test_structured_result_requires_complete_group_evidence_and_consistent_succe
     valid: dict[str, object] = {
         "acceptance_score": 1,
         "checks": [
-            {"evidence": ["capture/capture.json"], "id": "acceptance", "status": "pass"},
+            {
+                "evidence": ["capture/capture.json"],
+                "id": "acceptance",
+                "status": "pass",
+            },
             {"evidence": ["tests/test.sh"], "id": "regression", "status": "pass"},
         ],
         "domain_scores": {},
@@ -156,10 +162,15 @@ def test_environment_identity_comes_from_fresh_agent_capture_and_verifier_events
         runtime_qualification,
         "_run",
         lambda command, *, timeout, cwd=None: subprocess.CompletedProcess(
-            command, 0, stdout=event("agent-container", agent_project, "main"), stderr=""
+            command,
+            0,
+            stdout=event("agent-container", agent_project, "main"),
+            stderr="",
         ),
     )
-    with pytest.raises(ScenarioPackageError, match="fresh agent, capture, and verifier"):
+    with pytest.raises(
+        ScenarioPackageError, match="fresh agent, capture, and verifier"
+    ):
         _environment_identity(trial)
 
 
@@ -179,9 +190,7 @@ def _sign_review(review: dict[str, Any]) -> None:
     }
     signature = private_key.sign(review_signing_bytes(review))
     encoded_signature = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
-    reviewer["authentication"]["value"] = (
-        f"ed25519:{encoded_key}:{encoded_signature}"
-    )
+    reviewer["authentication"]["value"] = f"ed25519:{encoded_key}:{encoded_signature}"
 
 
 def _sign_technical(technical: dict[str, Any]) -> str:
@@ -232,9 +241,7 @@ def _qualification_inputs(
         for entry in package_record["files"]
         if entry["path"] == "instruction.md"
     )
-    baseline_vector = manifest["verification"]["qualification"][
-        "baseline_score_vector"
-    ]
+    baseline_vector = manifest["verification"]["qualification"]["baseline_score_vector"]
     reference_vector = manifest["verification"]["qualification"][
         "reference_score_vector"
     ]
@@ -255,6 +262,11 @@ def _qualification_inputs(
         "candidate_status": "technically-qualified",
         "harbor": lock["harbor"],
         "identities": lock["identities"],
+        "provisioning": {
+            "manifest_sha256": "provisioning-manifest:sha256:" + "1" * 64,
+            "projected_task_sha256": "harbor-task:sha256:" + "2" * 64,
+            "projection_sha256": "artifact:sha256:" + "3" * 64,
+        },
         "package_payload_sha256": package_record["payload_sha256"],
         "qualified_at": "2026-07-13T20:00:00Z",
         "runs": {
@@ -402,11 +414,15 @@ def test_failed_qualification_cannot_erase_a_prior_immutable_record(
     rejected = _qualify(package, technical, review_path, output)
 
     assert rejected.returncode != 0
-    assert json.loads(rejected.stdout)["classification"] == "independent-review-rejected"
+    assert (
+        json.loads(rejected.stdout)["classification"] == "independent-review-rejected"
+    )
     assert output.read_bytes() == original
     retained = list((output.parent / "scenario-reviews/public").glob("*.json"))
     assert len(retained) == 2
-    assert {json.loads(path.read_text(encoding="utf-8"))["judgment"] for path in retained} == {
+    assert {
+        json.loads(path.read_text(encoding="utf-8"))["judgment"] for path in retained
+    } == {
         "approve",
         "reject",
     }
@@ -431,7 +447,9 @@ def test_suite_must_name_the_trusted_technical_worker(tmp_path: Path) -> None:
     )
 
     assert completed.returncode != 0
-    assert json.loads(completed.stdout)["classification"] == "untrusted-technical-worker"
+    assert (
+        json.loads(completed.stdout)["classification"] == "untrusted-technical-worker"
+    )
     assert not output.exists()
 
 
@@ -454,11 +472,16 @@ def test_suite_must_name_the_trusted_independent_reviewer(tmp_path: Path) -> Non
     )
 
     assert completed.returncode != 0
-    assert json.loads(completed.stdout)["classification"] == "untrusted-independent-reviewer"
+    assert (
+        json.loads(completed.stdout)["classification"]
+        == "untrusted-independent-reviewer"
+    )
     assert not output.exists()
 
 
-def test_qualification_rejects_noncanonical_authoritative_evidence(tmp_path: Path) -> None:
+def test_qualification_rejects_noncanonical_authoritative_evidence(
+    tmp_path: Path,
+) -> None:
     package, technical, review, output, _, _ = _qualification_inputs(tmp_path)
     value = json.loads(technical.read_text(encoding="utf-8"))
     technical.write_text(json.dumps(value, indent=2), encoding="utf-8")
@@ -466,7 +489,10 @@ def test_qualification_rejects_noncanonical_authoritative_evidence(tmp_path: Pat
     completed = _qualify(package, technical, review, output)
 
     assert completed.returncode != 0
-    assert json.loads(completed.stdout)["classification"] == "invalid-technical-qualification"
+    assert (
+        json.loads(completed.stdout)["classification"]
+        == "invalid-technical-qualification"
+    )
     assert not output.exists()
 
 
@@ -527,7 +553,9 @@ def test_qualification_fails_closed_without_leaving_a_record(
     if classification == "independent-review-rejected":
         retained = list((output.parent / "scenario-reviews/public").glob("*.json"))
         assert len(retained) == 1
-        assert json.loads(retained[0].read_text(encoding="utf-8"))["judgment"] == "reject"
+        assert (
+            json.loads(retained[0].read_text(encoding="utf-8"))["judgment"] == "reject"
+        )
 
 
 def test_qualification_cannot_overwrite_its_review_input(tmp_path: Path) -> None:
@@ -537,7 +565,9 @@ def test_qualification_cannot_overwrite_its_review_input(tmp_path: Path) -> None
     completed = _qualify(package, technical, review, review)
 
     assert completed.returncode != 0
-    assert json.loads(completed.stdout)["classification"] == "invalid-qualification-output"
+    assert (
+        json.loads(completed.stdout)["classification"] == "invalid-qualification-output"
+    )
     assert review.read_bytes() == review_bytes
 
 

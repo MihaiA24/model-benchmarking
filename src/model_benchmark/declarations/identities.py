@@ -26,6 +26,7 @@ class DigestKind(str, Enum):
     EXECUTION_PROFILE = "execution-profile"
     HARBOR_TASK = "harbor-task"
     OCI_IMAGE = "oci-image"
+    PROVISIONING_MANIFEST = "provisioning-manifest"
     SCENARIO_REVIEW = "scenario-review"
     PACKAGE_QUALIFICATION = "package-qualification"
 
@@ -130,7 +131,9 @@ class ScoreContractIdentity:
     def __post_init__(self) -> None:
         _validate_version(self.version)
         if self.digest.kind is not DigestKind.SCORE_CONTRACT:
-            raise IdentityError("ScoreContractIdentity requires a score-contract digest")
+            raise IdentityError(
+                "ScoreContractIdentity requires a score-contract digest"
+            )
 
     @classmethod
     def from_payload(cls, version: str, payload: object) -> "ScoreContractIdentity":

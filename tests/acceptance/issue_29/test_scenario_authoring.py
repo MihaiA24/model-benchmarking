@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tarfile
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
@@ -351,12 +352,51 @@ def test_production_qualify_measures_harbor_and_seals_authenticated_evidence(
     worker_key.write_bytes(bytes.fromhex("24" * 32))
     worker_key.chmod(0o600)
 
+    context = subprocess.run(
+        ["docker", "context", "show"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    platform = (
+        subprocess.run(
+            ["docker", "info", "--format", "{{.OSType}}/{{.Architecture}}"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        .stdout.strip()
+        .replace("aarch64", "arm64")
+        .replace("x86_64", "amd64")
+    )
+    target_config = tmp_path / "provisioning-targets.yaml"
+    target_config.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "visibility_domains": {
+                    "public": {"docker_context": context, "platform": platform},
+                    "private": {
+                        "docker_context": "acceptance-unused-private-store",
+                        "platform": platform,
+                    },
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    provisioning_manifest = tmp_path / "provisioning-manifest.json"
     provisioned = scenario_runner(
         "qualify",
         str(package),
         "--provision",
         "--jobs-dir",
         str(tmp_path / "provision-jobs"),
+        "--target-config",
+        str(target_config),
+        "--provisioning-manifest",
+        str(provisioning_manifest),
     )
     assert provisioned.returncode == 0, provisioned.stderr or provisioned.stdout
 
@@ -370,28 +410,43 @@ def test_production_qualify_measures_harbor_and_seals_authenticated_evidence(
         str(tmp_path / "measured-jobs"),
         "--worker-private-key",
         str(worker_key),
+        "--provisioning-manifest",
+        str(provisioning_manifest),
+        "--preflight-output",
+        str(tmp_path / "qualification-preflight"),
     )
     assert measured.returncode == 0, measured.stderr or measured.stdout
     measurement = json.loads(measured.stdout)
     technical: Any = REGISTRY.validate_bytes(technical_path.read_bytes())
     runs = technical["runs"]
+    assert technical["provisioning"]["manifest_sha256"].startswith(
+        "provisioning-manifest:sha256:"
+    )
     assert runs["baseline"]["outcome"] == "declared-failure"
     assert [run["outcome"] for run in runs["reference"]] == ["passed", "passed"]
     assert runs["no_download"] is True
-    assert len(
-        {
-            runs["baseline"]["environment_id"],
-            runs["hidden_marker"]["environment_id"],
-            *(run["environment_id"] for run in runs["reference"]),
-        }
-    ) == 4
+    assert (
+        len(
+            {
+                runs["baseline"]["environment_id"],
+                runs["hidden_marker"]["environment_id"],
+                *(run["environment_id"] for run in runs["reference"]),
+            }
+        )
+        == 4
+    )
 
     lock_data = (package / "scenario.lock.json").read_bytes()
     lock: Any = REGISTRY.validate_bytes(lock_data)
     reviewed_at = (
-        datetime.fromisoformat(technical["qualified_at"].replace("Z", "+00:00"))
-        + timedelta(seconds=1)
-    ).astimezone(UTC).isoformat().replace("+00:00", "Z")
+        (
+            datetime.fromisoformat(technical["qualified_at"].replace("Z", "+00:00"))
+            + timedelta(seconds=1)
+        )
+        .astimezone(UTC)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     review: dict[str, Any] = {
         "checklist_version": 1,
         "identities": lock["identities"],
@@ -504,7 +559,11 @@ def test_qualification_review_and_identity_failures_leave_no_authoritative_pqr(
     else:
         with (case.package / "instruction.md").open("a", encoding="utf-8") as stream:
             stream.write("changed after review\n")
-    if failure in {"reward-mismatch", "unsafe-handoff-succeeds", "qualification-download"}:
+    if failure in {
+        "reward-mismatch",
+        "unsafe-handoff-succeeds",
+        "qualification-download",
+    }:
         technical_signer(technical)
     document_writer(case.technical_path, technical)
     document_writer(case.review_path, review)
