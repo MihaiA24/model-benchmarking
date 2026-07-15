@@ -1,1 +1,1 @@
-"""Repository-owned development verification policy and proof consumption."""
+"""Repository-owned local development verification policy."""

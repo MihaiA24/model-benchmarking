@@ -30,20 +30,28 @@ def test_policy_classifies_every_tracked_and_issue_owned_path() -> None:
         {
             "scripts/verify.py",
             "tests/acceptance/issue_54/test_verification_policy.py",
-            "tests/unit/test_proof_consumer.py",
+            "tests/architecture/test_import_boundaries.py",
             "tests/unit/test_verification_policy.py",
             "verification/__init__.py",
             "verification/policy.json",
             "verification/policy.py",
-            "verification/proof-envelope-v1.schema.json",
-            "verification/proof.py",
-            "verification/publisher.py",
-            ".github/actions/fresh-proof/action.yml",
-            "tests/unit/test_proof_publisher.py",
         }
     )
 
     assert POLICY.audit_paths(paths) == ()
+    assert set(POLICY.value) == {
+        "broad_development_slice",
+        "cached_integration_slices",
+        "development_slices",
+        "non_authoritative",
+        "path_rules",
+        "version",
+    }
+    assert all(
+        set(rule)
+        == {"cached_integration", "classification", "development", "id", "patterns"}
+        for rule in POLICY.path_rules
+    )
 
 
 def test_typical_module_edit_selects_only_declared_docker_free_slice() -> None:
@@ -53,12 +61,11 @@ def test_typical_module_edit_selects_only_declared_docker_free_slice() -> None:
 
     assert selection.development == ("architecture",)
     assert selection.cached_integration == ()
-    assert selection.fresh_gates == ()
     assert selection.fallback is False
 
 
 @pytest.mark.parametrize("status", ["A", "D", "R"])
-def test_structural_changes_select_broad_development_and_every_gate(
+def test_structural_changes_select_broad_development_fail_closed(
     status: str,
 ) -> None:
     selection = POLICY.select(
@@ -74,7 +81,6 @@ def test_structural_changes_select_broad_development_and_every_gate(
     )
 
     assert selection.development == (POLICY.broad_development_slice,)
-    assert selection.fresh_gates == tuple(sorted(POLICY.fresh_gates))
     assert selection.fallback is True
 
 
@@ -82,11 +88,11 @@ def test_unclassified_path_fails_closed() -> None:
     selection = POLICY.select([Change(status="M", path="unknown/new-boundary.xyz")])
 
     assert selection.development == (POLICY.broad_development_slice,)
-    assert selection.fresh_gates == tuple(sorted(POLICY.fresh_gates))
+    assert selection.cached_integration == ()
     assert selection.fallback is True
 
 
-def test_issue_acceptance_edit_selects_only_the_complete_named_gate() -> None:
+def test_issue_acceptance_edit_selects_local_scenario_verification() -> None:
     selection = POLICY.select(
         [
             Change(
@@ -96,22 +102,18 @@ def test_issue_acceptance_edit_selects_only_the_complete_named_gate() -> None:
         ]
     )
 
-    assert selection.fresh_gates == ("issue-29",)
-    gate = POLICY.fresh_gates[selection.fresh_gates[0]]
-    commands = gate["commands"]
-    assert isinstance(commands, list)
-    assert [command["command"] for command in commands] == [
-        "uv run --frozen pytest -q tests/acceptance/issue_29 --maxfail=1"
-    ]
+    assert selection.development == ("scenarios",)
+    assert selection.cached_integration == ("scenario-contracts",)
+    assert selection.fallback is False
 
 
-def test_shared_policy_change_is_monotone_across_every_gate() -> None:
+def test_shared_policy_change_selects_local_policy_checks() -> None:
     selection = POLICY.select(
         [Change(status="M", path="verification/policy.json")]
     )
 
     assert selection.development == ("verification-policy",)
-    assert selection.fresh_gates == tuple(sorted(POLICY.fresh_gates))
+    assert selection.cached_integration == ()
 
 
 def test_explicit_non_normative_prose_selects_no_verification() -> None:
@@ -119,7 +121,6 @@ def test_explicit_non_normative_prose_selects_no_verification() -> None:
 
     assert selection.development == ()
     assert selection.cached_integration == ()
-    assert selection.fresh_gates == ()
     assert selection.fallback is False
 
 
