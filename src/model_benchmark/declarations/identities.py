@@ -29,6 +29,11 @@ class DigestKind(str, Enum):
     PROVISIONING_MANIFEST = "provisioning-manifest"
     SCENARIO_REVIEW = "scenario-review"
     PACKAGE_QUALIFICATION = "package-qualification"
+    FUNCTIONAL_V1_MANIFEST = "functional-v1-manifest"
+    RESOLVED_V1_MANIFEST = "resolved-v1-manifest"
+    FUNCTIONAL_V1_CONDITION = "functional-v1-condition"
+    RESULT_BUNDLE = "result-bundle"
+    FUNCTIONAL_V1_RUN_RECORD = "functional-v1-run-record"
 
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -129,7 +134,7 @@ class ScoreContractIdentity:
     digest: TypedDigest
 
     def __post_init__(self) -> None:
-        _validate_version(self.version)
+        _validate_version(version=self.version)
         if self.digest.kind is not DigestKind.SCORE_CONTRACT:
             raise IdentityError(
                 "ScoreContractIdentity requires a score-contract digest"

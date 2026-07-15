@@ -18,12 +18,12 @@ from model_benchmark.declarations.scenario_sources import (
 )
 
 
-CLI = Path(sys.executable).with_name("model-benchmark")
+CLI = Path(sys.executable).with_name("model-benchmark-scenario")
 
 
 def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [CLI, "--json", "scenario", *arguments],
+        [CLI, "--json", *arguments],
         capture_output=True,
         text=True,
         timeout=30,

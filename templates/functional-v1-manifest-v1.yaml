@@ -1,0 +1,43 @@
+schema_version: 1
+
+provider:
+  base_url: https://provider.example/v1
+  model: exact/model-slug
+
+limits:
+  requests_per_trial: 64
+  provider_tokens_per_trial: 100000
+  stop_after_cost_usd_per_trial: "5.00"
+  wall_time_seconds_per_trial: 1800
+  cpu_cores_per_trial: 2
+  memory_mib_per_trial: 4096
+  writable_disk_mib_per_trial: 8192
+
+execution:
+  max_parallel: 3
+  network_policy: guarded-public-web-v1
+
+scenarios:
+  python-sales-by-genre:
+    path: locks/python-sales-by-genre.lock.json
+    digest: package-lock:sha256:0000000000000000000000000000000000000000000000000000000000000000
+  spring-petvalidator-whitespace:
+    path: locks/spring-petvalidator-whitespace.lock.json
+    digest: package-lock:sha256:0000000000000000000000000000000000000000000000000000000000000000
+  angular-reading-time:
+    path: locks/angular-reading-time.lock.json
+    digest: package-lock:sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+conditions:
+  omp:
+    path: locks/omp.condition.json
+    digest: functional-v1-condition:sha256:0000000000000000000000000000000000000000000000000000000000000000
+  opencode:
+    path: locks/opencode.condition.json
+    digest: functional-v1-condition:sha256:0000000000000000000000000000000000000000000000000000000000000000
+  hermes:
+    path: locks/hermes.condition.json
+    digest: functional-v1-condition:sha256:0000000000000000000000000000000000000000000000000000000000000000
+  raw-api:
+    path: locks/raw-api.condition.json
+    digest: functional-v1-condition:sha256:0000000000000000000000000000000000000000000000000000000000000000

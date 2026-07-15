@@ -24,7 +24,7 @@ from model_benchmark.declarations.schemas import SchemaRegistry
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CLI = Path(sys.executable).with_name("model-benchmark")
+CLI = Path(sys.executable).with_name("model-benchmark-scenario")
 REGISTRY = SchemaRegistry(ROOT / "schemas")
 
 
@@ -40,7 +40,7 @@ class QualificationCase:
 
 def run_scenario(*arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [CLI, "--json", "scenario", *arguments],
+        [CLI, "--json", *arguments],
         capture_output=True,
         text=True,
         timeout=1500,
