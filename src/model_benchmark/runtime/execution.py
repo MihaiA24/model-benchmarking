@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -42,6 +43,7 @@ from model_benchmark.declarations.scenarios import (
     ScenarioPackageError,
     check_scenario_package,
 )
+from model_benchmark.runtime.bundles import seal_cell_evidence
 from model_benchmark.runtime.functional_v1 import (
     CELL_SCHEDULE,
     CommandResult,
@@ -50,6 +52,7 @@ from model_benchmark.runtime.functional_v1 import (
     RunWorkspace,
     _immutable_write,
     _inspect_result,
+    _load_canonical_object,
 )
 from model_benchmark.runtime.hermes import (
     HERMES_IMAGE_REFERENCE,
@@ -1685,6 +1688,9 @@ class HarborCellExecutor:
                     except subprocess.TimeoutExpired:
                         os.killpg(process.pid, signal.SIGKILL)
                         stdout, stderr = process.communicate()
+                    preserved = self._preserve_raw_evidence(
+                        root, raw_root, (real_key.encode(), token.encode())
+                    )
                     _cleanup_owned(run_id, cell_id)
                     return CellExecution(
                         "valid_limit_outcome",
@@ -1695,6 +1701,7 @@ class HarborCellExecutor:
                         {
                             "exit_code": process.returncode,
                             "limit": "wall_time_seconds_per_trial",
+                            "raw_evidence_preserved": preserved,
                             "wall_time_seconds": _WALL_TIME_SECONDS,
                         },
                     )
@@ -1829,6 +1836,27 @@ def _workspace_manifest(
     except BaseException:
         shutil.rmtree(temporary, ignore_errors=True)
         raise
+
+
+def _write_run_provenance(
+    workspace: RunWorkspace,
+    projection: PreflightProjection,
+    inventory: ProvisioningInventory,
+) -> None:
+    report_digest = hashlib.sha256(
+        json.dumps(projection.report, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    _immutable_write(
+        workspace.root / "provenance.json",
+        canonical_json_bytes(
+            {
+                "preflight_report_sha256": f"sha256:{report_digest}",
+                "provisioning_manifest_identity": str(inventory.identity),
+                "schema_version": 1,
+            }
+        ),
+        allow_identical=False,
+    )
 
 
 class NativeFunctionalV1Runtime:
@@ -2233,6 +2261,7 @@ class NativeFunctionalV1Runtime:
                 workspace = self.home.create_workspace(manifest)
                 try:
                     inventory = _load_inventory(self.home, manifest)
+                    _write_run_provenance(workspace, projection, inventory)
                     executor = HarborCellExecutor(
                         manifest, inventory, projection.packages, workspace
                     )
@@ -2311,25 +2340,109 @@ class NativeFunctionalV1Runtime:
         )
         if global_fault is not None:
             self._terminalize_fault(workspace, schedule, global_fault)
+            return self._seal_run(
+                workspace,
+                cells_executed=len(outcomes),
+                fault_reason=global_fault.reason_code,
+            )
+        try:
+            self._drain_cell_evidence(workspace, schedule)
+        except FunctionalV1HomeError as error:
             return CommandResult(
                 1,
-                "Run invalidated; terminal facts await evidence sealing",
+                f"Evidence sealing failed: {error}",
                 {
+                    "cells_executed": len(outcomes),
                     "command": "run",
-                    "outcome": "invalid-unsealed",
-                    "reason_code": global_fault.reason_code,
+                    "message": str(error),
+                    "outcome": "seal-failed",
+                    "reason_code": error.reason_code,
                     "run_id": run_id,
                 },
             )
-        return CommandResult(
-            1,
-            "Execution complete; raw cells await Result Bundle sealing",
-            {
-                "cells_executed": len(outcomes),
+        return self._seal_run(workspace, cells_executed=len(outcomes))
+
+    def _drain_cell_evidence(
+        self,
+        workspace: RunWorkspace,
+        schedule: Sequence[Mapping[str, object]],
+    ) -> None:
+        secret = os.environ.get("MODEL_BENCHMARK_PROVIDER_API_KEY", "")
+        injected_secrets = (secret.encode(),) if secret else ()
+        for cell in schedule:
+            cell_id = str(cell["cell_id"])
+            cell_dir = workspace.root / "cells" / cell_id
+            if (
+                not (cell_dir / "start.json").exists()
+                or (cell_dir / "terminal.json").exists()
+                or not (cell_dir / "execution.json").exists()
+            ):
+                continue
+            execution_record = _load_canonical_object(cell_dir / "execution.json")
+            outcome = seal_cell_evidence(
+                cell_dir,
+                cell_id=cell_id,
+                run_id=workspace.run_id,
+                execution=execution_record,
+                injected_secrets=injected_secrets,
+            )
+            duration = execution_record.get("duration_ns")
+            workspace.write_cell_terminal(
+                cell_id,
+                disposition=outcome.disposition,
+                terminal_phase=outcome.terminal_phase,
+                reason_code=outcome.reason_code,
+                ended_at_utc=str(execution_record.get("ended_at_utc")),
+                duration_ns=duration
+                if isinstance(duration, int) and not isinstance(duration, bool)
+                else 0,
+                evidence_valid=outcome.evidence_valid,
+                result_bundle_identity=outcome.result_bundle_identity,
+                details=outcome.details,
+            )
+
+    def _seal_run(
+        self,
+        workspace: RunWorkspace,
+        *,
+        cells_executed: int,
+        fault_reason: str | None = None,
+    ) -> CommandResult:
+        try:
+            sealed = workspace.seal()
+        except FunctionalV1HomeError as error:
+            failure: dict[str, object] = {
+                "cells_executed": cells_executed,
                 "command": "run",
-                "outcome": "execution-complete-unsealed",
-                "run_id": run_id,
-            },
+                "message": str(error),
+                "outcome": "seal-failed",
+                "reason_code": error.reason_code,
+                "run_id": workspace.run_id,
+            }
+            if fault_reason is not None:
+                failure["shared_fault_reason_code"] = fault_reason
+            return CommandResult(
+                1,
+                f"Run Record sealing failed: {error}",
+                failure,
+            )
+        state = str(sealed.value.get("state"))
+        validity = str(sealed.value.get("validity"))
+        payload: dict[str, object] = {
+            "cells_executed": cells_executed,
+            "command": "run",
+            "outcome": "sealed",
+            "run_id": workspace.run_id,
+            "run_record_identity": str(sealed.identity),
+            "state": state,
+            "validity": validity,
+        }
+        if fault_reason is not None:
+            payload["reason_code"] = fault_reason
+        return CommandResult(
+            0 if state == "complete" and validity == "valid" else 1,
+            f"Run sealed: {state} {validity} {sealed.identity}",
+            payload,
         )
 
     def _terminalize_started(
@@ -2414,8 +2527,7 @@ class NativeFunctionalV1Runtime:
                         "cleanup-incomplete",
                         "coordinator-crash recovery left Run-owned resources",
                     )
-                manifest, manifest_root = _workspace_manifest(self.home, workspace)
-                projection = self._preflight(manifest)
+                self._drain_cell_evidence(workspace, CELL_SCHEDULE)
                 self._terminalize_started(
                     workspace,
                     CELL_SCHEDULE,
@@ -2431,16 +2543,9 @@ class NativeFunctionalV1Runtime:
                     ).exists()
                 ]
                 if not pending:
-                    return CommandResult(
-                        1,
-                        "Run has no resumable unstarted cells",
-                        {
-                            "command": "run",
-                            "outcome": "unsealed",
-                            "reason_code": "capture-layer-required",
-                            "run_id": run_id,
-                        },
-                    )
+                    return _inspect_result(workspace.seal())
+                manifest, manifest_root = _workspace_manifest(self.home, workspace)
+                projection = self._preflight(manifest)
                 inventory = _load_inventory(self.home, manifest)
                 executor = HarborCellExecutor(
                     manifest, inventory, projection.packages, workspace
