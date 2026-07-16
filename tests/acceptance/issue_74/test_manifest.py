@@ -74,7 +74,7 @@ def test_manifest_fixes_matrix_and_execution_envelope(
     assert tuple(manifest.value["conditions"]) == CONDITIONS
     assert manifest.value["execution"] == {
         "max_parallel": 3,
-        "network_policy": "guarded-public-web-v1",
+        "network_policy": "proxy-only-v1",
     }
     assert manifest.value["limits"] == {
         "cpu_cores_per_trial": 2,
@@ -174,14 +174,16 @@ def test_manifest_rejects_absolute_escaping_and_symlink_references(
 
 
 def test_published_template_has_the_exact_fixed_shape() -> None:
-    template_path = Path(__file__).resolve().parents[3] / "templates/functional-v1-manifest-v1.yaml"
+    template_path = (
+        Path(__file__).resolve().parents[3] / "templates/functional-v1-manifest-v1.yaml"
+    )
     template = yaml.safe_load(template_path.read_text(encoding="utf-8"))
 
     assert tuple(template["scenarios"]) == SCENARIOS
     assert tuple(template["conditions"]) == CONDITIONS
     assert template["execution"] == {
         "max_parallel": 3,
-        "network_policy": "guarded-public-web-v1",
+        "network_policy": "proxy-only-v1",
     }
     assert template["limits"] == {
         "requests_per_trial": 64,

@@ -218,9 +218,9 @@ def _verify_lock_dependencies(lock: dict[str, object]) -> None:
         }
         or adapter.get("argv")
         != [
-            "opencode-launch",
-            "--opencode",
-            "{artifact_path}",
+            "/opt/model-benchmark-condition/entrypoint",
+            "--condition",
+            "opencode",
             "--artifact-identity",
             "{artifact_identity}",
         ]

@@ -22,7 +22,11 @@ from model_benchmark.declarations.canonical import (
     canonical_json_bytes,
     load_canonical_json,
 )
-from model_benchmark.declarations.identities import DigestKind, IdentityError, TypedDigest
+from model_benchmark.declarations.identities import (
+    DigestKind,
+    IdentityError,
+    TypedDigest,
+)
 from model_benchmark.declarations.scenario_locks import schema_root_path
 from model_benchmark.declarations.schemas import SchemaRegistry, SchemaValidationError
 
@@ -33,7 +37,7 @@ SCENARIOS = (
     "angular-reading-time",
 )
 CONDITIONS = ("omp", "opencode", "hermes", "raw-api")
-NETWORK_POLICY = "guarded-public-web-v1"
+NETWORK_POLICY = "proxy-only-v1"
 FIXED_LIMITS: Mapping[str, int] = MappingProxyType(
     {
         "requests_per_trial": 64,
@@ -205,7 +209,10 @@ def _validate_base_url(value: object) -> str:
 
 
 def _validate_cost(value: object) -> str:
-    if not isinstance(value, str) or re.fullmatch(r"(?:0|[1-9]\d*)\.\d{2}", value) is None:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"(?:0|[1-9]\d*)\.\d{2}", value) is None
+    ):
         _reject(
             "invalid-cost-threshold",
             "stop_after_cost_usd_per_trial must be a canonical two-decimal string",
@@ -225,7 +232,10 @@ def _reject_secret_fields(value: object, path: str = "$") -> None:
             if not isinstance(key, str):
                 _reject("invalid-manifest-schema", f"non-string field at {path}")
             if _SECRET_FIELD.search(key):
-                _reject("secret-field-forbidden", f"secret field is forbidden at {path}.{key}")
+                _reject(
+                    "secret-field-forbidden",
+                    f"secret field is forbidden at {path}.{key}",
+                )
             _reject_secret_fields(child, f"{path}.{key}")
     elif isinstance(value, list):
         for index, child in enumerate(value):
@@ -245,6 +255,7 @@ def _validate_condition_lock(
             "condition",
             "evidence",
             "execution_profile",
+            "image",
             "provider_mapping",
             "schema_version",
         },
@@ -272,12 +283,31 @@ def _validate_condition_lock(
         or re.fullmatch(r"artifact:sha256:[0-9a-f]{64}", artifact["digest"]) is None
     ):
         _reject("invalid-condition-lock", f"{expected_condition} artifact is invalid")
+    image = _strict_object(
+        lock["image"],
+        {"content_digest", "kind", "mount_path", "platform", "read_only"},
+        f"{expected_condition}.image",
+    )
+    if (
+        image["kind"] != "condition-artifact-image"
+        or image["platform"] != "linux/amd64"
+        or image["mount_path"] != "/opt/model-benchmark-condition"
+        or image["read_only"] is not True
+        or not isinstance(image["content_digest"], str)
+        or re.fullmatch(r"artifact:sha256:[0-9a-f]{64}", image["content_digest"])
+        is None
+    ):
+        _reject(
+            "invalid-condition-lock",
+            f"{expected_condition} condition artifact image is invalid",
+        )
     adapter = _strict_object(
         lock["adapter"],
         {
             "argv",
             "configuration",
             "environment_names",
+            "harbor_agent",
             "non_interactive",
             "self_update",
             "working_directory",
@@ -289,8 +319,12 @@ def _validate_condition_lock(
     if (
         not isinstance(argv, list)
         or not argv
-        or not all(isinstance(item, str) and item and "\x00" not in item for item in argv)
+        or not all(
+            isinstance(item, str) and item and "\x00" not in item for item in argv
+        )
         or not isinstance(adapter["configuration"], dict)
+        or adapter["harbor_agent"]
+        != "model_benchmark.runtime.harbor_agent:FunctionalV1ConditionAgent"
         or not isinstance(environment_names, list)
         or environment_names != sorted(set(environment_names))
         or not all(
@@ -337,9 +371,7 @@ def _validate_condition_lock(
     execution_profile = lock["execution_profile"]
     if (
         not isinstance(execution_profile, str)
-        or re.fullmatch(
-            r"execution-profile:sha256:[0-9a-f]{64}", execution_profile
-        )
+        or re.fullmatch(r"execution-profile:sha256:[0-9a-f]{64}", execution_profile)
         is None
     ):
         _reject(
@@ -364,7 +396,9 @@ def _load_reference(
     try:
         parsed_digest = TypedDigest.parse(declared_digest)
     except IdentityError as error:
-        raise FunctionalV1ManifestError("invalid-reference-digest", str(error)) from error
+        raise FunctionalV1ManifestError(
+            "invalid-reference-digest", str(error)
+        ) from error
     if parsed_digest.kind is not digest_kind:
         _reject(
             "invalid-reference-digest",
@@ -532,9 +566,7 @@ class FunctionalV1Manifest:
                 "fixed-envelope-mismatch",
                 f"execution must fix max_parallel={MAX_PARALLEL} and network_policy={NETWORK_POLICY}",
             )
-        scenarios = _strict_object(
-            manifest["scenarios"], set(SCENARIOS), "scenarios"
-        )
+        scenarios = _strict_object(manifest["scenarios"], set(SCENARIOS), "scenarios")
         conditions = _strict_object(
             manifest["conditions"], set(CONDITIONS), "conditions"
         )

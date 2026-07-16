@@ -228,19 +228,11 @@ def _verify_lock_dependencies(lock: dict[str, object]) -> None:
         }
         or adapter.get("argv")
         != [
-            "hermes-launch",
-            "--docker",
-            "{container_runtime_path}",
-            "--hermes",
-            "{artifact_path}",
+            "/opt/model-benchmark-condition/entrypoint",
+            "--condition",
+            "hermes",
             "--artifact-identity",
             "{artifact_identity}",
-            "--artifact-container-path",
-            HERMES_ARTIFACT_CONTAINER_PATH,
-            "--image-reference",
-            HERMES_IMAGE_REFERENCE,
-            "--image-identity",
-            HERMES_IMAGE_IDENTITY,
         ]
         or adapter.get("configuration") != _locked_configuration()
         or adapter.get("environment_names") != list(HERMES_ENVIRONMENT_NAMES)
