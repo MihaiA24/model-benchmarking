@@ -22,8 +22,6 @@ from yaml.nodes import MappingNode, Node
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
 from model_benchmark.declarations.scenario_locks import (
     HARBOR_COMMIT,
-    LOCK_SCHEMA_NAME,
-    LOCK_SCHEMA_VERSION,
     ScenarioLockError,
     build_scenario_lock,
     scaffold_root_path,
@@ -31,8 +29,6 @@ from model_benchmark.declarations.scenario_locks import (
     standard_profile_path,
 )
 from model_benchmark.declarations.scenario_schema import (
-    SCENARIO_SCHEMA_NAME,
-    SCENARIO_SCHEMA_VERSION,
     ScenarioContractError,
     validate_scenario_manifest,
 )
