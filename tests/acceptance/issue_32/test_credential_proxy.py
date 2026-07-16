@@ -305,3 +305,14 @@ def test_top_level_cost_string_zero_is_valid_reported_spend(
     assert snapshot.request_count == 2
     assert snapshot.provider_tokens == 196
     assert snapshot.provider_cost_usd == "0"
+
+
+def test_zero_request_trial_still_produces_readable_empty_evidence(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    evidence_path = tmp_path / "proxy-events.jsonl"
+    with _proxy(recording_provider, tmp_path):
+        assert evidence_path.is_file()
+    assert evidence_path.read_bytes() == b""
+    assert recording_provider.requests == []

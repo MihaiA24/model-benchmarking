@@ -305,6 +305,16 @@ class _ProxyState:
             finally:
                 os.close(descriptor)
 
+    def touch_evidence(self) -> None:
+        with self.evidence_lock:
+            self.config.evidence_path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor = os.open(
+                self.config.evidence_path,
+                os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+                0o600,
+            )
+            os.close(descriptor)
+
     def snapshot(self) -> ProxySnapshot:
         with self.gate:
             return ProxySnapshot(
@@ -347,6 +357,7 @@ class CredentialProxy:
     def start(self) -> None:
         if self._thread is not None:
             raise RuntimeError("Credential Proxy is already started")
+        self._state.touch_evidence()
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             name="model-benchmark-credential-proxy",

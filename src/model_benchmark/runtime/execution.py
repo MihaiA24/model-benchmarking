@@ -1338,6 +1338,29 @@ class HarborCellExecutor:
             events.append(value)
         return events
 
+    def _normalize_scratch_ownership(self, root: Path) -> None:
+        # Condition containers write Trial evidence as container root; hand
+        # the scratch tree back to the coordinator user so redacted copies
+        # and scratch removal cannot fail on container-owned paths.
+        coordinator = str(self._record("shared", "coordinator")["reference"])
+        _docker(
+            [
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--mount",
+                f"type=bind,src={root},dst=/scratch",
+                coordinator,
+                "chown",
+                "--recursive",
+                f"{os.getuid()}:{os.getgid()}",
+                "/scratch",
+            ],
+            timeout=120,
+            check=False,
+        )
+
     def _copy_redacted(
         self,
         source: Path,
@@ -1719,6 +1742,7 @@ class HarborCellExecutor:
                     except subprocess.TimeoutExpired:
                         os.killpg(process.pid, signal.SIGKILL)
                         stdout, stderr = process.communicate()
+                    self._normalize_scratch_ownership(root)
                     preserved = self._preserve_raw_evidence(
                         root, raw_root, (real_key.encode(), token.encode())
                     )
@@ -1739,6 +1763,7 @@ class HarborCellExecutor:
             finally:
                 with self._lock:
                     self._processes.discard(process)
+            self._normalize_scratch_ownership(root)
             if cancel.is_set():
                 preserved = self._preserve_raw_evidence(
                     root, raw_root, (real_key.encode(), token.encode())
