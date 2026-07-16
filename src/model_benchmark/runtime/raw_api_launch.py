@@ -11,6 +11,10 @@ from model_benchmark.runtime.raw_api import RawApiMaterializer, RawApiRequest
 
 
 _INVALID_ENVELOPE_EXIT = 78
+# Digest-sealed materialization cap. The Submission boundary's capture policy
+# enforces the real per-package byte budget downstream; this only bounds the
+# single locked-file replacement read into memory.
+_MAX_CONTENT_BYTES = 1 << 20
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,30 +35,31 @@ def main(argv: list[str] | None = None) -> int:
         evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
         result = RawApiMaterializer().materialize(
             RawApiRequest(
-                repository=Path.cwd(),
-                developer_brief=brief,
-                target_path=arguments.target_path,
                 proxy_base_url=os.environ["MODEL_BENCHMARK_PROXY_BASE_URL"],
-                provider_model=os.environ["MODEL_BENCHMARK_PROVIDER_MODEL"],
-                trial_proxy_token=os.environ["MODEL_BENCHMARK_PROXY_TOKEN"],
+                proxy_token=os.environ["MODEL_BENCHMARK_PROXY_TOKEN"],
+                model=os.environ["MODEL_BENCHMARK_PROVIDER_MODEL"],
+                developer_brief=brief,
+                repository=Path.cwd(),
+                target_path=arguments.target_path,
+                max_content_bytes=_MAX_CONTENT_BYTES,
             )
         )
         delivery = {
             "artifact_identity": arguments.artifact_identity,
             "brief_sha256": f"sha256:{hashlib.sha256(brief).hexdigest()}",
+            "outcome": result.outcome,
             "provider_model": os.environ["MODEL_BENCHMARK_PROVIDER_MODEL"],
             "proxy_base_url": os.environ["MODEL_BENCHMARK_PROXY_BASE_URL"],
             "reason_code": result.reason_code,
             "request_count": result.request_count,
             "schema_version": 1,
-            "status": result.status,
             "target_path": arguments.target_path,
         }
         (evidence / "raw-api-delivery.json").write_text(
             json.dumps(delivery, separators=(",", ":"), sort_keys=True),
             encoding="utf-8",
         )
-        return 0 if result.status == "applied" else _INVALID_ENVELOPE_EXIT
+        return 0 if result.outcome == "ready-for-capture" else _INVALID_ENVELOPE_EXIT
     except (KeyError, OSError, UnicodeError, ValueError):
         return _INVALID_ENVELOPE_EXIT
 
