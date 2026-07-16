@@ -365,8 +365,7 @@ def _write_build_context(
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
         if artifact is not None:
-            artifact_name = "omp" if condition == "omp" else "opencode"
-            target = temporary / "artifact" / artifact_name
+            target = temporary / "artifact" / str(condition)
             target.parent.mkdir()
             shutil.copyfile(artifact, target)
             target.chmod(0o555)
@@ -1051,12 +1050,17 @@ def _probe_condition_mounts(
             timeout=60,
             check=False,
         )
-        mounted = _docker([*arguments, "ls", "/opt"], timeout=60, check=False)
-        mounted_entries = mounted.stdout.split()
+        artifact_root = f"{_CONDITION_MOUNT}/artifact"
+        artifact_probe = _docker(
+            [*arguments, "sh", "-c", f"test ! -e {artifact_root} || ls {artifact_root}"],
+            timeout=60,
+            check=False,
+        )
+        artifact_entries = artifact_probe.stdout.split()
+        expected_entries = [condition] if condition in ("omp", "opencode", "hermes") else []
         verifier_present = verifier_probe.returncode == 0
         unselected_present = (
-            mounted.returncode != 0
-            or mounted_entries != [_CONDITION_MOUNT.rsplit("/", 1)[1]]
+            artifact_probe.returncode != 0 or artifact_entries != expected_entries
         )
         if verifier_present or unselected_present:
             raise ExecutionError(
@@ -1067,7 +1071,7 @@ def _probe_condition_mounts(
             {
                 "condition": condition,
                 "image_id": record["image_id"],
-                "mounted_opt_entries": mounted_entries,
+                "artifact_entries": artifact_entries,
                 "read_only": True,
                 "unselected_artifacts_present": unselected_present,
                 "verifier_bytes_present": verifier_present,
