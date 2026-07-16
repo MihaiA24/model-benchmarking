@@ -201,9 +201,7 @@ def _matches(stage: Stage, token: str) -> bool:
 
 def pytest_command(stage: Stage) -> list[str]:
     return [
-        sys.executable,
-        "-m",
-        "pytest",
+        str(_pytest_script()),
         "-q",
         stage.path,
         "--maxfail=1",
@@ -211,6 +209,16 @@ def pytest_command(stage: Stage) -> list[str]:
         "no:cacheprovider",
         *stage.extra,
     ]
+
+
+def _pytest_script() -> Path:
+    script = Path(sys.executable).with_name("pytest")
+    if not script.is_file():
+        raise SuiteLayoutError(
+            "pytest launcher not found next to the interpreter; run the suite "
+            "inside the project environment (uv run python scripts/acceptance.py)"
+        )
+    return script
 
 
 def assert_docker_available(stages: tuple[Stage, ...]) -> None:

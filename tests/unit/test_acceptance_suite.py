@@ -56,9 +56,7 @@ def test_pytest_command_targets_exactly_one_issue_directory() -> None:
     stage = next(stage for stage in acceptance.STAGES if stage.issue == 51)
     command = acceptance.pytest_command(stage)
     assert command == [
-        sys.executable,
-        "-m",
-        "pytest",
+        str(Path(sys.executable).with_name("pytest")),
         "-q",
         "tests/acceptance/issue_51_proof_hardening",
         "--maxfail=1",
