@@ -1,1 +1,1 @@
-151727a03d5b37988d91169b9cbff9341365fad1f4e50ad07726e23427ac6810  artifacts/acceptance/issue-28/verification.json
+bc088dc654ad6d39fc435c091478d8649079c0134fc7d47ec420046fad3e6cad  artifacts/acceptance/issue-28/verification.json

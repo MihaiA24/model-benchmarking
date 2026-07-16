@@ -149,9 +149,11 @@ def test_operator_cli_has_human_help_and_canonical_json_without_prompting() -> N
         timeout=10,
         check=False,
     )
-    assert json_result.returncode == 0
+    assert json_result.returncode == 2
     summary = json.loads(json_result.stdout)
-    assert summary["status"] == "foundation-ready"
+    assert summary["command"] == "cli"
+    assert summary["outcome"] == "rejected"
+    assert summary["reason_code"] == "invalid-cli-usage"
     assert json_result.stdout.encode("utf-8") == canonical_json_bytes(summary) + b"\n"
     assert json_result.stderr == ""
 

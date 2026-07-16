@@ -12,10 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from model_benchmark.declarations.canonical import canonical_json_bytes
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
-from model_benchmark.declarations.scenario_locks import (
-    HARBOR_COMMIT,
-    schema_root_path,
-)
+from model_benchmark.declarations.scenario_locks import schema_root_path
 from model_benchmark.declarations.schemas import SchemaRegistry, SchemaValidationError
 from model_benchmark.declarations.scenarios import (
     ScenarioPackageError,
