@@ -253,3 +253,55 @@ def test_provider_failed_native_retry_is_observed_and_charged_without_proxy_retr
     assert snapshot.request_count == 2
     assert snapshot.provider_tokens == 16
     assert snapshot.provider_cost_usd == "0.50"
+
+
+def test_stream_cost_event_records_maximum_reported_cost_despite_trailing_zero(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    stream = (
+        b'data: {"choices":[{"delta":{"content":"ok"}}],"model":"locked/model"}\n\n'
+        b'data: {"choices":[],"model":"locked/model","usage":{"total_tokens":98}}\n\n'
+        b'data: {"choices":[],"x-opencode-type":"inference-cost","cost":"0.00001484",'
+        b'"normalizedUsage":{"inputTokens":90,"outputTokens":8}}\n\n'
+        b"data: [DONE]\n\n"
+        b'data: {"choices":[],"cost":"0"}\n\n'
+    )
+    recording_provider.enqueue_bytes(
+        stream,
+        content_type="text/event-stream",
+        chunks=(9, 17, 3, 28),
+    )
+
+    with _proxy(recording_provider, tmp_path) as proxy:
+        status, payload = _post(proxy, _request_body())
+        snapshot = proxy.snapshot
+
+    assert (status, payload) == (200, stream)
+    assert snapshot.blocked_reason is None
+    assert snapshot.provider_tokens == 98
+    assert snapshot.provider_cost_usd == "0.00001484"
+
+
+def test_top_level_cost_string_zero_is_valid_reported_spend(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    provider_response = {
+        "choices": [],
+        "cost": "0",
+        "model": _MODEL,
+        "usage": {"total_tokens": 98},
+    }
+    recording_provider.enqueue_json(provider_response)
+    recording_provider.enqueue_json(provider_response)
+
+    with _proxy(recording_provider, tmp_path) as proxy:
+        assert _post(proxy, _request_body())[0] == 200
+        assert _post(proxy, _request_body())[0] == 200
+        snapshot = proxy.snapshot
+
+    assert snapshot.blocked_reason is None
+    assert snapshot.request_count == 2
+    assert snapshot.provider_tokens == 196
+    assert snapshot.provider_cost_usd == "0"

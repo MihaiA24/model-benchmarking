@@ -241,12 +241,17 @@ class _MetadataObserver:
             tokens = usage.get("total_tokens")
             if isinstance(tokens, int) and not isinstance(tokens, bool) and tokens >= 0:
                 self.tokens = tokens
-            parsed_cost = _parse_cost(usage.get("cost_usd"))
-            if parsed_cost is not None:
-                self.cost = parsed_cost
-        parsed_cost = _parse_cost(value.get("cost_usd"))
-        if parsed_cost is not None:
-            self.cost = parsed_cost
+            self._observe_cost(usage)
+        self._observe_cost(value)
+
+    def _observe_cost(self, value: dict[str, object]) -> None:
+        # Providers report spend as `cost_usd` or `cost` (opencode zen); one
+        # response may carry several cost events (zen appends a zero-cost
+        # event after [DONE]), so keep the per-response maximum.
+        for field in ("cost_usd", "cost"):
+            parsed = _parse_cost(value.get(field))
+            if parsed is not None and (self.cost is None or parsed > self.cost):
+                self.cost = parsed
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
