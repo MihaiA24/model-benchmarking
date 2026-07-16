@@ -1914,7 +1914,7 @@ class NativeFunctionalV1Runtime:
                     context_digest = _tree_digest(context)
                     reference = (
                         f"model-benchmark.local/scenario-{name}-{role}:"
-                        f"{context_digest.value.rsplit(':', 1)[1]}"
+                        f"{context_digest.rsplit(':', 1)[1]}"
                     )
                     image_record = _build_image(context, reference)
                     runtime_images[role] = image_record
