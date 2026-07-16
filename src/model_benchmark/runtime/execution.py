@@ -1912,22 +1912,43 @@ class NativeFunctionalV1Runtime:
                     target_config=target,
                     qualification_record=None,
                 )
+                store_manifest = load_canonical_json(output.read_bytes())
+                if not isinstance(store_manifest, dict):
+                    raise ExecutionError(
+                        "provisioning-inventory-mismatch",
+                        f"{name} provisioning manifest is malformed",
+                    )
+                store_images = {
+                    record["role"]: record
+                    for record in store_manifest["runtime_images"]
+                    if isinstance(record, Mapping)
+                }
                 runtime_images: dict[str, object] = {}
-                for role, context_relative, dockerfile_relative in (
-                    ("main", "environment", "Dockerfile"),
-                    ("capture", "environment", "capture/Dockerfile"),
-                    ("verifier", "tests", "Dockerfile"),
+                for role, store_role in (
+                    ("main", "agent"),
+                    ("capture", "capture"),
+                    ("verifier", "verifier"),
                 ):
-                    context = package / context_relative
-                    dockerfile = context / dockerfile_relative
-                    context_digest = _tree_digest(context)
-                    reference = (
-                        f"model-benchmark.local/scenario-{name}-{role}:"
-                        f"{context_digest.rsplit(':', 1)[1]}"
+                    store_record = store_images.get(store_role)
+                    image = (
+                        store_record.get("image")
+                        if isinstance(store_record, Mapping)
+                        else None
                     )
-                    image_record = _build_image(
-                        context, reference, dockerfile=dockerfile
-                    )
+                    image_id = image.get("id") if isinstance(image, Mapping) else None
+                    if (
+                        not isinstance(image_id, str)
+                        or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None
+                    ):
+                        raise ExecutionError(
+                            "provisioning-inventory-mismatch",
+                            f"{name} sealed {store_role} image identity is missing",
+                        )
+                    image_record = {
+                        "image_id": f"oci-image:{image_id}",
+                        "reference": image_id,
+                        "role": role,
+                    }
                     runtime_images[role] = image_record
                     images.append(image_record)
                 scenarios[name] = {
