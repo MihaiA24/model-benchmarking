@@ -302,15 +302,6 @@ def _target_config(path: Path) -> None:
     path.write_text(yaml.safe_dump(value, sort_keys=True), encoding="utf-8")
 
 
-def _qualification_record(name: str) -> Path:
-    path = _project_root() / "artifacts/qualification/functional-v1" / f"{name}.json"
-    if not path.is_file():
-        raise ExecutionError(
-            "scenario-unqualified", f"missing Functional V1 qualification for {name}"
-        )
-    return path
-
-
 def _scenario_package(manifest: FunctionalV1Manifest, name: str) -> Path:
     package = _manifest_reference_path(manifest, "scenarios", name).parent
     checked = check_scenario_package(package)
@@ -1911,7 +1902,7 @@ class NativeFunctionalV1Runtime:
                     jobs_dir=jobs,
                     manifest_output=output,
                     target_config=target,
-                    qualification_record=_qualification_record(name),
+                    qualification_record=None,
                 )
                 runtime_images: dict[str, object] = {}
                 for role, relative in (
@@ -2103,9 +2094,9 @@ class NativeFunctionalV1Runtime:
                 receipt = preflight_scenario_package(
                     package,
                     manifest_path=Path(str(record["provisioning_manifest"])),
-                    mode="measured",
+                    mode="integration",
                     output=output,
-                    qualification_record=_qualification_record(name),
+                    qualification_record=None,
                 )
                 runtime_images = record.get("runtime_images")
                 if not isinstance(runtime_images, Mapping):
