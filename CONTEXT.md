@@ -40,6 +40,10 @@ _Avoid_: Execution Profile, production Trial limits, operator override
 A sealed platform-aware declaration binding one Functional V1 comparison condition to its exact executable or materializer, adapter behavior, native configuration, Provider Route and model mapping, evidence surfaces, and transitive common execution inputs.
 _Avoid_: Harness Profile, shared run limits, ad hoc CLI arguments
 
+**Condition Adapter**:
+The project-owned binding that satisfies the common condition contract for exactly one Functional V1 comparison condition: loading its Condition Lock, provisioning its immutable inputs, sealing its launch, and evaluating its post-run qualification. Three Condition Adapters bind Harnesses and one binds the Raw API Baseline; being a Condition Adapter confers no Harness identity or ranking eligibility.
+_Avoid_: Harness, fourth harness, launch shim
+
 **Functional V1 Home**:
 The operator-selected managed local root containing immutable provisioned inputs, Functional V1 Run Workspaces, sealed Functional V1 Run Records, and coordinator lease state for any number of Functional V1 invocations.
 _Avoid_: Run home, Benchmark Home, Run Workspace
