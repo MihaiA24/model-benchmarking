@@ -807,7 +807,7 @@ def _probe_wall_time_enforcement(image: str, run_id: str) -> dict[str, object]:
         )
     return {
         "budget_seconds": budget_seconds,
-        "enforced_after_seconds": round(time.monotonic() - started, 3),
+        "enforced_after_ms": round((time.monotonic() - started) * 1000),
         "mechanism": "coordinator-timeout-forced-termination",
     }
 
