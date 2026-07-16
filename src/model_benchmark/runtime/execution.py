@@ -34,12 +34,12 @@ from model_benchmark.declarations.canonical import (
 )
 from model_benchmark.declarations.functional_v1 import (
     CONDITIONS,
-    FIXED_LIMITS,
     MAX_PARALLEL,
     SCENARIOS,
     FunctionalV1Manifest,
 )
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
+from model_benchmark.declarations.limits import FIXED_LIMITS
 from model_benchmark.declarations.scenarios import (
     ScenarioPackageError,
     check_scenario_package,

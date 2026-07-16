@@ -27,6 +27,7 @@ from model_benchmark.declarations.identities import (
     IdentityError,
     TypedDigest,
 )
+from model_benchmark.declarations.limits import FIXED_LIMITS
 from model_benchmark.declarations.scenario_locks import schema_root_path
 from model_benchmark.declarations.schemas import SchemaRegistry, SchemaValidationError
 
@@ -38,15 +39,6 @@ SCENARIOS = (
 )
 CONDITIONS = ("omp", "opencode", "hermes", "raw-api")
 NETWORK_POLICY = "proxy-only-v1"
-FIXED_LIMITS: Mapping[str, int] = MappingProxyType(
-    {
-        "requests_per_trial": 64,
-        "wall_time_seconds_per_trial": 1_800,
-        "cpu_cores_per_trial": 2,
-        "memory_mib_per_trial": 4_096,
-        "writable_disk_mib_per_trial": 8_192,
-    }
-)
 MAX_PARALLEL = 3
 _SECRET_FIELD = re.compile(
     r"(?:api[_-]?key|credential|password|secret|token[_-]?value)", re.IGNORECASE

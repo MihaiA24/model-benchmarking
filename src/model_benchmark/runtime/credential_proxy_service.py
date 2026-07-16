@@ -6,7 +6,7 @@ import threading
 from decimal import Decimal
 from pathlib import Path
 
-from model_benchmark.declarations.functional_v1 import FIXED_LIMITS
+from model_benchmark.declarations.limits import FIXED_LIMITS
 from model_benchmark.runtime.credential_proxy import (
     PROVIDER_API_KEY_ENV,
     TRIAL_PROXY_TOKEN_ENV,
