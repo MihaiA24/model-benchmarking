@@ -680,13 +680,44 @@ class RunWorkspace:
                     "mixed-run-cell-record",
                     f"cell record identity mismatch: {cell_id}",
                 )
+            details = terminal.get("details")
+            if not isinstance(details, dict):
+                details = {}
+            score_vector = details.get("score_vector")
+            scores: dict[str, object] = {
+                "acceptance_score": None,
+                "regression_score": None,
+                "task_success": None,
+            }
+            if isinstance(score_vector, dict):
+                scores = {key: score_vector.get(key) for key in scores}
+            limitations = details.get("limitations")
+            if not isinstance(limitations, list) or not all(
+                isinstance(item, str) for item in limitations
+            ):
+                limitations = []
             terminal_cells.append(
                 {
                     "cell_id": cell_id,
+                    "condition": cell["condition"],
+                    "cost_usd": details.get("cost_usd"),
                     "disposition": terminal.get("disposition"),
+                    "duration_ns": terminal.get("duration_ns"),
+                    "ended_at_utc": terminal.get("ended_at_utc"),
                     "evidence_valid": terminal.get("evidence_valid"),
+                    "limitations": list(limitations),
+                    "provider_requests": details.get("provider_requests"),
+                    "provider_tokens": details.get("provider_tokens"),
+                    "reason_code": terminal.get("reason_code"),
                     "result_bundle_identity": terminal.get("result_bundle_identity"),
+                    "scenario": cell["scenario"],
+                    "score_vector": (
+                        dict(score_vector) if isinstance(score_vector, dict) else None
+                    ),
+                    "scores": scores,
                     "start_sha256": f"sha256:{hashlib.sha256(start_path.read_bytes()).hexdigest()}",
+                    "started_at_utc": start.get("started_at_utc"),
+                    "terminal_phase": terminal.get("terminal_phase"),
                     "terminal_sha256": f"sha256:{hashlib.sha256(terminal_path.read_bytes()).hexdigest()}",
                 }
             )
@@ -700,13 +731,21 @@ class RunWorkspace:
             cell["disposition"] in VALID_COMMAND_DISPOSITIONS for cell in terminal_cells
         )
         header_bytes = (self.root / "header.json").read_bytes()
+        provenance_path = self.root / "provenance.json"
+        provenance = (
+            _load_canonical_object(provenance_path)
+            if provenance_path.exists()
+            else None
+        )
         record = {
             "cells": terminal_cells,
             "header_sha256": f"sha256:{hashlib.sha256(header_bytes).hexdigest()}",
             "manifest_identity": self.header["manifest_identity"],
+            "provenance": provenance,
             "resolved_manifest_identity": self.header["resolved_manifest_identity"],
             "run_id": self.run_id,
             "schema_version": 1,
+            "source_yaml_sha256": self.header["source_yaml_sha256"],
             "state": "complete" if complete else "incomplete",
             "unscheduled_cells": unscheduled_cells,
             "validity": "valid" if valid else "invalid",
@@ -776,6 +815,20 @@ class OperatorContractRuntime:
         return self._native.inspect(run_id)
 
 
+def _score_text(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    return "-"
+
+
+def _count_text(value: object) -> str:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return "-"
+
+
 def _human_table(record: Mapping[str, object]) -> str:
     columns = (
         "SCENARIO | CONDITION | DISPOSITION | TASK | ACCEPT | REGRESS | "
@@ -790,13 +843,35 @@ def _human_table(record: Mapping[str, object]) -> str:
         if not isinstance(raw_cell, dict):
             continue
         planned = schedule.get(raw_cell.get("cell_id"))
-        if planned is None:
+        scenario = raw_cell.get("scenario") or (
+            planned["scenario"] if planned is not None else None
+        )
+        condition = raw_cell.get("condition") or (
+            planned["condition"] if planned is not None else None
+        )
+        if scenario is None or condition is None:
             continue
-        bundle = raw_cell.get("result_bundle_identity") or "-"
+        scores = raw_cell.get("scores")
+        if not isinstance(scores, dict):
+            scores = {}
+        duration_ns = raw_cell.get("duration_ns")
+        duration = (
+            f"{duration_ns // 1_000_000_000}s"
+            if isinstance(duration_ns, int) and not isinstance(duration_ns, bool)
+            else "-"
+        )
+        cost_usd = raw_cell.get("cost_usd")
         rows.append(
-            f"{planned['scenario']} | {planned['condition']} | "
-            f"{raw_cell.get('disposition', '-')} | - | - | - | - | - | - | - | "
-            f"{bundle}"
+            f"{scenario} | {condition} | "
+            f"{raw_cell.get('disposition') or '-'} | "
+            f"{_score_text(scores.get('task_success'))} | "
+            f"{_score_text(scores.get('acceptance_score'))} | "
+            f"{_score_text(scores.get('regression_score'))} | "
+            f"{duration} | "
+            f"{_count_text(raw_cell.get('provider_requests'))} | "
+            f"{_count_text(raw_cell.get('provider_tokens'))} | "
+            f"{cost_usd if isinstance(cost_usd, str) and cost_usd else '-'} | "
+            f"{raw_cell.get('result_bundle_identity') or '-'}"
         )
     return "\n".join(rows)
 
