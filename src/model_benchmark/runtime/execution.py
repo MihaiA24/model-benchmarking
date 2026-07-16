@@ -425,11 +425,11 @@ def _pull_exact_image(reference: str) -> None:
     _docker(["pull", "--platform", _NATIVE_PLATFORM, reference], timeout=900)
 
 
-def _dockerfile_base(context: Path) -> str:
-    first = (context / "Dockerfile").read_text(encoding="utf-8").splitlines()[0]
+def _dockerfile_base(dockerfile: Path) -> str:
+    first = dockerfile.read_text(encoding="utf-8").splitlines()[0]
     if not first.startswith("FROM "):
         raise ExecutionError(
-            "invalid-image-recipe", f"{context}/Dockerfile has no pinned base"
+            "invalid-image-recipe", f"{dockerfile} has no pinned base"
         )
     return first.removeprefix("FROM ").split()[0]
 
@@ -477,7 +477,7 @@ def _harbor_egress_identity() -> tuple[Path, str]:
 def _build_harbor_egress_image() -> dict[str, object]:
     context, hash_key = _harbor_egress_identity()
     dockerfile = context / "Dockerfile"
-    _pull_exact_image(_dockerfile_base(context))
+    _pull_exact_image(_dockerfile_base(dockerfile))
     reference = "harbor-prebuilt:harbor-docker-egress-control-sidecar--" + hash_key
     try:
         record = _image_record(reference, "harbor-egress-control")
@@ -498,14 +498,19 @@ def _build_harbor_egress_image() -> dict[str, object]:
     return record
 
 
-def _build_image(context: Path, reference: str) -> dict[str, object]:
-    _pull_exact_image(_dockerfile_base(context))
+def _build_image(
+    context: Path, reference: str, *, dockerfile: Path | None = None
+) -> dict[str, object]:
+    dockerfile = context / "Dockerfile" if dockerfile is None else dockerfile
+    _pull_exact_image(_dockerfile_base(dockerfile))
     _docker(
         [
             "build",
             "--network",
             "none",
             "--pull=false",
+            "--file",
+            str(dockerfile),
             "--tag",
             reference,
             str(context),
@@ -1905,18 +1910,21 @@ class NativeFunctionalV1Runtime:
                     qualification_record=None,
                 )
                 runtime_images: dict[str, object] = {}
-                for role, relative in (
-                    ("main", "environment"),
-                    ("capture", "environment/capture"),
-                    ("verifier", "tests"),
+                for role, context_relative, dockerfile_relative in (
+                    ("main", "environment", "Dockerfile"),
+                    ("capture", "environment", "capture/Dockerfile"),
+                    ("verifier", "tests", "Dockerfile"),
                 ):
-                    context = package / relative
+                    context = package / context_relative
+                    dockerfile = context / dockerfile_relative
                     context_digest = _tree_digest(context)
                     reference = (
                         f"model-benchmark.local/scenario-{name}-{role}:"
                         f"{context_digest.rsplit(':', 1)[1]}"
                     )
-                    image_record = _build_image(context, reference)
+                    image_record = _build_image(
+                        context, reference, dockerfile=dockerfile
+                    )
                     runtime_images[role] = image_record
                     images.append(image_record)
                 scenarios[name] = {
