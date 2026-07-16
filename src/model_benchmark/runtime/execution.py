@@ -707,14 +707,22 @@ def _probe_limits(image: str, run_id: str) -> dict[str, object]:
             "resource probe",
         )
         expected = {
-            "CpuQuota": 200000,
-            "CpuPeriod": 100000,
             "Memory": FIXED_LIMITS["memory_mib_per_trial"] * 1024**2,
             "MemorySwap": FIXED_LIMITS["memory_mib_per_trial"] * 1024**2,
             "PidsLimit": _PIDS_LIMIT,
         }
-        if not isinstance(inspected, dict) or any(
-            inspected.get(key) != value for key, value in expected.items()
+        cores = FIXED_LIMITS["cpu_cores_per_trial"]
+        cpu_exact = isinstance(inspected, dict) and (
+            inspected.get("NanoCpus") == cores * 1_000_000_000
+            or (
+                inspected.get("CpuQuota") == cores * 100000
+                and inspected.get("CpuPeriod") == 100000
+            )
+        )
+        if (
+            not isinstance(inspected, dict)
+            or not cpu_exact
+            or any(inspected.get(key) != value for key, value in expected.items())
         ):
             raise ExecutionError(
                 "resource-enforcement-failed", "Docker resource limits were not exact"
@@ -933,6 +941,23 @@ for host, port in [('1.1.1.1', 443), ('10.0.0.1', 443), ('169.254.169.254', 80),
         "provider_request_made": False,
         "public_egress_denied": True,
     }
+
+
+def _remove_sealed_tree(root: Path) -> None:
+    if not root.exists():
+        return
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            continue
+        try:
+            path.chmod(0o700 if path.is_dir() else 0o600)
+        except OSError:
+            continue
+    try:
+        root.chmod(0o700)
+    except OSError:
+        pass
+    shutil.rmtree(root, ignore_errors=True)
 
 
 def _runtime_scenario_package(
@@ -2228,7 +2253,7 @@ class NativeFunctionalV1Runtime:
             }
             return PreflightProjection(report, packages, temporary)
         except BaseException:
-            shutil.rmtree(temporary, ignore_errors=True)
+            _remove_sealed_tree(temporary)
             raise
 
     def preflight(self, manifest: FunctionalV1Manifest) -> CommandResult:
@@ -2260,7 +2285,7 @@ class NativeFunctionalV1Runtime:
                 },
             )
         finally:
-            shutil.rmtree(projection.temporary_root, ignore_errors=True)
+            _remove_sealed_tree(projection.temporary_root)
 
     def run(self, manifest: FunctionalV1Manifest) -> CommandResult:
         return self._run_schedule(manifest, CELL_SCHEDULE)
@@ -2294,7 +2319,7 @@ class NativeFunctionalV1Runtime:
                     )
                     return self._execute_schedule(workspace, executor, schedule)
                 finally:
-                    shutil.rmtree(projection.temporary_root, ignore_errors=True)
+                    _remove_sealed_tree(projection.temporary_root)
         except (ExecutionError, FunctionalV1HomeError, ScenarioPackageError) as error:
             reason = getattr(error, "reason_code", "run-rejected")
             return CommandResult(
@@ -2591,7 +2616,7 @@ class NativeFunctionalV1Runtime:
             )
         finally:
             if projection is not None:
-                shutil.rmtree(projection.temporary_root, ignore_errors=True)
+                _remove_sealed_tree(projection.temporary_root)
             if manifest_root is not None:
                 shutil.rmtree(manifest_root, ignore_errors=True)
 
