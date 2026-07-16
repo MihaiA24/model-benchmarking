@@ -12,7 +12,7 @@ from decimal import Decimal, InvalidOperation
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from types import TracebackType
-from typing import ClassVar, Self
+from typing import Self
 from urllib.parse import SplitResult, urlsplit
 
 from model_benchmark.declarations.canonical import canonical_json_bytes
@@ -60,6 +60,9 @@ class CredentialProxyConfig:
     provider_tokens_per_trial: int
     stop_after_cost_usd_per_trial: Decimal
     evidence_path: Path
+    requests_per_trial: int = 64
+    listen_host: str = "127.0.0.1"
+    listen_port: int = 0
     allowed_endpoint_paths: tuple[str, ...] = ("/chat/completions",)
     real_api_key: str = field(repr=False, default="")
     trial_token: str = field(repr=False, default="")
@@ -86,6 +89,22 @@ class CredentialProxyConfig:
             raise CredentialProxyError("upstream base URL must not end with a slash")
         if not self.model or any(ord(character) < 32 for character in self.model):
             raise CredentialProxyError("model must be non-empty control-free text")
+        if self.listen_host not in {"127.0.0.1", "0.0.0.0"}:
+            raise CredentialProxyError(
+                "proxy listen host must be loopback or all IPv4 interfaces"
+            )
+        if (
+            not isinstance(self.listen_port, int)
+            or isinstance(self.listen_port, bool)
+            or not 0 <= self.listen_port <= 65535
+        ):
+            raise CredentialProxyError("proxy listen port must be between 0 and 65535")
+        if (
+            not isinstance(self.requests_per_trial, int)
+            or isinstance(self.requests_per_trial, bool)
+            or self.requests_per_trial <= 0
+        ):
+            raise CredentialProxyError("provider request limit must be positive")
         if self.provider_tokens_per_trial <= 0:
             raise CredentialProxyError("provider token threshold must be positive")
         if (
@@ -102,9 +121,13 @@ class CredentialProxyConfig:
         ):
             raise CredentialProxyError("proxy credentials must be header-safe")
         if self.real_api_key == self.trial_token:
-            raise CredentialProxyError("proxy token must differ from the provider credential")
+            raise CredentialProxyError(
+                "proxy token must differ from the provider credential"
+            )
         if not self.allowed_endpoint_paths:
-            raise CredentialProxyError("at least one provider endpoint path is required")
+            raise CredentialProxyError(
+                "at least one provider endpoint path is required"
+            )
         for value in self.allowed_endpoint_paths:
             path = PurePosixPath(value)
             if (
@@ -130,7 +153,10 @@ class CredentialProxyConfig:
         provider_tokens_per_trial: int,
         stop_after_cost_usd_per_trial: Decimal,
         evidence_path: Path,
+        requests_per_trial: int = 64,
         allowed_endpoint_paths: tuple[str, ...] = ("/chat/completions",),
+        listen_host: str = "127.0.0.1",
+        listen_port: int = 0,
     ) -> Self:
         return cls(
             upstream_base_url=upstream_base_url,
@@ -140,6 +166,9 @@ class CredentialProxyConfig:
             provider_tokens_per_trial=provider_tokens_per_trial,
             stop_after_cost_usd_per_trial=stop_after_cost_usd_per_trial,
             evidence_path=evidence_path,
+            requests_per_trial=requests_per_trial,
+            listen_host=listen_host,
+            listen_port=listen_port,
             allowed_endpoint_paths=allowed_endpoint_paths,
         )
 
@@ -154,7 +183,9 @@ class ProxySnapshot:
 
 class _MetadataObserver:
     def __init__(self, content_type: str) -> None:
-        self._is_event_stream = content_type.split(";", 1)[0].strip().lower() == "text/event-stream"
+        self._is_event_stream = (
+            content_type.split(";", 1)[0].strip().lower() == "text/event-stream"
+        )
         self._buffer = bytearray()
         self._too_large = False
         self.model: str | None = None
@@ -242,8 +273,6 @@ def _canonical_cost(value: Decimal) -> str:
 
 
 class _ProxyState:
-    REQUEST_LIMIT: ClassVar[int] = 64
-
     def __init__(self, config: CredentialProxyConfig) -> None:
         self.config = config
         self.gate = threading.Lock()
@@ -254,7 +283,10 @@ class _ProxyState:
         self.blocked_reason: str | None = None
 
     def append_evidence(self, event: dict[str, object]) -> None:
-        forbidden = (self.config.real_api_key.encode(), self.config.trial_token.encode())
+        forbidden = (
+            self.config.real_api_key.encode(),
+            self.config.trial_token.encode(),
+        )
         data = canonical_json_bytes(event) + b"\n"
         if any(secret in data for secret in forbidden):
             raise RuntimeError("proxy evidence contains a credential")
@@ -285,7 +317,9 @@ class CredentialProxy:
         self.config = config
         self._state = _ProxyState(config)
         handler = self._handler_type()
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self._server = ThreadingHTTPServer(
+            (config.listen_host, config.listen_port), handler
+        )
         self._server.daemon_threads = True
         self._thread: threading.Thread | None = None
 
@@ -294,7 +328,8 @@ class CredentialProxy:
         parsed = urlsplit(self.config.upstream_base_url)
         prefix = "" if parsed.path in {"", "/"} else parsed.path
         host, port = self._server.server_address
-        return f"http://{host}:{port}{prefix}"
+        advertised_host = "127.0.0.1" if host == "0.0.0.0" else host
+        return f"http://{advertised_host}:{port}{prefix}"
 
     @property
     def trial_environment(self) -> dict[str, str]:
@@ -344,6 +379,19 @@ class CredentialProxy:
 
             def log_message(self, _format: str, *_arguments: object) -> None:
                 return
+
+            def do_GET(self) -> None:
+                self.close_connection = True
+                if urlsplit(self.path).path != "/healthz":
+                    self._send_error(404, "undeclared-proxy-path")
+                    return
+                body = canonical_json_bytes({"status": "ready"})
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(body)
 
             def do_POST(self) -> None:
                 self.close_connection = True
@@ -402,11 +450,18 @@ class CredentialProxy:
 
             def _validate_request(self) -> tuple[str, int] | None:
                 parsed_target = urlsplit(self.path)
-                if parsed_target.scheme or parsed_target.netloc or parsed_target.query or parsed_target.fragment:
+                if (
+                    parsed_target.scheme
+                    or parsed_target.netloc
+                    or parsed_target.query
+                    or parsed_target.fragment
+                ):
                     return "undeclared-provider-route", 404
                 upstream = urlsplit(state.config.upstream_base_url)
                 prefix = "" if upstream.path in {"", "/"} else upstream.path
-                allowed = {f"{prefix}{path}" for path in state.config.allowed_endpoint_paths}
+                allowed = {
+                    f"{prefix}{path}" for path in state.config.allowed_endpoint_paths
+                }
                 if parsed_target.path not in allowed:
                     return "undeclared-provider-path", 404
                 if any(name.lower() in _ROUTE_CONTROL_HEADERS for name in self.headers):
@@ -421,7 +476,7 @@ class CredentialProxy:
                     return "invalid-request-content-type", 415
                 if state.blocked_reason is not None:
                     return state.blocked_reason, 429
-                if state.request_count >= state.REQUEST_LIMIT:
+                if state.request_count >= state.config.requests_per_trial:
                     state.blocked_reason = "request-limit-reached"
                     return state.blocked_reason, 429
                 if self.headers.get("Content-Encoding") not in {None, "identity"}:
@@ -436,12 +491,19 @@ class CredentialProxy:
                     return "invalid-request-length", 400
                 if content_length < 0 or content_length > MAX_REQUEST_BYTES:
                     return "request-size-limit", 413
-                content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                content_type = (
+                    self.headers.get("Content-Type", "")
+                    .split(";", 1)[0]
+                    .strip()
+                    .lower()
+                )
                 if content_type != "application/json":
                     return "invalid-request-content-type", 415
                 return None
 
-            def _reject_after_read(self, started_ns: int, reason: str, status: int) -> None:
+            def _reject_after_read(
+                self, started_ns: int, reason: str, status: int
+            ) -> None:
                 state.append_evidence(
                     {
                         "budget_events": [],
@@ -455,14 +517,17 @@ class CredentialProxy:
                 )
                 self._send_error(status, reason)
 
-            def _forward(self, body: bytes, *, request_index: int, started_ns: int) -> None:
+            def _forward(
+                self, body: bytes, *, request_index: int, started_ns: int
+            ) -> None:
                 upstream = urlsplit(state.config.upstream_base_url)
                 connection = _connection(upstream)
                 headers = {
                     name: value
                     for name, value in self.headers.items()
                     if name.lower()
-                    not in _HOP_BY_HOP_HEADERS | {"authorization", "host", "content-length"}
+                    not in _HOP_BY_HOP_HEADERS
+                    | {"authorization", "host", "content-length"}
                 }
                 headers["Authorization"] = f"Bearer {state.config.real_api_key}"
                 headers["Content-Length"] = str(len(body))
@@ -514,7 +579,9 @@ class CredentialProxy:
                 observer.finish()
                 if header_cost is not None:
                     observer.cost = header_cost
-                self._record_response(observer, response.status, request_index, started_ns)
+                self._record_response(
+                    observer, response.status, request_index, started_ns
+                )
 
             def _record_response(
                 self,
@@ -529,8 +596,7 @@ class CredentialProxy:
                 token_overshoot = 0
                 cost_overshoot = Decimal(0)
                 model_mismatch = (
-                    observer.model is not None
-                    and observer.model != state.config.model
+                    observer.model is not None and observer.model != state.config.model
                 )
                 missing_success_metadata = successful and (
                     observer.model is None
@@ -549,11 +615,15 @@ class CredentialProxy:
                     )
                     cost_overshoot = max(
                         Decimal(0),
-                        state.provider_cost - state.config.stop_after_cost_usd_per_trial,
+                        state.provider_cost
+                        - state.config.stop_after_cost_usd_per_trial,
                     )
                     if state.provider_tokens >= state.config.provider_tokens_per_trial:
                         budget_events.append("tokens-stop-after-response")
-                    if state.provider_cost >= state.config.stop_after_cost_usd_per_trial:
+                    if (
+                        state.provider_cost
+                        >= state.config.stop_after_cost_usd_per_trial
+                    ):
                         budget_events.append("cost-stop-after-response")
                     if budget_events:
                         state.blocked_reason = budget_events[0]
@@ -563,7 +633,9 @@ class CredentialProxy:
                     "duration_ns": time.monotonic_ns() - started_ns,
                     "event": "provider-response",
                     "provider_cost_usd": (
-                        _canonical_cost(observer.cost) if observer.cost is not None else None
+                        _canonical_cost(observer.cost)
+                        if observer.cost is not None
+                        else None
                     ),
                     "provider_model": observer.model,
                     "provider_tokens": observer.tokens,
@@ -609,4 +681,6 @@ def _connection(parsed: SplitResult) -> http.client.HTTPConnection:
 def credential_fingerprint_forbidden(_credential: str) -> None:
     """Make reusable credential hashes an explicit unsupported operation."""
 
-    raise CredentialProxyError("provider credentials must never be fingerprinted or persisted")
+    raise CredentialProxyError(
+        "provider credentials must never be fingerprinted or persisted"
+    )

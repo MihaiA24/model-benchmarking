@@ -22,7 +22,11 @@ from model_benchmark.declarations.functional_v1 import (
     SCENARIOS,
     FunctionalV1Manifest,
 )
-from model_benchmark.declarations.identities import DigestKind, IdentityError, TypedDigest
+from model_benchmark.declarations.identities import (
+    DigestKind,
+    IdentityError,
+    TypedDigest,
+)
 
 
 CELL_DISPOSITIONS = (
@@ -47,19 +51,13 @@ CELL_SCHEDULE = tuple(
         "scenario": scenario,
     }
     for index, (scenario, condition) in enumerate(
-        (
-            (scenario, condition)
-            for scenario in SCENARIOS
-            for condition in CONDITIONS
-        ),
+        ((scenario, condition) for scenario in SCENARIOS for condition in CONDITIONS),
         start=1,
     )
 )
 _CELL_IDS = frozenset(cell["cell_id"] for cell in CELL_SCHEDULE)
 _REASON_CODE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-_UTC_TIMESTAMP = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$"
-)
+_UTC_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$")
 
 
 class FunctionalV1HomeError(RuntimeError):
@@ -217,9 +215,13 @@ def _validate_run_id(run_id: str) -> str:
     try:
         parsed = uuid.UUID(run_id)
     except (ValueError, AttributeError) as error:
-        raise FunctionalV1HomeError("invalid-run-id", "Run ID must be a UUIDv7") from error
+        raise FunctionalV1HomeError(
+            "invalid-run-id", "Run ID must be a UUIDv7"
+        ) from error
     if parsed.version != 7 or str(parsed) != run_id:
-        raise FunctionalV1HomeError("invalid-run-id", "Run ID must be a canonical UUIDv7")
+        raise FunctionalV1HomeError(
+            "invalid-run-id", "Run ID must be a canonical UUIDv7"
+        )
     return run_id
 
 
@@ -249,7 +251,9 @@ class FunctionalV1Home:
             fcntl.flock(descriptor, operation | fcntl.LOCK_NB)
         except BlockingIOError as error:
             os.close(descriptor)
-            raise FunctionalV1HomeError(reason_code, f"managed-home lease is busy: {path.name}") from error
+            raise FunctionalV1HomeError(
+                reason_code, f"managed-home lease is busy: {path.name}"
+            ) from error
         return descriptor
 
     def provisioning_lease(self) -> _Lease:
@@ -285,7 +289,9 @@ class FunctionalV1Home:
         ]
         for name in SCENARIOS:
             data = manifest.scenario_lock_bytes[name]
-            entries.append((TypedDigest.from_bytes(DigestKind.PACKAGE_LOCK, data), data))
+            entries.append(
+                (TypedDigest.from_bytes(DigestKind.PACKAGE_LOCK, data), data)
+            )
         for name in CONDITIONS:
             data = manifest.condition_lock_bytes[name]
             entries.append(
@@ -494,6 +500,72 @@ class RunWorkspace:
         )
         return payload
 
+    def write_cell_execution(
+        self,
+        cell_id: str,
+        *,
+        disposition: str,
+        terminal_phase: str,
+        reason_code: str,
+        ended_at_utc: str,
+        duration_ns: int,
+        evidence_valid: bool,
+        details: Mapping[str, object] | None = None,
+    ) -> Mapping[str, object]:
+        start_path = self._cell_path(cell_id, "start.json")
+        if not start_path.is_file() or start_path.is_symlink():
+            raise FunctionalV1HomeError(
+                "cell-not-started",
+                f"cell has no durable start record: {cell_id}",
+            )
+        if disposition not in CELL_DISPOSITIONS:
+            raise FunctionalV1HomeError(
+                "invalid-cell-record",
+                f"invalid execution disposition: {disposition}",
+            )
+        if not isinstance(terminal_phase, str) or not terminal_phase:
+            raise FunctionalV1HomeError(
+                "invalid-cell-record", "terminal_phase must be non-empty"
+            )
+        if _REASON_CODE.fullmatch(reason_code) is None:
+            raise FunctionalV1HomeError(
+                "invalid-cell-record",
+                "reason_code must use lowercase kebab-case",
+            )
+        _validate_timestamp(ended_at_utc, field="ended_at_utc")
+        if (
+            not isinstance(duration_ns, int)
+            or isinstance(duration_ns, bool)
+            or duration_ns < 0
+        ):
+            raise FunctionalV1HomeError(
+                "invalid-cell-record",
+                "duration_ns must be a non-negative integer",
+            )
+        if not isinstance(evidence_valid, bool):
+            raise FunctionalV1HomeError(
+                "invalid-cell-record", "evidence_valid must be boolean"
+            )
+        payload = {
+            "cell_id": cell_id,
+            "details": dict(details or {}),
+            "disposition": disposition,
+            "duration_ns": duration_ns,
+            "ended_at_utc": ended_at_utc,
+            "evidence_valid": evidence_valid,
+            "manifest_identity": self.header["manifest_identity"],
+            "reason_code": reason_code,
+            "run_id": self.run_id,
+            "schema_version": 1,
+            "terminal_phase": terminal_phase,
+        }
+        _immutable_write(
+            self._cell_path(cell_id, "execution.json"),
+            canonical_json_bytes(payload),
+            allow_identical=False,
+        )
+        return payload
+
     def write_cell_terminal(
         self,
         cell_id: str,
@@ -529,7 +601,11 @@ class RunWorkspace:
                 "reason_code must use lowercase kebab-case",
             )
         _validate_timestamp(ended_at_utc, field="ended_at_utc")
-        if not isinstance(duration_ns, int) or isinstance(duration_ns, bool) or duration_ns < 0:
+        if (
+            not isinstance(duration_ns, int)
+            or isinstance(duration_ns, bool)
+            or duration_ns < 0
+        ):
             raise FunctionalV1HomeError(
                 "invalid-cell-record",
                 "duration_ns must be a non-negative integer",
@@ -543,7 +619,9 @@ class RunWorkspace:
             try:
                 bundle = TypedDigest.parse(result_bundle_identity)
             except IdentityError as error:
-                raise FunctionalV1HomeError("invalid-cell-record", str(error)) from error
+                raise FunctionalV1HomeError(
+                    "invalid-cell-record", str(error)
+                ) from error
             if bundle.kind is not DigestKind.RESULT_BUNDLE:
                 raise FunctionalV1HomeError(
                     "invalid-cell-record",
@@ -619,8 +697,7 @@ class RunWorkspace:
             for cell in terminal_cells
         )
         valid = complete and all(
-            cell["disposition"] in VALID_COMMAND_DISPOSITIONS
-            for cell in terminal_cells
+            cell["disposition"] in VALID_COMMAND_DISPOSITIONS for cell in terminal_cells
         )
         header_bytes = (self.root / "header.json").read_bytes()
         record = {
@@ -676,87 +753,27 @@ class RunWorkspace:
 
 
 class OperatorContractRuntime:
-    """Issue-74 filesystem implementation; later runtime modules replace execution."""
+    """Functional V1 native provisioning, preflight, and execution coordinator."""
 
     def __init__(self, home: FunctionalV1Home) -> None:
-        self.home = home
+        from model_benchmark.runtime.execution import NativeFunctionalV1Runtime
+
+        self._native = NativeFunctionalV1Runtime(home)
 
     def provision(self, manifest: FunctionalV1Manifest) -> CommandResult:
-        with self.home.provisioning_lease():
-            self.home.store_manifest_inputs(manifest)
-        payload = {
-            "command": "provision",
-            "condition_identities": [
-                str(
-                    TypedDigest.from_bytes(
-                        DigestKind.FUNCTIONAL_V1_CONDITION,
-                        manifest.condition_lock_bytes[name],
-                    )
-                )
-                for name in CONDITIONS
-            ],
-            "manifest_identity": str(manifest.identity),
-            "outcome": "provisioned",
-            "resolved_manifest_identity": str(manifest.resolved_identity),
-            "scenario_identities": [
-                str(
-                    TypedDigest.from_bytes(
-                        DigestKind.PACKAGE_LOCK,
-                        manifest.scenario_lock_bytes[name],
-                    )
-                )
-                for name in SCENARIOS
-            ],
-            "source_yaml_sha256": manifest.source_yaml_sha256,
-        }
-        return CommandResult(
-            exit_code=0,
-            human=f"Provisioned immutable Functional V1 inputs {manifest.identity}",
-            payload=payload,
-        )
+        return self._native.provision(manifest)
 
     def preflight(self, manifest: FunctionalV1Manifest) -> CommandResult:
-        with self.home.coordinator_lease():
-            self.home.verify_manifest_inputs(manifest)
-        return CommandResult(
-            exit_code=3,
-            human="Preflight rejected: native execution preflight is not installed",
-            payload={
-                "command": "preflight",
-                "manifest_identity": str(manifest.identity),
-                "message": "native execution preflight is not installed",
-                "outcome": "rejected",
-                "reason_code": "execution-preflight-unavailable",
-            },
-        )
+        return self._native.preflight(manifest)
 
     def run(self, manifest: FunctionalV1Manifest) -> CommandResult:
-        self.home.verify_manifest_inputs(manifest)
-        return CommandResult(
-            exit_code=3,
-            human="Run rejected: native execution coordinator is not installed",
-            payload={
-                "command": "run",
-                "manifest_identity": str(manifest.identity),
-                "message": "native execution coordinator is not installed",
-                "outcome": "rejected",
-                "reason_code": "execution-coordinator-unavailable",
-            },
-        )
+        return self._native.run(manifest)
 
     def resume(self, run_id: str) -> CommandResult:
-        try:
-            sealed = self.home.sealed_run(run_id)
-        except FunctionalV1HomeError as error:
-            return CommandResult(
-                exit_code=1,
-                human=f"Resume rejected: {error}",
-                payload=error.summary("run"),
-            )
-        return _inspect_result(sealed)
+        return self._native.resume(run_id)
 
     def inspect(self, run_id: str) -> CommandResult:
-        return _inspect_result(self.home.sealed_run(run_id))
+        return self._native.inspect(run_id)
 
 
 def _human_table(record: Mapping[str, object]) -> str:

@@ -15,7 +15,7 @@ limits:
 
 execution:
   max_parallel: 3
-  network_policy: guarded-public-web-v1
+  network_policy: proxy-only-v1
 
 scenarios:
   python-sales-by-genre:

@@ -90,18 +90,28 @@ def _condition_lock(name: str) -> bytes:
             "argv": [name, "run"],
             "configuration": {"mode": "stock"},
             "environment_names": ["MODEL_BENCHMARK_PROXY_TOKEN"],
+            "harbor_agent": "model_benchmark.runtime.adapters.functional_v1:FunctionalV1ConditionAgent",
             "non_interactive": True,
             "self_update": False,
             "working_directory": "/workspace",
         },
         "artifact": {
             "digest": f"artifact:sha256:{_HEX}",
-            "kind": "raw-api-materializer" if name == "raw-api" else "native-executable",
+            "kind": "raw-api-materializer"
+            if name == "raw-api"
+            else "native-executable",
             "platform": "linux/amd64",
         },
         "condition": name,
         "evidence": {"required_paths": ["stderr.txt", "stdout.txt"]},
         "execution_profile": f"execution-profile:sha256:{_HEX}",
+        "image": {
+            "content_digest": f"artifact:sha256:{_HEX}",
+            "kind": "condition-artifact-image",
+            "mount_path": "/opt/model-benchmark-condition",
+            "platform": "linux/amd64",
+            "read_only": True,
+        },
         "provider_mapping": {
             "base_url": "manifest-provider-base-url",
             "credential": "opaque-trial-proxy-token",
@@ -152,7 +162,7 @@ def _manifest_value(root: Path) -> dict[str, Any]:
         },
         "execution": {
             "max_parallel": 3,
-            "network_policy": "guarded-public-web-v1",
+            "network_policy": "proxy-only-v1",
         },
         "scenarios": scenarios,
         "conditions": conditions,

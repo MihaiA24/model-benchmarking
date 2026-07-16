@@ -12,10 +12,16 @@ from typing import Any
 import pytest
 
 import model_benchmark.runtime.hermes as hermes_runtime
-from model_benchmark.declarations.canonical import canonical_json_bytes, load_canonical_json
+from model_benchmark.declarations.canonical import (
+    canonical_json_bytes,
+    load_canonical_json,
+)
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
 from model_benchmark.runtime.conditions import ConditionRunRequest, ConditionRunner
-from model_benchmark.runtime.credential_proxy import CredentialProxy, CredentialProxyConfig
+from model_benchmark.runtime.credential_proxy import (
+    CredentialProxy,
+    CredentialProxyConfig,
+)
 from model_benchmark.runtime.hermes import (
     HERMES_ARTIFACT_BYTES,
     HERMES_ARTIFACT_CONTAINER_PATH,
@@ -142,8 +148,6 @@ def test_provision_pulls_exact_image_once_and_warm_preflight_is_read_only(
     provision["image_id"] = image_id
     provision["image_identity"] = image_identity
     provision["image_reference"] = image_reference
-    lock["adapter"]["argv"][10] = image_reference
-    lock["adapter"]["argv"][12] = image_identity
     lock_bytes = canonical_json_bytes(lock)
     lock_path = tmp_path / "hermes.condition.json"
     lock_path.write_bytes(lock_bytes)
@@ -241,7 +245,10 @@ def _fake_hermes(tmp_path: Path) -> tuple[Path, Path]:
     artifact.chmod(0o555)
     docker = tmp_path / "docker"
     docker.write_text(
-        "#!" + sys.executable + "\n" + '''import http.client
+        "#!"
+        + sys.executable
+        + "\n"
+        + """import http.client
 import json
 import os
 import sys
@@ -373,7 +380,7 @@ connection.close()
     "workspace": str(workspace),
 }, sort_keys=True), encoding="utf-8")
 print("done", flush=True)
-''',
+""",
         encoding="utf-8",
     )
     docker.chmod(0o555)
@@ -385,9 +392,7 @@ def _install_fake_condition(
     artifact: Path,
 ) -> None:
     artifact_data = artifact.read_bytes()
-    artifact_identity = str(
-        TypedDigest.from_bytes(DigestKind.ARTIFACT, artifact_data)
-    )
+    artifact_identity = str(TypedDigest.from_bytes(DigestKind.ARTIFACT, artifact_data))
     condition_identity = TypedDigest.from_bytes(
         DigestKind.FUNCTIONAL_V1_CONDITION,
         canonical_json_bytes({"artifact": artifact_identity}),
@@ -503,7 +508,9 @@ def test_fresh_oneshot_trials_preserve_native_behavior_and_complete_evidence(
         (item[0].exit_code, item[0].capture_root.joinpath("stderr.bin").read_bytes())
         for item in (first, second)
     ]
-    for index, (result, snapshot, evidence_path, trial_root) in enumerate((first, second)):
+    for index, (result, snapshot, evidence_path, trial_root) in enumerate(
+        (first, second)
+    ):
         capability = recording_provider.requests[index * 2]
         request = recording_provider.requests[index * 2 + 1]
         capability_body = json.loads(capability["body"])
@@ -518,7 +525,8 @@ def test_fresh_oneshot_trials_preserve_native_behavior_and_complete_evidence(
             result,
             evidence_path,
             expected_brief_sha256="sha256:" + hashlib.sha256(_BRIEF).hexdigest(),
-            observed_brief_sha256="sha256:" + hashlib.sha256(observed_brief).hexdigest(),
+            observed_brief_sha256="sha256:"
+            + hashlib.sha256(observed_brief).hexdigest(),
             workspace_verified=(
                 observation["workspace"] == str(trial_root / "repository")
             ),
