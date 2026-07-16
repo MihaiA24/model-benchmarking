@@ -324,7 +324,7 @@ def _validate_condition_lock(
         )
         or not isinstance(adapter["configuration"], dict)
         or adapter["harbor_agent"]
-        != "model_benchmark.runtime.harbor_agent:FunctionalV1ConditionAgent"
+        != "model_benchmark.runtime.adapters.functional_v1:FunctionalV1ConditionAgent"
         or not isinstance(environment_names, list)
         or environment_names != sorted(set(environment_names))
         or not all(

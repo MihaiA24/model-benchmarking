@@ -90,7 +90,7 @@ def _condition_lock(name: str) -> bytes:
             "argv": [name, "run"],
             "configuration": {"mode": "stock"},
             "environment_names": ["MODEL_BENCHMARK_PROXY_TOKEN"],
-            "harbor_agent": "model_benchmark.runtime.harbor_agent:FunctionalV1ConditionAgent",
+            "harbor_agent": "model_benchmark.runtime.adapters.functional_v1:FunctionalV1ConditionAgent",
             "non_interactive": True,
             "self_update": False,
             "working_directory": "/workspace",

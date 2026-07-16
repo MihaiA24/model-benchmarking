@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import os
 import platform
@@ -8,10 +9,12 @@ import secrets
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -21,8 +24,6 @@ from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 import yaml
-from harbor.environments.docker import EGRESS_CONTROL_SIDECAR_CONTEXT_PATH
-from harbor.utils.container_cache import docker_build_context_hash
 
 from model_benchmark.declarations.canonical import (
     CanonicalizationError,
@@ -66,6 +67,9 @@ _MINIMUM_MEMORY_BYTES = 24 * 1024**3
 _MINIMUM_DOCKER_FREE_BYTES = 50 * 1024**3
 _PIDS_LIMIT = 256
 _CONDITION_MOUNT = "/opt/model-benchmark-condition"
+_WALL_TIME_SECONDS = FIXED_LIMITS["wall_time_seconds_per_trial"]
+_WALL_TIME_GRACE_SECONDS = 60
+_STORAGE_OPT_SIZE = f"{FIXED_LIMITS['writable_disk_mib_per_trial']}M"
 _PYTHON_BASE = (
     "python:3.12.12-slim-bookworm@sha256:"
     "593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c"
@@ -79,6 +83,26 @@ _VALID_CONTINUE = {
     "valid_limit_outcome",
 }
 _GLOBAL_FAULTS = {"invalid_infrastructure", "invalid_integrity", "not_started"}
+
+
+def _stage_schedules() -> Mapping[str, tuple[Mapping[str, object], ...]]:
+    scenario = SCENARIOS[0]
+    stages: dict[str, tuple[Mapping[str, object], ...]] = {
+        f"single-{condition}": tuple(
+            cell
+            for cell in CELL_SCHEDULE
+            if cell["scenario"] == scenario and cell["condition"] == condition
+        )
+        for condition in ("omp", "opencode", "hermes")
+    }
+    stages["four-condition"] = tuple(
+        cell for cell in CELL_SCHEDULE if cell["scenario"] == scenario
+    )
+    stages["twelve-cell"] = tuple(CELL_SCHEDULE)
+    return MappingProxyType(stages)
+
+
+INTERNAL_QUALIFICATION_STAGES = _stage_schedules()
 
 
 class ExecutionError(RuntimeError):
@@ -97,7 +121,7 @@ class CellExecution:
     details: Mapping[str, object]
 
 
-class CellRunner(Protocol):
+class CellExecutor(Protocol):
     def run_cell(
         self,
         cell: Mapping[str, object],
@@ -416,16 +440,50 @@ def _dockerfile_base(context: Path) -> str:
     return first.removeprefix("FROM ").split()[0]
 
 
+def _harbor_seam() -> dict[str, object]:
+    binary = shutil.which("harbor")
+    if binary is None:
+        raise ExecutionError(
+            "harbor-seam-missing", "the pinned Harbor CLI is not installed"
+        )
+    try:
+        version = importlib.metadata.version("harbor")
+    except importlib.metadata.PackageNotFoundError as error:
+        raise ExecutionError(
+            "harbor-seam-missing", "the pinned Harbor distribution is absent"
+        ) from error
+    return {"binary": str(Path(binary).resolve()), "version": version}
+
+
+def _harbor_egress_identity() -> tuple[Path, str]:
+    script = (
+        "import json\n"
+        "from harbor.environments.docker import EGRESS_CONTROL_SIDECAR_CONTEXT_PATH\n"
+        "from harbor.utils.container_cache import docker_build_context_hash\n"
+        "context = EGRESS_CONTROL_SIDECAR_CONTEXT_PATH\n"
+        "hash_key = docker_build_context_hash(\n"
+        "    context=context,\n"
+        "    dockerfile_path=context / 'Dockerfile',\n"
+        "    build_args={},\n"
+        f"    platform='{_NATIVE_PLATFORM}',\n"
+        ")\n"
+        "print(json.dumps({'context': str(context), 'hash': hash_key}))\n"
+    )
+    completed = _command([sys.executable, "-c", script], timeout=120)
+    value = _json_stdout(completed, "Harbor egress sidecar identity")
+    context = value.get("context") if isinstance(value, dict) else None
+    hash_key = value.get("hash") if isinstance(value, dict) else None
+    if not isinstance(context, str) or not isinstance(hash_key, str):
+        raise ExecutionError(
+            "harbor-seam-invalid", "Harbor egress sidecar identity is malformed"
+        )
+    return Path(context), hash_key
+
+
 def _build_harbor_egress_image() -> dict[str, object]:
-    context = EGRESS_CONTROL_SIDECAR_CONTEXT_PATH
+    context, hash_key = _harbor_egress_identity()
     dockerfile = context / "Dockerfile"
     _pull_exact_image(_dockerfile_base(context))
-    hash_key = docker_build_context_hash(
-        context=context,
-        dockerfile_path=dockerfile,
-        build_args={},
-        platform=_NATIVE_PLATFORM,
-    )
     reference = "harbor-prebuilt:harbor-docker-egress-control-sidecar--" + hash_key
     try:
         record = _image_record(reference, "harbor-egress-control")
@@ -634,7 +692,7 @@ def _probe_limits(image: str, run_id: str) -> dict[str, object]:
             "--pids-limit",
             str(_PIDS_LIMIT),
             "--storage-opt",
-            "size=8G",
+            _STORAGE_OPT_SIZE,
             image,
             "python3",
             "-c",
@@ -674,7 +732,7 @@ def _probe_limits(image: str, run_id: str) -> dict[str, object]:
             "--network",
             "none",
             "--storage-opt",
-            "size=8G",
+            _STORAGE_OPT_SIZE,
             image,
             "sh",
             "-c",
@@ -688,12 +746,62 @@ def _probe_limits(image: str, run_id: str) -> dict[str, object]:
             "storage-quota-probe-failed", "8 GiB writable quota was not enforced"
         )
     return {
-        "cpu_cores": 2,
-        "memory_mib": 4096,
+        "cpu_cores": FIXED_LIMITS["cpu_cores_per_trial"],
+        "memory_mib": FIXED_LIMITS["memory_mib_per_trial"],
         "pids": _PIDS_LIMIT,
-        "storage_mib": 8192,
-        "wall_time_seconds": 1800,
+        "storage_mib": FIXED_LIMITS["writable_disk_mib_per_trial"],
+        "wall_time_enforcement": _probe_wall_time_enforcement(image, run_id),
+        "wall_time_seconds": _WALL_TIME_SECONDS,
         "writable_output": True,
+    }
+
+
+def _probe_wall_time_enforcement(image: str, run_id: str) -> dict[str, object]:
+    label = f"{_RUN_LABEL}={run_id}"
+    name = f"mb-{run_id[:12]}-wall-time"
+    budget_seconds = 2
+    started = time.monotonic()
+    process = subprocess.Popen(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--name",
+            name,
+            "--label",
+            label,
+            "--network",
+            "none",
+            image,
+            "python3",
+            "-c",
+            "import time; time.sleep(600)",
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    enforced = False
+    try:
+        process.communicate(timeout=budget_seconds)
+    except subprocess.TimeoutExpired:
+        _docker(["rm", "--force", name], check=False)
+        try:
+            process.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+        enforced = True
+    if not enforced:
+        raise ExecutionError(
+            "wall-time-enforcement-probe-failed",
+            "wall-time probe container exited before its budget elapsed",
+        )
+    return {
+        "budget_seconds": budget_seconds,
+        "enforced_after_seconds": round(time.monotonic() - started, 3),
+        "mechanism": "coordinator-timeout-forced-termination",
     }
 
 
@@ -863,8 +971,8 @@ def _runtime_scenario_package(
     return destination, identity
 
 
-def _condition_mounts(condition: str, reference: str) -> list[dict[str, object]]:
-    mounts: list[dict[str, object]] = [
+def _condition_mounts(reference: str) -> list[dict[str, object]]:
+    return [
         {
             "type": "image",
             "source": reference,
@@ -872,7 +980,6 @@ def _condition_mounts(condition: str, reference: str) -> list[dict[str, object]]
             "read_only": True,
         }
     ]
-    return mounts
 
 
 def _probe_condition_mounts(
@@ -892,25 +999,48 @@ def _probe_condition_mounts(
             )
         reference = str(record["reference"])
         arguments = ["run", "--rm", "--network", "none"]
-        for mount in _condition_mounts(condition, reference):
-            option = f"type=image,src={mount['source']},dst={mount['target']},readonly"
-            subpath = mount.get("image")
-            if isinstance(subpath, dict):
-                option += f",image-subpath={subpath['subpath']}"
-            arguments.extend(["--mount", option])
-        arguments.extend([main_image, "test", "-x", f"{_CONDITION_MOUNT}/entrypoint"])
-        completed = _docker(arguments, timeout=60, check=False)
-        if completed.returncode != 0:
+        for mount in _condition_mounts(reference):
+            arguments.extend(
+                [
+                    "--mount",
+                    f"type=image,src={mount['source']},dst={mount['target']},readonly",
+                ]
+            )
+        arguments.append(main_image)
+        entrypoint_probe = _docker(
+            [*arguments, "test", "-x", f"{_CONDITION_MOUNT}/entrypoint"],
+            timeout=60,
+            check=False,
+        )
+        if entrypoint_probe.returncode != 0:
             raise ExecutionError(
                 "condition-image-mount-failed", f"cannot mount {condition} read-only"
+            )
+        verifier_probe = _docker(
+            [*arguments, "test", "-e", f"{_CONDITION_MOUNT}/verifier"],
+            timeout=60,
+            check=False,
+        )
+        mounted = _docker([*arguments, "ls", "/opt"], timeout=60, check=False)
+        mounted_entries = mounted.stdout.split()
+        verifier_present = verifier_probe.returncode == 0
+        unselected_present = (
+            mounted.returncode != 0
+            or mounted_entries != [_CONDITION_MOUNT.rsplit("/", 1)[1]]
+        )
+        if verifier_present or unselected_present:
+            raise ExecutionError(
+                "condition-image-content-invalid",
+                f"{condition} image exposes verifier bytes or unselected artifacts",
             )
         results.append(
             {
                 "condition": condition,
                 "image_id": record["image_id"],
+                "mounted_opt_entries": mounted_entries,
                 "read_only": True,
-                "unselected_artifacts_present": False,
-                "verifier_bytes_present": False,
+                "unselected_artifacts_present": unselected_present,
+                "verifier_bytes_present": verifier_present,
             }
         )
     return results
@@ -919,9 +1049,9 @@ def _probe_condition_mounts(
 class FunctionalV1Coordinator:
     """Fixed-order, fixed-width one-attempt scheduler."""
 
-    def __init__(self, workspace: RunWorkspace, runner: CellRunner) -> None:
+    def __init__(self, workspace: RunWorkspace, executor: CellExecutor) -> None:
         self.workspace = workspace
-        self.runner = runner
+        self.executor = executor
 
     def execute(
         self,
@@ -932,15 +1062,15 @@ class FunctionalV1Coordinator:
         futures: dict[Future[CellExecution], Mapping[str, object]] = {}
         next_index = 0
 
-        def submit(executor: ThreadPoolExecutor, cell: Mapping[str, object]) -> None:
+        def submit(pool: ThreadPoolExecutor, cell: Mapping[str, object]) -> None:
             cell_id = str(cell["cell_id"])
             self.workspace.write_cell_start(
                 cell_id,
                 started_at_utc=_utc_now(),
                 details={"condition": cell["condition"], "scenario": cell["scenario"]},
             )
-            future = executor.submit(
-                self.runner.run_cell,
+            future = pool.submit(
+                self.executor.run_cell,
                 cell,
                 run_id=self.workspace.run_id,
                 raw_root=self.workspace.root / "cells" / cell_id / "raw",
@@ -949,9 +1079,9 @@ class FunctionalV1Coordinator:
             futures[future] = cell
 
         try:
-            with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as executor:
+            with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
                 while next_index < len(schedule) and len(futures) < MAX_PARALLEL:
-                    submit(executor, schedule[next_index])
+                    submit(pool, schedule[next_index])
                     next_index += 1
                 while futures:
                     completed, _ = wait(tuple(futures), return_when=FIRST_COMPLETED)
@@ -987,15 +1117,15 @@ class FunctionalV1Coordinator:
                             and not cancel.is_set()
                         ):
                             cancel.set()
-                            self.runner.terminate_all()
+                            self.executor.terminate_all()
                     if cancel.is_set():
                         continue
                     while next_index < len(schedule) and len(futures) < MAX_PARALLEL:
-                        submit(executor, schedule[next_index])
+                        submit(pool, schedule[next_index])
                         next_index += 1
         except KeyboardInterrupt:
             cancel.set()
-            self.runner.terminate_all()
+            self.executor.terminate_all()
             raise
         return tuple(
             results[str(cell["cell_id"])]
@@ -1004,7 +1134,7 @@ class FunctionalV1Coordinator:
         )
 
 
-class HarborCellRunner:
+class HarborCellExecutor:
     def __init__(
         self,
         manifest: FunctionalV1Manifest,
@@ -1045,6 +1175,15 @@ class HarborCellRunner:
             )
         return value[key]
 
+    def _harbor_binary(self) -> str:
+        seam = self._record("shared", "harbor-seam")
+        binary = seam.get("binary")
+        if not isinstance(binary, str) or not binary:
+            raise ExecutionError(
+                "harbor-seam-missing", "provisioned Harbor seam identity is invalid"
+            )
+        return binary
+
     def _target_path(self, scenario: str) -> str:
         package = _scenario_package(self.manifest, scenario)
         value = yaml.safe_load((package / "scenario.yaml").read_text(encoding="utf-8"))
@@ -1065,7 +1204,6 @@ class HarborCellRunner:
         *,
         run_id: str,
         cell_id: str,
-        condition: str,
         condition_image: str,
         main_image: str,
         capture_image: str,
@@ -1094,8 +1232,8 @@ class HarborCellRunner:
                     "labels": labels,
                     "pids_limit": _PIDS_LIMIT,
                     "pull_policy": "never",
-                    "storage_opt": {"size": "8G"},
-                    "volumes": _condition_mounts(condition, condition_image),
+                    "storage_opt": {"size": _STORAGE_OPT_SIZE},
+                    "volumes": _condition_mounts(condition_image),
                 },
                 "credential-proxy": {
                     "cap_drop": ["ALL"],
@@ -1193,6 +1331,19 @@ class HarborCellRunner:
                     "secret-redaction-failed", "credential remained in evidence"
                 )
 
+    def _preserve_raw_evidence(
+        self,
+        source: Path,
+        destination: Path,
+        secrets_to_redact: tuple[bytes, ...],
+    ) -> bool:
+        try:
+            self._copy_redacted(source, destination, secrets_to_redact)
+        except (ExecutionError, OSError):
+            shutil.rmtree(destination, ignore_errors=True)
+            return False
+        return True
+
     def _execution(
         self,
         result_path: Path,
@@ -1269,12 +1420,12 @@ class HarborCellRunner:
             "harbor_exception": result.get("exception_info"),
             "harbor_trial_name": result.get("trial_name"),
             "limits": {
-                "cpu_cores": 2,
-                "memory_mib": 4096,
+                "cpu_cores": FIXED_LIMITS["cpu_cores_per_trial"],
+                "memory_mib": FIXED_LIMITS["memory_mib_per_trial"],
                 "pids": _PIDS_LIMIT,
-                "requests": 64,
-                "wall_time_seconds": 1800,
-                "writable_disk_mib": 8192,
+                "requests": FIXED_LIMITS["requests_per_trial"],
+                "wall_time_seconds": _WALL_TIME_SECONDS,
+                "writable_disk_mib": FIXED_LIMITS["writable_disk_mib_per_trial"],
             },
             "provider_requests": requests,
             "provider_tokens": tokens,
@@ -1321,13 +1472,32 @@ class HarborCellRunner:
         if isinstance(metadata, dict) and metadata.get("exit_code") == 137:
             return CellExecution(
                 "valid_limit_outcome",
-                "agent",
+                "condition",
                 "memory-oom-limit",
                 elapsed,
                 True,
                 details,
             )
-        if result.get("exception_info") is not None:
+        exception_info = result.get("exception_info")
+        exception_type = (
+            exception_info.get("exception_type")
+            if isinstance(exception_info, dict)
+            else None
+        )
+        if exception_type == "AgentTimeoutError":
+            return CellExecution(
+                "valid_limit_outcome",
+                "condition",
+                "wall-time-limit",
+                elapsed,
+                True,
+                {
+                    **details,
+                    "limit": "wall_time_seconds_per_trial",
+                    "wall_time_seconds": _WALL_TIME_SECONDS,
+                },
+            )
+        if exception_info is not None:
             return CellExecution(
                 "valid_harness_outcome",
                 "harbor",
@@ -1339,7 +1509,7 @@ class HarborCellRunner:
         if not responses:
             return CellExecution(
                 "valid_harness_outcome",
-                "agent",
+                "condition",
                 "condition-ended-before-provider-response",
                 elapsed,
                 True,
@@ -1421,7 +1591,6 @@ class HarborCellRunner:
                 overlay,
                 run_id=run_id,
                 cell_id=cell_id,
-                condition=condition,
                 condition_image=condition_image,
                 main_image=main_image,
                 capture_image=capture_image,
@@ -1429,7 +1598,7 @@ class HarborCellRunner:
                 proxy_evidence=proxy_evidence,
             )
             arguments = [
-                shutil.which("harbor") or "harbor",
+                self._harbor_binary(),
                 "trial",
                 "start",
                 "--path",
@@ -1447,13 +1616,13 @@ class HarborCellRunner:
                 "--memory",
                 "limit",
                 "--override-cpus",
-                "2",
+                str(FIXED_LIMITS["cpu_cores_per_trial"]),
                 "--override-memory-mb",
-                "4096",
+                str(FIXED_LIMITS["memory_mib_per_trial"]),
                 "--override-storage-mb",
-                "8192",
+                str(FIXED_LIMITS["writable_disk_mib_per_trial"]),
                 "--agent-timeout",
-                "1800",
+                str(_WALL_TIME_SECONDS),
                 "--extra-docker-compose",
                 str(overlay),
                 "--allow-agent-host",
@@ -1506,7 +1675,9 @@ class HarborCellRunner:
                 self._processes.add(process)
             try:
                 try:
-                    stdout, stderr = process.communicate(timeout=1860)
+                    stdout, stderr = process.communicate(
+                        timeout=_WALL_TIME_SECONDS + _WALL_TIME_GRACE_SECONDS
+                    )
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid, signal.SIGTERM)
                     try:
@@ -1517,20 +1688,23 @@ class HarborCellRunner:
                     _cleanup_owned(run_id, cell_id)
                     return CellExecution(
                         "valid_limit_outcome",
-                        "agent",
+                        "condition",
                         "wall-time-limit",
                         time.monotonic_ns() - started,
                         True,
                         {
                             "exit_code": process.returncode,
                             "limit": "wall_time_seconds_per_trial",
-                            "wall_time_seconds": 1800,
+                            "wall_time_seconds": _WALL_TIME_SECONDS,
                         },
                     )
             finally:
                 with self._lock:
                     self._processes.discard(process)
             if cancel.is_set():
+                preserved = self._preserve_raw_evidence(
+                    root, raw_root, (real_key.encode(), token.encode())
+                )
                 _cleanup_owned(run_id, cell_id)
                 return CellExecution(
                     "invalid_infrastructure",
@@ -1538,7 +1712,10 @@ class HarborCellRunner:
                     "shared-fault-terminated",
                     time.monotonic_ns() - started,
                     False,
-                    {"exit_code": process.returncode},
+                    {
+                        "exit_code": process.returncode,
+                        "raw_evidence_preserved": preserved,
+                    },
                 )
             try:
                 result_path, result = self._trial_result(trials)
@@ -1790,7 +1967,10 @@ class NativeFunctionalV1Runtime:
                 images.append(record)
 
             egress_record = _build_harbor_egress_image()
-            shared: dict[str, object] = {"harbor-egress-control": egress_record}
+            shared: dict[str, object] = {
+                "harbor-egress-control": egress_record,
+                "harbor-seam": _harbor_seam(),
+            }
             images.append(egress_record)
             for role in ("coordinator", "credential-proxy"):
                 content = str(
@@ -1944,6 +2124,18 @@ class NativeFunctionalV1Runtime:
                     "Harbor egress image inventory is missing",
                 )
             egress_image = str(egress_record["reference"])
+            recorded_seam = shared.get("harbor-seam")
+            if not isinstance(recorded_seam, Mapping):
+                raise ExecutionError(
+                    "provisioning-inventory-mismatch",
+                    "Harbor seam identity is missing from the inventory",
+                )
+            observed_seam = _harbor_seam()
+            if dict(recorded_seam) != observed_seam:
+                raise ExecutionError(
+                    "harbor-seam-drift",
+                    "installed Harbor differs from the provisioned seam identity",
+                )
             probe_id = f"preflight-{secrets.token_hex(8)}"
             before = _resource_inventory(probe_id)
             if before:
@@ -1970,6 +2162,7 @@ class NativeFunctionalV1Runtime:
                     "slots": MAX_PARALLEL,
                 },
                 "cleanup": {"after": after, "before": before, "passed": True},
+                "harbor_seam": observed_seam,
                 "host": host,
                 "limits": limits,
                 "network": network,
@@ -2015,84 +2208,35 @@ class NativeFunctionalV1Runtime:
             shutil.rmtree(projection.temporary_root, ignore_errors=True)
 
     def run(self, manifest: FunctionalV1Manifest) -> CommandResult:
+        return self._run_schedule(manifest, CELL_SCHEDULE)
+
+    def internal_qualification(
+        self, manifest: FunctionalV1Manifest, stage: str
+    ) -> CommandResult:
+        """Internal incremental qualification path; never operator-selectable."""
+        schedule = INTERNAL_QUALIFICATION_STAGES.get(stage)
+        if schedule is None:
+            raise ExecutionError(
+                "unknown-qualification-stage",
+                f"unknown internal qualification stage: {stage}",
+            )
+        return self._run_schedule(manifest, schedule)
+
+    def _run_schedule(
+        self,
+        manifest: FunctionalV1Manifest,
+        schedule: Sequence[Mapping[str, object]],
+    ) -> CommandResult:
         try:
             with self.home.coordinator_lease():
                 projection = self._preflight(manifest)
                 workspace = self.home.create_workspace(manifest)
                 try:
                     inventory = _load_inventory(self.home, manifest)
-                    runner = HarborCellRunner(
+                    executor = HarborCellExecutor(
                         manifest, inventory, projection.packages, workspace
                     )
-                    try:
-                        outcomes = FunctionalV1Coordinator(workspace, runner).execute()
-                    except KeyboardInterrupt:
-                        self._terminalize_started(
-                            workspace,
-                            disposition="aborted_operator",
-                            terminal_phase="operator",
-                            reason_code="operator-stop",
-                        )
-                        _cleanup_owned(workspace.run_id)
-                        return CommandResult(
-                            1,
-                            "Run stopped; unstarted cells remain narrowly resumable",
-                            {
-                                "command": "run",
-                                "outcome": "aborted-operator",
-                                "run_id": workspace.run_id,
-                            },
-                        )
-                    except BaseException as error:
-                        runner.terminate_all()
-                        _cleanup_owned(workspace.run_id)
-                        self._terminalize_started(
-                            workspace,
-                            disposition="invalid_infrastructure",
-                            terminal_phase="coordinator",
-                            reason_code="coordinator-crash",
-                        )
-                        return CommandResult(
-                            1,
-                            "Coordinator failed; unstarted cells remain narrowly resumable",
-                            {
-                                "command": "run",
-                                "message": str(error),
-                                "outcome": "coordinator-crash",
-                                "run_id": workspace.run_id,
-                            },
-                        )
-                    _cleanup_owned(workspace.run_id)
-                    global_fault = next(
-                        (
-                            outcome
-                            for outcome in outcomes
-                            if outcome.disposition in _GLOBAL_FAULTS
-                        ),
-                        None,
-                    )
-                    if global_fault is not None:
-                        self._terminalize_fault(workspace, global_fault)
-                        return CommandResult(
-                            1,
-                            "Run invalidated; terminal facts await evidence sealing",
-                            {
-                                "command": "run",
-                                "outcome": "invalid-unsealed",
-                                "reason_code": global_fault.reason_code,
-                                "run_id": workspace.run_id,
-                            },
-                        )
-                    return CommandResult(
-                        1,
-                        "Execution complete; raw cells await Result Bundle sealing",
-                        {
-                            "cells_executed": len(outcomes),
-                            "command": "run",
-                            "outcome": "execution-complete-unsealed",
-                            "run_id": workspace.run_id,
-                        },
-                    )
+                    return self._execute_schedule(workspace, executor, schedule)
                 finally:
                     shutil.rmtree(projection.temporary_root, ignore_errors=True)
         except (ExecutionError, FunctionalV1HomeError, ScenarioPackageError) as error:
@@ -2109,15 +2253,95 @@ class NativeFunctionalV1Runtime:
                 },
             )
 
+    def _execute_schedule(
+        self,
+        workspace: RunWorkspace,
+        executor: CellExecutor,
+        schedule: Sequence[Mapping[str, object]],
+    ) -> CommandResult:
+        run_id = workspace.run_id
+        try:
+            outcomes = FunctionalV1Coordinator(workspace, executor).execute(schedule)
+        except KeyboardInterrupt:
+            self._terminalize_started(
+                workspace,
+                schedule,
+                disposition="aborted_operator",
+                terminal_phase="operator",
+                reason_code="operator-stop",
+            )
+            _cleanup_owned(run_id)
+            return CommandResult(
+                1,
+                "Run stopped; unstarted cells remain narrowly resumable",
+                {
+                    "command": "run",
+                    "outcome": "aborted-operator",
+                    "run_id": run_id,
+                },
+            )
+        except BaseException as error:
+            executor.terminate_all()
+            _cleanup_owned(run_id)
+            self._terminalize_started(
+                workspace,
+                schedule,
+                disposition="invalid_infrastructure",
+                terminal_phase="coordinator",
+                reason_code="coordinator-crash",
+            )
+            return CommandResult(
+                1,
+                "Coordinator failed; unstarted cells remain narrowly resumable",
+                {
+                    "command": "run",
+                    "message": str(error),
+                    "outcome": "coordinator-crash",
+                    "run_id": run_id,
+                },
+            )
+        _cleanup_owned(run_id)
+        global_fault = next(
+            (
+                outcome
+                for outcome in outcomes
+                if outcome.disposition in _GLOBAL_FAULTS
+            ),
+            None,
+        )
+        if global_fault is not None:
+            self._terminalize_fault(workspace, schedule, global_fault)
+            return CommandResult(
+                1,
+                "Run invalidated; terminal facts await evidence sealing",
+                {
+                    "command": "run",
+                    "outcome": "invalid-unsealed",
+                    "reason_code": global_fault.reason_code,
+                    "run_id": run_id,
+                },
+            )
+        return CommandResult(
+            1,
+            "Execution complete; raw cells await Result Bundle sealing",
+            {
+                "cells_executed": len(outcomes),
+                "command": "run",
+                "outcome": "execution-complete-unsealed",
+                "run_id": run_id,
+            },
+        )
+
     def _terminalize_started(
         self,
         workspace: RunWorkspace,
+        schedule: Sequence[Mapping[str, object]],
         *,
         disposition: str,
         terminal_phase: str,
         reason_code: str,
     ) -> None:
-        for cell in CELL_SCHEDULE:
+        for cell in schedule:
             cell_id = str(cell["cell_id"])
             start = workspace.root / "cells" / cell_id / "start.json"
             execution_record = workspace.root / "cells" / cell_id / "execution.json"
@@ -2136,8 +2360,13 @@ class NativeFunctionalV1Runtime:
                 details={},
             )
 
-    def _terminalize_fault(self, workspace: RunWorkspace, cause: CellExecution) -> None:
-        for cell in CELL_SCHEDULE:
+    def _terminalize_fault(
+        self,
+        workspace: RunWorkspace,
+        schedule: Sequence[Mapping[str, object]],
+        cause: CellExecution,
+    ) -> None:
+        for cell in schedule:
             cell_id = str(cell["cell_id"])
             start = workspace.root / "cells" / cell_id / "start.json"
             terminal = workspace.root / "cells" / cell_id / "terminal.json"
@@ -2189,6 +2418,7 @@ class NativeFunctionalV1Runtime:
                 projection = self._preflight(manifest)
                 self._terminalize_started(
                     workspace,
+                    CELL_SCHEDULE,
                     disposition="invalid_infrastructure",
                     terminal_phase="coordinator",
                     reason_code="started-cell-missing-terminal-record",
@@ -2212,80 +2442,10 @@ class NativeFunctionalV1Runtime:
                         },
                     )
                 inventory = _load_inventory(self.home, manifest)
-                runner = HarborCellRunner(
+                executor = HarborCellExecutor(
                     manifest, inventory, projection.packages, workspace
                 )
-                try:
-                    outcomes = FunctionalV1Coordinator(workspace, runner).execute(
-                        pending
-                    )
-                except KeyboardInterrupt:
-                    self._terminalize_started(
-                        workspace,
-                        disposition="aborted_operator",
-                        terminal_phase="operator",
-                        reason_code="operator-stop",
-                    )
-                    _cleanup_owned(run_id)
-                    return CommandResult(
-                        1,
-                        "Run stopped; unstarted cells remain narrowly resumable",
-                        {
-                            "command": "run",
-                            "outcome": "aborted-operator",
-                            "run_id": run_id,
-                        },
-                    )
-                except BaseException as error:
-                    runner.terminate_all()
-                    _cleanup_owned(run_id)
-                    self._terminalize_started(
-                        workspace,
-                        disposition="invalid_infrastructure",
-                        terminal_phase="coordinator",
-                        reason_code="coordinator-crash",
-                    )
-                    return CommandResult(
-                        1,
-                        "Coordinator failed; unstarted cells remain narrowly resumable",
-                        {
-                            "command": "run",
-                            "message": str(error),
-                            "outcome": "coordinator-crash",
-                            "run_id": run_id,
-                        },
-                    )
-                _cleanup_owned(run_id)
-                global_fault = next(
-                    (
-                        outcome
-                        for outcome in outcomes
-                        if outcome.disposition in _GLOBAL_FAULTS
-                    ),
-                    None,
-                )
-                if global_fault is not None:
-                    self._terminalize_fault(workspace, global_fault)
-                    return CommandResult(
-                        1,
-                        "Run invalidated; terminal facts await evidence sealing",
-                        {
-                            "command": "run",
-                            "outcome": "invalid-unsealed",
-                            "reason_code": global_fault.reason_code,
-                            "run_id": run_id,
-                        },
-                    )
-                return CommandResult(
-                    1,
-                    "Execution complete; raw cells await Result Bundle sealing",
-                    {
-                        "cells_executed": len(outcomes),
-                        "command": "run",
-                        "outcome": "execution-complete-unsealed",
-                        "run_id": run_id,
-                    },
-                )
+                return self._execute_schedule(workspace, executor, pending)
         except (ExecutionError, FunctionalV1HomeError, ScenarioPackageError) as error:
             return CommandResult(
                 1,

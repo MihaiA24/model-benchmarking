@@ -6,6 +6,7 @@ import threading
 from decimal import Decimal
 from pathlib import Path
 
+from model_benchmark.declarations.functional_v1 import FIXED_LIMITS
 from model_benchmark.runtime.credential_proxy import (
     PROVIDER_API_KEY_ENV,
     TRIAL_PROXY_TOKEN_ENV,
@@ -22,7 +23,7 @@ def main() -> int:
     config = CredentialProxyConfig(
         upstream_base_url=os.environ["MODEL_BENCHMARK_PROVIDER_BASE_URL"],
         model=os.environ["MODEL_BENCHMARK_PROVIDER_MODEL"],
-        requests_per_trial=64,
+        requests_per_trial=FIXED_LIMITS["requests_per_trial"],
         provider_tokens_per_trial=int(
             os.environ["MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL"]
         ),

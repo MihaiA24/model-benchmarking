@@ -14,15 +14,16 @@ import yaml
 import model_benchmark.runtime.execution as execution
 from model_benchmark.declarations.canonical import canonical_json_bytes
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
+from model_benchmark.runtime.adapters.functional_v1 import FunctionalV1ConditionAgent
 from model_benchmark.runtime.execution import (
+    INTERNAL_QUALIFICATION_STAGES,
     CellExecution,
     ExecutionError,
     FunctionalV1Coordinator,
-    HarborCellRunner,
+    HarborCellExecutor,
     condition_image_content_digest,
 )
 from model_benchmark.runtime.functional_v1 import CELL_SCHEDULE
-from model_benchmark.runtime.harbor_agent import FunctionalV1ConditionAgent
 
 
 class _Workspace:
@@ -44,7 +45,7 @@ class _Workspace:
             self.executions.append(cell_id)
 
 
-class _BlockingRunner:
+class _BlockingExecutor:
     def __init__(self) -> None:
         self.gates = [threading.Event() for _ in CELL_SCHEDULE]
         self.started = [threading.Event() for _ in CELL_SCHEDULE]
@@ -87,7 +88,7 @@ class _BlockingRunner:
             gate.set()
 
 
-class _FaultRunner(_BlockingRunner):
+class _FaultExecutor(_BlockingExecutor):
     def run_cell(
         self,
         cell: dict[str, object],
@@ -126,24 +127,24 @@ def test_scheduler_starts_exactly_three_and_refills_in_fixed_order(
     acceptance_observation: Any,
 ) -> None:
     workspace = _Workspace(tmp_path)
-    runner = _BlockingRunner()
-    coordinator = FunctionalV1Coordinator(workspace, runner)  # type: ignore[arg-type]
+    executor = _BlockingExecutor()
+    coordinator = FunctionalV1Coordinator(workspace, executor)  # type: ignore[arg-type]
     result: list[tuple[CellExecution, ...]] = []
     thread = threading.Thread(target=lambda: result.append(coordinator.execute()))
     thread.start()
 
-    assert all(event.wait(10) for event in runner.started[:3])
-    assert not runner.started[3].is_set()
-    runner.gates[0].set()
-    assert runner.started[3].wait(10)
-    assert not runner.started[4].is_set()
-    for gate in runner.gates:
+    assert all(event.wait(10) for event in executor.started[:3])
+    assert not executor.started[3].is_set()
+    executor.gates[0].set()
+    assert executor.started[3].wait(10)
+    assert not executor.started[4].is_set()
+    for gate in executor.gates:
         gate.set()
     thread.join(10)
 
     assert not thread.is_alive()
-    assert runner.maximum_active == 3
-    assert runner.calls == list(range(1, 13))
+    assert executor.maximum_active == 3
+    assert executor.calls == list(range(1, 13))
     assert Counter(workspace.starts) == Counter(
         str(cell["cell_id"]) for cell in CELL_SCHEDULE
     )
@@ -152,8 +153,8 @@ def test_scheduler_starts_exactly_three_and_refills_in_fixed_order(
     acceptance_observation(
         "fixed-three-slot-schedule",
         {
-            "execution_order": runner.calls,
-            "maximum_active": runner.maximum_active,
+            "execution_order": executor.calls,
+            "maximum_active": executor.maximum_active,
             "starts_per_cell": dict(Counter(workspace.starts)),
         },
     )
@@ -164,16 +165,16 @@ def test_shared_fault_stops_refill_and_terminates_running_cells(
     acceptance_observation: Any,
 ) -> None:
     workspace = _Workspace(tmp_path)
-    runner = _FaultRunner()
-    outcomes = FunctionalV1Coordinator(workspace, runner).execute()  # type: ignore[arg-type]
+    executor = _FaultExecutor()
+    outcomes = FunctionalV1Coordinator(workspace, executor).execute()  # type: ignore[arg-type]
 
-    assert sorted(runner.calls) == [1, 2, 3]
-    assert runner.terminated == 1
+    assert sorted(executor.calls) == [1, 2, 3]
+    assert executor.terminated == 1
     assert len(outcomes) == 3
     assert all(outcome.disposition == "invalid_infrastructure" for outcome in outcomes)
     acceptance_observation(
         "shared-fault-stops-refill",
-        {"started_indices": sorted(runner.calls), "terminate_calls": runner.terminated},
+        {"started_indices": sorted(executor.calls), "terminate_calls": executor.terminated},
     )
 
 
@@ -199,7 +200,7 @@ def test_four_condition_locks_pin_exact_read_only_image_payloads(
             "/opt/model-benchmark-condition/entrypoint"
         )
         assert lock["adapter"]["harbor_agent"] == (
-            "model_benchmark.runtime.harbor_agent:FunctionalV1ConditionAgent"
+            "model_benchmark.runtime.adapters.functional_v1:FunctionalV1ConditionAgent"
         )
         assert lock["image"] == {
             "content_digest": condition_image_content_digest(
@@ -250,7 +251,7 @@ def test_runtime_package_binds_prebuilt_main_and_verifier_images(
 
 
 def test_provider_limit_and_score_vector_are_terminal_facts(tmp_path: Path) -> None:
-    runner = HarborCellRunner.__new__(HarborCellRunner)
+    executor = HarborCellExecutor.__new__(HarborCellExecutor)
     result_path = tmp_path / "trial" / "result.json"
     verifier = result_path.parent / "verifier"
     verifier.mkdir(parents=True)
@@ -276,7 +277,7 @@ def test_provider_limit_and_score_vector_are_terminal_facts(tmp_path: Path) -> N
         }
     ]
 
-    outcome = runner._execution(
+    outcome = executor._execution(
         result_path, {"agent_result": {"metadata": {"exit_code": 0}}}, events, 99
     )
 
@@ -296,9 +297,9 @@ def test_provider_limit_and_score_vector_are_terminal_facts(tmp_path: Path) -> N
 def test_missing_provider_usage_or_cost_is_invalid_infrastructure(
     tmp_path: Path,
 ) -> None:
-    runner = HarborCellRunner.__new__(HarborCellRunner)
+    executor = HarborCellExecutor.__new__(HarborCellExecutor)
     result_path = tmp_path / "trial" / "result.json"
-    outcome = runner._execution(
+    outcome = executor._execution(
         result_path,
         {"agent_result": {"metadata": {"exit_code": 0}}},
         [
@@ -321,13 +322,12 @@ def test_harbor_overlay_exposes_only_selected_image_and_proxy_route(
     tmp_path: Path,
     acceptance_observation: Any,
 ) -> None:
-    runner = HarborCellRunner.__new__(HarborCellRunner)
+    executor = HarborCellExecutor.__new__(HarborCellExecutor)
     overlay = tmp_path / "overlay.yaml"
-    runner._overlay(
+    executor._overlay(
         overlay,
         run_id="0198ae70-0000-7000-8000-000000000036",
         cell_id="python-sales-by-genre--omp",
-        condition="omp",
         condition_image="model-benchmark.local/functional-v1/omp:locked",
         main_image="model-benchmark.local/scenario-main:locked",
         capture_image="model-benchmark.local/scenario-capture:locked",
@@ -357,7 +357,7 @@ def test_harbor_overlay_exposes_only_selected_image_and_proxy_route(
         }
     ]
     assert execution._condition_mounts(
-        "hermes", "model-benchmark.local/functional-v1/hermes:locked"
+        "model-benchmark.local/functional-v1/hermes:locked"
     ) == [
         {
             "read_only": True,
@@ -429,3 +429,103 @@ def test_native_preflight_rejects_before_docker_on_non_linux(
         execution._native_host()
 
     assert captured.value.reason_code == "unsupported-native-platform"
+
+
+def test_internal_qualification_stages_are_fixed_schedule_subsets() -> None:
+    scenario = "python-sales-by-genre"
+    stages = INTERNAL_QUALIFICATION_STAGES
+
+    assert set(stages) == {
+        "single-omp",
+        "single-opencode",
+        "single-hermes",
+        "four-condition",
+        "twelve-cell",
+    }
+    for condition in ("omp", "opencode", "hermes"):
+        stage = stages[f"single-{condition}"]
+        assert len(stage) == 1
+        assert stage[0]["scenario"] == scenario
+        assert stage[0]["condition"] == condition
+    assert stages["four-condition"] == tuple(CELL_SCHEDULE[:4])
+    assert all(cell["scenario"] == scenario for cell in stages["four-condition"])
+    assert stages["twelve-cell"] == tuple(CELL_SCHEDULE)
+
+
+def test_four_condition_qualification_refills_through_same_interface(
+    tmp_path: Path,
+    acceptance_observation: Any,
+) -> None:
+    workspace = _Workspace(tmp_path)
+    executor = _BlockingExecutor()
+    coordinator = FunctionalV1Coordinator(workspace, executor)  # type: ignore[arg-type]
+    schedule = INTERNAL_QUALIFICATION_STAGES["four-condition"]
+    result: list[tuple[CellExecution, ...]] = []
+    thread = threading.Thread(
+        target=lambda: result.append(coordinator.execute(schedule))
+    )
+    thread.start()
+
+    assert all(event.wait(10) for event in executor.started[:3])
+    assert not executor.started[3].is_set()
+    executor.gates[0].set()
+    assert executor.started[3].wait(10)
+    for gate in executor.gates:
+        gate.set()
+    thread.join(10)
+
+    assert not thread.is_alive()
+    assert executor.maximum_active == 3
+    assert executor.calls == [1, 2, 3, 4]
+    assert len(result) == 1 and len(result[0]) == 4
+    acceptance_observation(
+        "four-condition-qualification-refill",
+        {
+            "execution_order": executor.calls,
+            "maximum_active": executor.maximum_active,
+        },
+    )
+
+
+def test_unknown_qualification_stage_is_rejected(tmp_path: Path) -> None:
+    runtime = execution.NativeFunctionalV1Runtime.__new__(
+        execution.NativeFunctionalV1Runtime
+    )
+
+    with pytest.raises(ExecutionError) as captured:
+        runtime.internal_qualification(None, "partial-run")  # type: ignore[arg-type]
+
+    assert captured.value.reason_code == "unknown-qualification-stage"
+
+
+def test_drained_cell_raw_evidence_is_preserved_and_redacted(tmp_path: Path) -> None:
+    executor = HarborCellExecutor.__new__(HarborCellExecutor)
+    source = tmp_path / "cell"
+    (source / "trials").mkdir(parents=True)
+    (source / "trials" / "stdout.bin").write_bytes(b"before secret-value after")
+    destination = tmp_path / "raw"
+
+    preserved = executor._preserve_raw_evidence(
+        source, destination, (b"secret-value",)
+    )
+
+    assert preserved is True
+    assert (destination / "trials" / "stdout.bin").read_bytes() == (
+        b"before [REDACTED] after"
+    )
+
+
+def test_drained_cell_evidence_with_symlink_is_dropped_not_leaked(
+    tmp_path: Path,
+) -> None:
+    executor = HarborCellExecutor.__new__(HarborCellExecutor)
+    source = tmp_path / "cell"
+    source.mkdir()
+    (source / "stdout.bin").write_bytes(b"data")
+    (source / "escape").symlink_to(tmp_path)
+    destination = tmp_path / "raw"
+
+    preserved = executor._preserve_raw_evidence(source, destination, (b"token",))
+
+    assert preserved is False
+    assert not destination.exists()

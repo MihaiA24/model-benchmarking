@@ -12,6 +12,7 @@ from model_benchmark.runtime import (
 
 
 _MOUNT = Path("/opt/model-benchmark-condition")
+_INVALID_INVOCATION_EXIT = 78
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.condition == "hermes":
         return hermes_mounted_launch.main(common)
     if not arguments.target_path:
-        return 78
+        return _INVALID_INVOCATION_EXIT
     return raw_api_launch.main([*common, "--target-path", arguments.target_path])
 
 

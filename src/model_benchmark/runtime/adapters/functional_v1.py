@@ -5,16 +5,14 @@ import tempfile
 from pathlib import Path
 from typing import override
 
-from harbor.agents.base import BaseAgent
-from harbor.environments.base import BaseEnvironment
-from harbor.models.agent.context import AgentContext
+from harbor.agents.installed.base import BaseInstalledAgent
 
 
 _CONDITIONS = frozenset({"omp", "opencode", "hermes", "raw-api"})
 _MOUNT = "/opt/model-benchmark-condition"
 
 
-class FunctionalV1ConditionAgent(BaseAgent):
+class FunctionalV1ConditionAgent(BaseInstalledAgent):
     """Pinned Harbor installed-agent seam for one Functional V1 cell."""
 
     def __init__(
@@ -54,7 +52,7 @@ class FunctionalV1ConditionAgent(BaseAgent):
         return "1.0.0"
 
     @override
-    async def setup(self, environment: BaseEnvironment) -> None:
+    async def install(self, environment) -> None:
         command = (
             f"test -x {shlex.quote(self._entrypoint)} && "
             f"test ! -e {_MOUNT}/verifier && "
@@ -90,12 +88,7 @@ class FunctionalV1ConditionAgent(BaseAgent):
         }
 
     @override
-    async def run(
-        self,
-        instruction: str,
-        environment: BaseEnvironment,
-        context: AgentContext,
-    ) -> None:
+    async def run(self, instruction: str, environment, context) -> None:
         with tempfile.TemporaryDirectory(prefix="model-benchmark-brief-") as temporary:
             source = Path(temporary) / "instruction.md"
             source.write_text(instruction, encoding="utf-8", newline="")
