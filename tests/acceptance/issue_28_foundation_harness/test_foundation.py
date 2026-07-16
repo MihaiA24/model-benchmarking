@@ -201,7 +201,7 @@ def test_verification_writer_is_canonical_reproducible_and_read_back(tmp_path: P
         "project_root": tmp_path,
         "schema_root": SCHEMA_ROOT,
         "issue": 28,
-        "command": "uv run --frozen pytest -q tests/acceptance/issue_28 --maxfail=1",
+        "command": "uv run --frozen pytest -q tests/acceptance/issue_28_foundation_harness --maxfail=1",
         "inputs": [
             VerificationInput(
                 name="fixture",
@@ -256,7 +256,7 @@ def test_publication_failure_after_first_write_removes_partial_outputs(
             issue=28,
             command=(
                 "uv run --frozen pytest -q "
-                "tests/acceptance/issue_28 --maxfail=1"
+                "tests/acceptance/issue_28_foundation_harness --maxfail=1"
             ),
             inputs=[
                 VerificationInput(

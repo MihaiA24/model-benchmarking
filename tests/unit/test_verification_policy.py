@@ -29,7 +29,7 @@ def test_policy_classifies_every_tracked_and_issue_owned_path() -> None:
     paths.update(
         {
             "scripts/verify.py",
-            "tests/acceptance/issue_54/test_verification_policy.py",
+            "tests/acceptance/issue_54_verification_policy/test_verification_policy.py",
             "tests/architecture/test_import_boundaries.py",
             "tests/unit/test_verification_policy.py",
             "verification/__init__.py",
@@ -97,7 +97,7 @@ def test_issue_acceptance_edit_selects_local_scenario_verification() -> None:
         [
             Change(
                 status="M",
-                path="tests/acceptance/issue_29/test_scenario_authoring.py",
+                path="tests/acceptance/issue_29_scenario_authoring/test_scenario_authoring.py",
             )
         ]
     )
@@ -171,7 +171,7 @@ def test_git_derived_selection_preserves_add_modify_and_rename(tmp_path: Path) -
 def test_development_command_rejects_authoritative_and_docker_shapes() -> None:
     with pytest.raises(verify.DevelopmentRunError):
         verify._development_argv(
-            "uv run --offline --frozen pytest -q tests/acceptance/issue_54 --maxfail=1"
+            "uv run --offline --frozen pytest -q tests/acceptance/issue_54_verification_policy --maxfail=1"
         )
     with pytest.raises(verify.DevelopmentRunError):
         verify._development_argv("uv run --offline --frozen docker info")

@@ -52,7 +52,7 @@ def test_writer_publishes_canonical_artifacts_and_verifies_readback(
         project_root=tmp_path,
         schema_root=SCHEMA_ROOT,
         issue=28,
-        command="uv run --frozen pytest -q tests/acceptance/issue_28 --maxfail=1",
+        command="uv run --frozen pytest -q tests/acceptance/issue_28_foundation_harness --maxfail=1",
         inputs=_inputs(),
         cases=[
             VerificationCase(id="case-b", outcome="passed"),
@@ -65,7 +65,7 @@ def test_writer_publishes_canonical_artifacts_and_verifies_readback(
         project_root=tmp_path,
         schema_root=SCHEMA_ROOT,
         issue=28,
-        command="uv run --frozen pytest -q tests/acceptance/issue_28 --maxfail=1",
+        command="uv run --frozen pytest -q tests/acceptance/issue_28_foundation_harness --maxfail=1",
         inputs=_inputs(),
         cases=[
             VerificationCase(id="case-a", outcome="passed"),
