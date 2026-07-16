@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+import model_benchmark.runtime.execution as execution
+
 from model_benchmark.declarations.canonical import canonical_json_bytes
 from model_benchmark.declarations.functional_v1 import (
     CONDITIONS,
@@ -86,6 +88,18 @@ def test_manifest_fixes_matrix_and_execution_envelope(
         "writable_disk_mib_per_trial": 8_192,
     }
 
+
+def test_manifest_rejects_pricing_changed_without_new_identity(
+    manifest_bundle: tuple[Path, dict[str, object]],
+) -> None:
+    path, manifest = manifest_bundle
+    manifest["provider"]["pricing"]["input_usd_per_million_tokens"] = "1.01"
+    _write_manifest(path, manifest)
+
+    with pytest.raises(FunctionalV1ManifestError) as captured:
+        FunctionalV1Manifest.load(path)
+
+    assert captured.value.reason_code == "pricing-record-mismatch"
 
 @pytest.mark.parametrize(
     ("section", "field", "value", "reason_code"),
@@ -194,3 +208,95 @@ def test_published_template_has_the_exact_fixed_shape() -> None:
         "memory_mib_per_trial": 4_096,
         "writable_disk_mib_per_trial": 8_192,
     }
+
+
+class _ProvisioningBoundaryReached(RuntimeError):
+    pass
+
+
+def test_functional_v1_provisioning_uses_diagnostic_candidate_inputs(
+    tmp_path: Path,
+    manifest_bundle: tuple[Path, dict[str, object]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = FunctionalV1Manifest.load(manifest_bundle[0])
+    home = execution.FunctionalV1Home(tmp_path / "home")
+    runtime = execution.NativeFunctionalV1Runtime(home)
+    monkeypatch.setattr(execution, "_native_host", lambda: {})
+    monkeypatch.setattr(execution, "_scenario_package", lambda *_: tmp_path)
+
+    def fake_scenario_provisioning(
+        *_: object, qualification_record: Path | None, **__: object
+    ) -> dict[str, object]:
+        assert qualification_record is None
+        return {"manifest_sha256": "provisioning-manifest:sha256:" + "0" * 64}
+
+    built: list[tuple[Path, str, Path | None]] = []
+
+    def stop_at_runtime_image(
+        context: Path, reference: str, *, dockerfile: Path | None = None
+    ) -> dict[str, object]:
+        built.append((context, reference, dockerfile))
+        assert reference.startswith("model-benchmark.local/scenario-")
+        assert len(reference.rsplit(":", 1)[1]) == 64
+        if len(built) == 1:
+            assert context == tmp_path / "environment"
+            assert dockerfile is None
+            return {"role": "main"}
+        assert context == tmp_path / "environment"
+        assert dockerfile == context / "capture/Dockerfile"
+        raise _ProvisioningBoundaryReached
+
+    monkeypatch.setattr(
+        execution, "provision_scenario_package", fake_scenario_provisioning
+    )
+    monkeypatch.setattr(execution, "_build_image", stop_at_runtime_image)
+
+    with pytest.raises(_ProvisioningBoundaryReached):
+        runtime._provision(manifest)
+
+
+class _PreflightBoundaryReached(RuntimeError):
+    pass
+
+
+def test_functional_v1_preflight_uses_diagnostic_integration_boundary(
+    tmp_path: Path,
+    manifest_bundle: tuple[Path, dict[str, object]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = FunctionalV1Manifest.load(manifest_bundle[0])
+    home = execution.FunctionalV1Home(tmp_path / "home")
+    home.store_manifest_inputs(manifest)
+    runtime = execution.NativeFunctionalV1Runtime(home)
+    inventory = execution.ProvisioningInventory(
+        TypedDigest.from_bytes(DigestKind.PROVISIONING_MANIFEST, b"inventory"),
+        {
+            "scenarios": {
+                name: {"provisioning_manifest": "unused"} for name in SCENARIOS
+            }
+        },
+        tmp_path / "inventory.json",
+    )
+    monkeypatch.setenv("MODEL_BENCHMARK_PROVIDER_API_KEY", "secret")
+    monkeypatch.setattr(execution, "_native_host", lambda: {})
+    monkeypatch.setattr(execution, "_load_inventory", lambda *_: inventory)
+    monkeypatch.setattr(execution, "_verify_inventory_images", lambda *_: None)
+    monkeypatch.setattr(execution, "_scenario_package", lambda *_: tmp_path)
+
+    def stop_at_scenario_preflight(
+        *_: object,
+        mode: str,
+        qualification_record: Path | None,
+        **__: object,
+    ) -> dict[str, object]:
+        assert mode == "integration"
+        assert qualification_record is None
+        raise _PreflightBoundaryReached
+
+    monkeypatch.setattr(
+        execution, "preflight_scenario_package", stop_at_scenario_preflight
+    )
+
+    with pytest.raises(_PreflightBoundaryReached):
+        runtime._preflight(manifest)

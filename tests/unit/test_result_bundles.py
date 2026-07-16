@@ -69,6 +69,7 @@ def _build_cell(
     include_patch: bool = True,
     include_verifier: bool = True,
     include_proxy: bool = True,
+    collect_manifest: object | None = None,
 ) -> Path:
     cell_dir = root / "cell"
     raw = cell_dir / "raw"
@@ -98,6 +99,11 @@ def _build_cell(
         (raw / "trials").mkdir(parents=True, exist_ok=True)
     if include_proxy:
         _write(raw / "proxy-evidence" / "proxy.jsonl", b'{"event":"request"}\n')
+    if collect_manifest is not None:
+        _write(
+            raw / "trials/t1/artifacts/manifest.json",
+            json.dumps(collect_manifest).encode("utf-8"),
+        )
     return cell_dir
 
 
@@ -179,6 +185,34 @@ def test_valid_completion_seals_deterministic_read_only_bundle(tmp_path: Path) -
     other_cell = _build_cell(tmp_path / "b")
     other = _seal(other_cell, _execution())
     assert other.result_bundle_identity == outcome.result_bundle_identity
+
+
+def test_harbor_list_collect_manifest_does_not_invalidate_bundle(
+    tmp_path: Path,
+) -> None:
+    manifest = [
+        {
+            "source": "/capture/capture.json",
+            "destination": "artifacts/capture/capture.json",
+            "type": "file",
+            "status": "ok",
+            "service": "capture",
+        },
+        {
+            "source": "/capture/submission.patch",
+            "destination": "artifacts/capture/submission.patch",
+            "type": "file",
+            "status": "ok",
+            "service": "capture",
+        },
+    ]
+    cell_dir = _build_cell(tmp_path, collect_manifest=manifest)
+
+    outcome = _seal(cell_dir, _execution())
+
+    assert outcome.disposition == "valid_completed"
+    assert outcome.reason_code == "verifier-completed"
+    assert outcome.evidence_valid is True
 
 
 def test_no_op_handoff_completes_without_patch_content(tmp_path: Path) -> None:

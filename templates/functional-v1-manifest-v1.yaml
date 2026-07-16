@@ -3,6 +3,17 @@ schema_version: 1
 provider:
   base_url: https://provider.example/v1
   model: exact/model-slug
+  pricing:
+    schema_version: 1
+    currency: USD
+    unit: usd-per-million-tokens
+    input_usd_per_million_tokens: "1.00"
+    output_usd_per_million_tokens: "1.00"
+    effective_from_utc: "2026-01-01T00:00:00Z"
+    effective_until_utc: "2027-01-01T00:00:00Z"
+    source_url: https://provider.example/pricing
+    retrieved_at_utc: "2026-01-01T00:00:00Z"
+    identity: pricing-record:sha256:0000000000000000000000000000000000000000000000000000000000000000
 
 limits:
   requests_per_trial: 64

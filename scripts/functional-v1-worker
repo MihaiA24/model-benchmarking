@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly STATE_ROOT=/var/lib/model-benchmark-worker
+readonly IMAGE=$STATE_ROOT/docker-xfs.img
+readonly MOUNT=$STATE_ROOT/xfs
+readonly DATA_ROOT=$MOUNT/docker
+readonly RUN_ROOT=/run/model-benchmark-docker
+readonly SOCKET=$RUN_ROOT/docker.sock
+readonly UNIT=model-benchmark-docker.service
+readonly IMAGE_SIZE=128G
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+require_root() {
+  [[ $EUID -eq 0 ]] || die "run with sudo"
+}
+
+check_mount() {
+  [[ $(findmnt --noheadings --output FSTYPE --target "$DATA_ROOT") == xfs ]] ||
+    die "$DATA_ROOT is not backed by XFS"
+  local options
+  options=$(findmnt --noheadings --output OPTIONS --target "$DATA_ROOT")
+  [[ ,$options, == *,pquota,* || ,$options, == *,prjquota,* ]] ||
+    die "$DATA_ROOT is not mounted with project quotas"
+}
+
+status() {
+  DOCKER_HOST="unix://$SOCKET" docker info --format \
+    'server={{.OSType}}/{{.Architecture}} driver={{.Driver}} root={{.DockerRootDir}} cgroup={{.CgroupVersion}} cpus={{.NCPU}} memory={{.MemTotal}}'
+  check_mount
+  df -B1 "$DATA_ROOT"
+}
+
+start() {
+  require_root
+  mkdir -p "$STATE_ROOT"
+  if [[ ! -e $IMAGE ]]; then
+    chattr +C "$STATE_ROOT"
+    truncate --size "$IMAGE_SIZE" "$IMAGE"
+    mkfs.xfs -m crc=1,reflink=1 "$IMAGE"
+  else
+    [[ $(blkid --probe --output value --match-tag TYPE "$IMAGE") == xfs ]] ||
+      die "existing $IMAGE is not XFS"
+  fi
+
+  mkdir -p "$MOUNT"
+  if ! mountpoint --quiet "$MOUNT"; then
+    mount --options loop,prjquota "$IMAGE" "$MOUNT"
+  fi
+  mkdir -p "$DATA_ROOT" "$RUN_ROOT"
+  check_mount
+
+  if ! ip netns exec model-benchmark-docker true 2>/dev/null; then
+    ip netns add model-benchmark-docker
+    ip link add mb-host0 type veth peer name mb-ns0
+    ip link set mb-ns0 netns model-benchmark-docker
+    ip address add 10.250.0.1/30 dev mb-host0
+    ip link set mb-host0 up
+    ip netns exec model-benchmark-docker ip address add 10.250.0.2/30 dev mb-ns0
+    ip netns exec model-benchmark-docker ip link set lo up
+    ip netns exec model-benchmark-docker ip link set mb-ns0 up
+    ip netns exec model-benchmark-docker ip route add default via 10.250.0.1
+  fi
+  iptables --check FORWARD --in-interface mb-host0 --jump ACCEPT 2>/dev/null ||
+    iptables --insert FORWARD 1 --in-interface mb-host0 --jump ACCEPT
+  iptables --check FORWARD --out-interface mb-host0 --match conntrack \
+    --ctstate RELATED,ESTABLISHED --jump ACCEPT 2>/dev/null ||
+    iptables --insert FORWARD 1 --out-interface mb-host0 --match conntrack \
+      --ctstate RELATED,ESTABLISHED --jump ACCEPT
+  iptables --table nat --check POSTROUTING --source 10.250.0.0/30 ! \
+    --out-interface mb-host0 --jump MASQUERADE 2>/dev/null ||
+    iptables --table nat --insert POSTROUTING 1 --source 10.250.0.0/30 ! \
+      --out-interface mb-host0 --jump MASQUERADE
+
+  if ! systemctl is-active --quiet model-benchmark-containerd.service; then
+    systemctl reset-failed model-benchmark-containerd.service 2>/dev/null || true
+    systemd-run \
+      --unit model-benchmark-containerd \
+      --collect \
+      --property Delegate=yes \
+      --property KillMode=mixed \
+      --property TimeoutStopSec=120 \
+      /usr/bin/nsenter --net=/run/netns/model-benchmark-docker \
+      /usr/bin/containerd \
+        --root="$MOUNT/containerd" \
+        --state="$RUN_ROOT/containerd" \
+        --address="$RUN_ROOT/containerd.sock" \
+        --log-level=info
+  fi
+  for _ in {1..30}; do
+    [[ -S $RUN_ROOT/containerd.sock ]] && break
+    sleep 1
+  done
+  [[ -S $RUN_ROOT/containerd.sock ]] || die "dedicated containerd did not become ready"
+
+  if ! systemctl is-active --quiet "$UNIT"; then
+    systemctl reset-failed "$UNIT" 2>/dev/null || true
+    systemd-run \
+      --unit "${UNIT%.service}" \
+      --collect \
+      --property Delegate=yes \
+      --property KillMode=mixed \
+      --property TimeoutStopSec=120 \
+      /usr/bin/nsenter --net=/run/netns/model-benchmark-docker \
+      /usr/bin/dockerd \
+        --host="unix://$SOCKET" \
+        --data-root="$DATA_ROOT" \
+        --exec-root="$RUN_ROOT/exec" \
+        --pidfile="$RUN_ROOT/docker.pid" \
+        --containerd="$RUN_ROOT/containerd.sock" \
+        --storage-driver=overlay2 \
+        --default-address-pool=base=10.251.0.0/16,size=24
+  fi
+
+  for _ in {1..60}; do
+    if DOCKER_HOST="unix://$SOCKET" docker info >/dev/null 2>&1; then
+      status
+      printf 'export DOCKER_HOST=unix://%s\n' "$SOCKET"
+      return
+    fi
+    sleep 1
+  done
+  journalctl --unit "$UNIT" --no-pager --lines 80 >&2 || true
+  die "dedicated Docker daemon did not become ready"
+}
+
+stop() {
+  require_root
+  if systemctl is-active --quiet "$UNIT"; then
+    systemctl stop "$UNIT"
+  fi
+  if systemctl is-active --quiet model-benchmark-containerd.service; then
+    systemctl stop model-benchmark-containerd.service
+  fi
+  systemctl reset-failed model-benchmark-containerd.service 2>/dev/null || true
+  systemctl reset-failed "$UNIT" 2>/dev/null || true
+  iptables --delete FORWARD --in-interface mb-host0 --jump ACCEPT 2>/dev/null || true
+  iptables --delete FORWARD --out-interface mb-host0 --match conntrack \
+    --ctstate RELATED,ESTABLISHED --jump ACCEPT 2>/dev/null || true
+  iptables --table nat --delete POSTROUTING --source 10.250.0.0/30 ! \
+    --out-interface mb-host0 --jump MASQUERADE 2>/dev/null || true
+  ip netns delete model-benchmark-docker 2>/dev/null || true
+  if mountpoint --quiet "$MOUNT"; then
+    umount "$MOUNT"
+  fi
+}
+
+case ${1:-} in
+  start) start ;;
+  status) status ;;
+  stop) stop ;;
+  *) die "usage: sudo $0 {start|status|stop}" ;;
+esac

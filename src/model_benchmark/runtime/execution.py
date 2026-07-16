@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
+import ipaddress
 import json
 import os
 import platform
@@ -13,8 +14,10 @@ import subprocess
 import sys
 import tempfile
 import threading
+import tomllib
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from types import MappingProxyType
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
@@ -72,7 +75,8 @@ _PIDS_LIMIT = 256
 _CONDITION_MOUNT = "/opt/model-benchmark-condition"
 _WALL_TIME_SECONDS = FIXED_LIMITS["wall_time_seconds_per_trial"]
 _WALL_TIME_GRACE_SECONDS = 60
-_STORAGE_OPT_SIZE = f"{FIXED_LIMITS['writable_disk_mib_per_trial']}M"
+_STORAGE_SIZE = f"{FIXED_LIMITS['writable_disk_mib_per_trial']}M"
+_STORAGE_OPT_SIZE = f"size={_STORAGE_SIZE}"
 _PYTHON_BASE = (
     "python:3.12.12-slim-bookworm@sha256:"
     "593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c"
@@ -211,6 +215,24 @@ def _typed_file_digest(path: Path) -> str:
     return str(TypedDigest.from_bytes(DigestKind.ARTIFACT, path.read_bytes()))
 
 
+def _redacted_process_detail(
+    stdout: str, stderr: str, secrets_to_redact: tuple[str, ...]
+) -> str:
+    detail = stderr.strip() or stdout.strip()
+    for secret in secrets_to_redact:
+        detail = detail.replace(secret, "[REDACTED]")
+    return detail[-2000:]
+
+
+def _prepare_proxy_evidence(root: Path) -> Path:
+    root.mkdir(mode=0o700)
+    root.chmod(0o733)
+    event_log = root / "proxy.jsonl"
+    event_log.touch()
+    event_log.chmod(0o622)
+    return event_log
+
+
 def _tree_digest(root: Path) -> str:
     entries: list[dict[str, object]] = []
     for path in sorted(
@@ -302,13 +324,6 @@ def _target_config(path: Path) -> None:
     path.write_text(yaml.safe_dump(value, sort_keys=True), encoding="utf-8")
 
 
-def _qualification_record(name: str) -> Path:
-    path = _project_root() / "artifacts/qualification/functional-v1" / f"{name}.json"
-    if not path.is_file():
-        raise ExecutionError(
-            "scenario-unqualified", f"missing Functional V1 qualification for {name}"
-        )
-    return path
 
 
 def _scenario_package(manifest: FunctionalV1Manifest, name: str) -> Path:
@@ -507,14 +522,19 @@ def _build_harbor_egress_image() -> dict[str, object]:
     return record
 
 
-def _build_image(context: Path, reference: str) -> dict[str, object]:
-    _pull_exact_image(_dockerfile_base(context))
+def _build_image(
+    context: Path, reference: str, *, dockerfile: Path | None = None
+) -> dict[str, object]:
+    recipe = context / "Dockerfile" if dockerfile is None else dockerfile
+    _pull_exact_image(_dockerfile_base(recipe.parent))
     _docker(
         [
             "build",
             "--network",
             "none",
             "--pull=false",
+            "--file",
+            str(recipe),
             "--tag",
             reference,
             str(context),
@@ -710,8 +730,7 @@ def _probe_limits(image: str, run_id: str) -> dict[str, object]:
             "resource probe",
         )
         expected = {
-            "CpuQuota": 200000,
-            "CpuPeriod": 100000,
+            "NanoCpus": FIXED_LIMITS["cpu_cores_per_trial"] * 1_000_000_000,
             "Memory": FIXED_LIMITS["memory_mib_per_trial"] * 1024**2,
             "MemorySwap": FIXED_LIMITS["memory_mib_per_trial"] * 1024**2,
             "PidsLimit": _PIDS_LIMIT,
@@ -763,7 +782,7 @@ def _probe_wall_time_enforcement(image: str, run_id: str) -> dict[str, object]:
     label = f"{_RUN_LABEL}={run_id}"
     name = f"mb-{run_id[:12]}-wall-time"
     budget_seconds = 2
-    started = time.monotonic()
+    started = time.monotonic_ns()
     process = subprocess.Popen(
         [
             "docker",
@@ -803,9 +822,38 @@ def _probe_wall_time_enforcement(image: str, run_id: str) -> dict[str, object]:
         )
     return {
         "budget_seconds": budget_seconds,
-        "enforced_after_seconds": round(time.monotonic() - started, 3),
+        "enforced_after_ns": time.monotonic_ns() - started,
         "mechanism": "coordinator-timeout-forced-termination",
     }
+
+def _container_network_ipv4(container: str, network_name: str) -> str:
+    networks = _json_stdout(
+        _docker(
+            [
+                "container",
+                "inspect",
+                container,
+                "--format",
+                "{{json .NetworkSettings.Networks}}",
+            ]
+        ),
+        f"{container} network",
+    )
+    network = networks.get(network_name) if isinstance(networks, dict) else None
+    address = network.get("IPAddress") if isinstance(network, dict) else None
+    if not isinstance(address, str):
+        raise ExecutionError(
+            "proxy-isolation-probe-failed",
+            f"{container} has no {network_name} address",
+        )
+    try:
+        return str(ipaddress.IPv4Address(address))
+    except ipaddress.AddressValueError as error:
+        raise ExecutionError(
+            "proxy-isolation-probe-failed",
+            f"{container} has an invalid {network_name} address",
+        ) from error
+
 
 
 def _probe_network(
@@ -848,7 +896,16 @@ def _probe_network(
                 "--env",
                 "MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL=1",
                 "--env",
+                "MODEL_BENCHMARK_REQUESTS_PER_TRIAL=1",
+                "--env",
                 "MODEL_BENCHMARK_STOP_AFTER_COST_USD_PER_TRIAL=0.01",
+                "--env",
+                "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY=pricing-record:sha256:"
+                + "0" * 64,
+                "--env",
+                "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS=1.00",
+                "--env",
+                "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS=1.00",
                 proxy_image,
             ]
         )
@@ -867,6 +924,8 @@ def _probe_network(
                 "NET_ADMIN",
                 "--cap-add",
                 "NET_RAW",
+                "--entrypoint",
+                "/opt/egress-sidecar/entrypoint.sh",
                 "--env",
                 "EGRESS_CONTROL_INITIAL_NETWORK_MODE=no-network",
                 egress_image,
@@ -891,16 +950,17 @@ def _probe_network(
                 "proxy-isolation-probe-failed",
                 "Harbor egress firewall did not become ready",
             )
-        _docker(["exec", firewall, "network-policy", "allow", "mb-proxy"])
-        probe = """
+        proxy_address = _container_network_ipv4(proxy, internal)
+        _docker(["exec", firewall, "network-policy", "allow", proxy_address])
+        probe = f"""
 import socket, urllib.request
-assert urllib.request.urlopen('http://mb-proxy:8080/healthz', timeout=5).status == 200
+assert urllib.request.urlopen('http://{proxy_address}:8080/healthz', timeout=5).status == 200
 for host, port in [('1.1.1.1', 443), ('10.0.0.1', 443), ('169.254.169.254', 80), ('172.17.0.1', 2375), ('host.docker.internal', 2375)]:
     try:
         socket.create_connection((host, port), timeout=0.5)
     except OSError:
         continue
-    raise SystemExit(f'direct route unexpectedly reachable: {host}')
+    raise SystemExit('direct route unexpectedly reachable: ' + host)
 """
         completed = _docker(
             [
@@ -944,27 +1004,44 @@ def _runtime_scenario_package(
     *,
     main_image: str,
     verifier_image: str,
-) -> tuple[Path, TypedDigest]:
+) -> tuple[Path, str]:
     shutil.copytree(source, destination)
     task = destination / "task.toml"
     text = task.read_text(encoding="utf-8")
-    environment = "[environment]\n"
-    if text.count(environment) != 1 or "docker_image" in text:
+    try:
+        value = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        raise ExecutionError(
+            "scenario-runtime-binding-failed", "Scenario task is not valid TOML"
+        ) from error
+    environment = value.get("environment")
+    verifier = value.get("verifier")
+    verifier_environment = (
+        verifier.get("environment") if isinstance(verifier, dict) else None
+    )
+    if (
+        not isinstance(environment, dict)
+        or not isinstance(environment.get("docker_image"), str)
+        or not isinstance(verifier_environment, dict)
+        or not isinstance(verifier_environment.get("docker_image"), str)
+    ):
         raise ExecutionError(
             "scenario-runtime-binding-failed",
             "Scenario task environment cannot accept the sealed runtime images",
         )
-    text = text.replace(
-        environment,
-        environment + f"docker_image = {json.dumps(main_image)}\n",
+    agent_binding = f"docker_image = {json.dumps(environment['docker_image'])}"
+    verifier_binding = (
+        f"docker_image = {json.dumps(verifier_environment['docker_image'])}"
     )
-    text += (
-        "\n[verifier.environment]\n"
-        f"docker_image = {json.dumps(verifier_image)}\n"
-        'network_mode = "no-network"\n'
-        f"cpus = {FIXED_LIMITS['cpu_cores_per_trial']}\n"
-        f"memory_mb = {FIXED_LIMITS['memory_mib_per_trial']}\n"
-        f"storage_mb = {FIXED_LIMITS['writable_disk_mib_per_trial']}\n"
+    if text.count(agent_binding) != 1 or text.count(verifier_binding) != 1:
+        raise ExecutionError(
+            "scenario-runtime-binding-failed",
+            "Scenario task image bindings are ambiguous",
+        )
+    text = text.replace(
+        agent_binding, f"docker_image = {json.dumps(main_image)}", 1
+    ).replace(
+        verifier_binding, f"docker_image = {json.dumps(verifier_image)}", 1
     )
     task.write_text(text, encoding="utf-8")
     identity = _tree_digest(destination)
@@ -972,6 +1049,50 @@ def _runtime_scenario_package(
         item.chmod(0o555 if item.is_dir() else 0o444)
     destination.chmod(0o555)
     return destination, identity
+
+
+def _remove_sealed_tree(root: Path) -> None:
+    if not root.exists():
+        return
+    for directory, directories, files in os.walk(root, topdown=False):
+        for name in files:
+            path = Path(directory, name)
+            if not path.is_symlink():
+                path.chmod(0o600)
+        for name in directories:
+            path = Path(directory, name)
+            if not path.is_symlink():
+                path.chmod(0o700)
+    root.chmod(0o700)
+    shutil.rmtree(root)
+
+
+@contextmanager
+def _docker_cleaned_temporary(image: str, *, prefix: str) -> Iterator[Path]:
+    root = Path(tempfile.mkdtemp(prefix=prefix))
+    try:
+        yield root
+    finally:
+        _docker(
+            [
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--mount",
+                f"type=bind,src={root},dst=/cleanup",
+                "--user",
+                "0:0",
+                "--entrypoint",
+                "chown",
+                image,
+                "--no-dereference",
+                "-R",
+                f"{os.getuid()}:{os.getgid()}",
+                "/cleanup",
+            ]
+        )
+        _remove_sealed_tree(root)
 
 
 def _condition_mounts(reference: str) -> list[dict[str, object]]:
@@ -1029,7 +1150,8 @@ def _probe_condition_mounts(
         verifier_present = verifier_probe.returncode == 0
         unselected_present = (
             mounted.returncode != 0
-            or mounted_entries != [_CONDITION_MOUNT.rsplit("/", 1)[1]]
+            or mounted_entries
+            != [_CONDITION_MOUNT.rsplit("/", 1)[1], "model-benchmark-runtime"]
         )
         if verifier_present or unselected_present:
             raise ExecutionError(
@@ -1217,7 +1339,6 @@ class HarborCellExecutor:
         value = {
             "services": {
                 "capture": {
-                    "build": None,
                     "image": capture_image,
                     "labels": labels,
                     "pull_policy": "never",
@@ -1235,7 +1356,7 @@ class HarborCellExecutor:
                     "labels": labels,
                     "pids_limit": _PIDS_LIMIT,
                     "pull_policy": "never",
-                    "storage_opt": {"size": _STORAGE_OPT_SIZE},
+                    "storage_opt": {"size": _STORAGE_SIZE},
                     "volumes": _condition_mounts(condition_image),
                 },
                 "credential-proxy": {
@@ -1244,7 +1365,11 @@ class HarborCellExecutor:
                         "MODEL_BENCHMARK_PROVIDER_API_KEY": "${MODEL_BENCHMARK_PROVIDER_API_KEY:?}",
                         "MODEL_BENCHMARK_PROVIDER_BASE_URL": "${MODEL_BENCHMARK_PROVIDER_BASE_URL:?}",
                         "MODEL_BENCHMARK_PROVIDER_MODEL": "${MODEL_BENCHMARK_PROVIDER_MODEL:?}",
+                        "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY": "${MODEL_BENCHMARK_PRICING_RECORD_IDENTITY:?}",
+                        "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS": "${MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS:?}",
+                        "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS": "${MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS:?}",
                         "MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL": "${MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL:?}",
+                        "MODEL_BENCHMARK_REQUESTS_PER_TRIAL": "${MODEL_BENCHMARK_REQUESTS_PER_TRIAL:?}",
                         "MODEL_BENCHMARK_PROXY_TOKEN": "${MODEL_BENCHMARK_PROXY_TOKEN:?}",
                         "MODEL_BENCHMARK_STOP_AFTER_COST_USD_PER_TRIAL": "${MODEL_BENCHMARK_STOP_AFTER_COST_USD_PER_TRIAL:?}",
                     },
@@ -1582,14 +1707,13 @@ class HarborCellExecutor:
             raise ExecutionError(
                 "provider-credential-missing", "provider credential is absent"
             )
-        with tempfile.TemporaryDirectory(
-            prefix=f"model-benchmark-{cell_id}-"
-        ) as temporary:
-            root = Path(temporary)
+        with _docker_cleaned_temporary(
+            main_image, prefix=f"model-benchmark-{cell_id}-"
+        ) as root:
             overlay = root / "overlay.yaml"
             trials = root / "trials"
             proxy_evidence = root / "proxy-evidence"
-            proxy_evidence.mkdir(mode=0o700)
+            _prepare_proxy_evidence(proxy_evidence)
             self._overlay(
                 overlay,
                 run_id=run_id,
@@ -1657,8 +1781,24 @@ class HarborCellExecutor:
                 "MODEL_BENCHMARK_PROVIDER_MODEL": str(
                     self.manifest.value["provider"]["model"]
                 ),
+                "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY": str(
+                    self.manifest.value["provider"]["pricing"]["identity"]
+                ),
+                "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS": str(
+                    self.manifest.value["provider"]["pricing"][
+                        "input_usd_per_million_tokens"
+                    ]
+                ),
+                "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS": str(
+                    self.manifest.value["provider"]["pricing"][
+                        "output_usd_per_million_tokens"
+                    ]
+                ),
                 "MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL": str(
                     self.manifest.value["limits"]["provider_tokens_per_trial"]
+                ),
+                "MODEL_BENCHMARK_REQUESTS_PER_TRIAL": str(
+                    self.manifest.value["limits"]["requests_per_trial"]
                 ),
                 "MODEL_BENCHMARK_PROXY_TOKEN": token,
                 "MODEL_BENCHMARK_STOP_AFTER_COST_USD_PER_TRIAL": str(
@@ -1738,9 +1878,21 @@ class HarborCellExecutor:
                     events,
                     time.monotonic_ns() - started,
                 )
-            except BaseException:
+            except BaseException as error:
+                (root / "harbor.stdout.txt").write_text(stdout, encoding="utf-8")
+                (root / "harbor.stderr.txt").write_text(stderr, encoding="utf-8")
+                preserved = self._preserve_raw_evidence(
+                    root, raw_root, (real_key.encode(), token.encode())
+                )
                 _cleanup_owned(run_id, cell_id)
-                raise
+                detail = _redacted_process_detail(
+                    stdout, stderr, (real_key, token)
+                )
+                raise ExecutionError(
+                    "cell-executor-failed",
+                    f"{error}; Harbor exit {process.returncode}; "
+                    f"raw evidence preserved: {preserved}; {detail}",
+                ) from error
             cleanup_before = _resource_inventory(run_id, cell_id)
             _cleanup_owned(run_id, cell_id)
             details = {
@@ -1911,21 +2063,24 @@ class NativeFunctionalV1Runtime:
                     jobs_dir=jobs,
                     manifest_output=output,
                     target_config=target,
-                    qualification_record=_qualification_record(name),
+                    qualification_record=None,
                 )
                 runtime_images: dict[str, object] = {}
-                for role, relative in (
-                    ("main", "environment"),
-                    ("capture", "environment/capture"),
-                    ("verifier", "tests"),
+                for role, relative, recipe_relative in (
+                    ("main", "environment", None),
+                    ("capture", "environment", "capture/Dockerfile"),
+                    ("verifier", "tests", None),
                 ):
                     context = package / relative
                     context_digest = _tree_digest(context)
                     reference = (
                         f"model-benchmark.local/scenario-{name}-{role}:"
-                        f"{context_digest.value.rsplit(':', 1)[1]}"
+                        f"{context_digest.rsplit(':', 1)[1]}"
                     )
-                    image_record = _build_image(context, reference)
+                    recipe = context / recipe_relative if recipe_relative else None
+                    image_record = _build_image(
+                        context, reference, dockerfile=recipe
+                    )
                     runtime_images[role] = image_record
                     images.append(image_record)
                 scenarios[name] = {
@@ -2103,9 +2258,9 @@ class NativeFunctionalV1Runtime:
                 receipt = preflight_scenario_package(
                     package,
                     manifest_path=Path(str(record["provisioning_manifest"])),
-                    mode="measured",
+                    mode="integration",
                     output=output,
-                    qualification_record=_qualification_record(name),
+                    qualification_record=None,
                 )
                 runtime_images = record.get("runtime_images")
                 if not isinstance(runtime_images, Mapping):
@@ -2201,7 +2356,7 @@ class NativeFunctionalV1Runtime:
             }
             return PreflightProjection(report, packages, temporary)
         except BaseException:
-            shutil.rmtree(temporary, ignore_errors=True)
+            _remove_sealed_tree(temporary)
             raise
 
     def preflight(self, manifest: FunctionalV1Manifest) -> CommandResult:
@@ -2233,7 +2388,7 @@ class NativeFunctionalV1Runtime:
                 },
             )
         finally:
-            shutil.rmtree(projection.temporary_root, ignore_errors=True)
+            _remove_sealed_tree(projection.temporary_root)
 
     def run(self, manifest: FunctionalV1Manifest) -> CommandResult:
         return self._run_schedule(manifest, CELL_SCHEDULE)
@@ -2267,7 +2422,7 @@ class NativeFunctionalV1Runtime:
                     )
                     return self._execute_schedule(workspace, executor, schedule)
                 finally:
-                    shutil.rmtree(projection.temporary_root, ignore_errors=True)
+                    _remove_sealed_tree(projection.temporary_root)
         except (ExecutionError, FunctionalV1HomeError, ScenarioPackageError) as error:
             reason = getattr(error, "reason_code", "run-rejected")
             return CommandResult(
@@ -2564,7 +2719,7 @@ class NativeFunctionalV1Runtime:
             )
         finally:
             if projection is not None:
-                shutil.rmtree(projection.temporary_root, ignore_errors=True)
+                _remove_sealed_tree(projection.temporary_root)
             if manifest_root is not None:
                 shutil.rmtree(manifest_root, ignore_errors=True)
 

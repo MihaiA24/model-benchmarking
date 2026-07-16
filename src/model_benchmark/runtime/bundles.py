@@ -291,6 +291,16 @@ def _load_json_object(path: Path) -> dict[str, object] | None:
     return loaded
 
 
+def _load_json_array(path: Path) -> list[object] | None:
+    try:
+        loaded = json.loads(path.read_bytes())
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(loaded, list):
+        return None
+    return loaded
+
+
 def _copy_regular_file(
     spec: _ArtifactSpec, source: Path, destination: Path
 ) -> dict[str, object]:
@@ -415,7 +425,6 @@ def _classify_handoff(
         integrity_events.append("capture-record-mismatch")
     return "patch", None
 
-
 def _check_collect_manifest(
     staging: Path,
     entries: dict[str, dict[str, object]],
@@ -423,13 +432,23 @@ def _check_collect_manifest(
 ) -> None:
     if entries["harbor/collect-manifest.json"]["status"] != "present":
         return
-    manifest = _load_json_object(staging / "harbor/collect-manifest.json")
+    manifest = _load_json_array(staging / "harbor/collect-manifest.json")
     if manifest is None:
         if "collector-failed" not in infrastructure_events:
             infrastructure_events.append("collector-failed")
         return
-    for source_path, outcome in manifest.items():
-        if "/capture/" in source_path and outcome == "failed":
+    for entry in manifest:
+        if not isinstance(entry, dict):
+            if "collector-failed" not in infrastructure_events:
+                infrastructure_events.append("collector-failed")
+            return
+        source_path = entry.get("source")
+        status = entry.get("status")
+        if not isinstance(source_path, str) or not isinstance(status, str):
+            if "collector-failed" not in infrastructure_events:
+                infrastructure_events.append("collector-failed")
+            return
+        if source_path.startswith("/capture/") and status == "failed":
             if "collector-failed" not in infrastructure_events:
                 infrastructure_events.append("collector-failed")
             return

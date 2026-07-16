@@ -32,6 +32,7 @@ class DigestKind(str, Enum):
     FUNCTIONAL_V1_MANIFEST = "functional-v1-manifest"
     RESOLVED_V1_MANIFEST = "resolved-v1-manifest"
     FUNCTIONAL_V1_CONDITION = "functional-v1-condition"
+    PRICING_RECORD = "pricing-record"
     RESULT_BUNDLE = "result-bundle"
     FUNCTIONAL_V1_RUN_RECORD = "functional-v1-run-record"
 

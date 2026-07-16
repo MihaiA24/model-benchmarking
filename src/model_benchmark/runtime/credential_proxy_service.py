@@ -6,12 +6,12 @@ import threading
 from decimal import Decimal
 from pathlib import Path
 
-from model_benchmark.declarations.functional_v1 import FIXED_LIMITS
 from model_benchmark.runtime.credential_proxy import (
     PROVIDER_API_KEY_ENV,
     TRIAL_PROXY_TOKEN_ENV,
     CredentialProxy,
     CredentialProxyConfig,
+    PricingRecord,
 )
 
 
@@ -23,7 +23,7 @@ def main() -> int:
     config = CredentialProxyConfig(
         upstream_base_url=os.environ["MODEL_BENCHMARK_PROVIDER_BASE_URL"],
         model=os.environ["MODEL_BENCHMARK_PROVIDER_MODEL"],
-        requests_per_trial=FIXED_LIMITS["requests_per_trial"],
+        requests_per_trial=int(os.environ["MODEL_BENCHMARK_REQUESTS_PER_TRIAL"]),
         provider_tokens_per_trial=int(
             os.environ["MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL"]
         ),
@@ -31,6 +31,15 @@ def main() -> int:
             os.environ["MODEL_BENCHMARK_STOP_AFTER_COST_USD_PER_TRIAL"]
         ),
         evidence_path=Path("/evidence/proxy.jsonl"),
+        pricing_record=PricingRecord(
+            identity=os.environ["MODEL_BENCHMARK_PRICING_RECORD_IDENTITY"],
+            input_usd_per_million_tokens=Decimal(
+                os.environ["MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS"]
+            ),
+            output_usd_per_million_tokens=Decimal(
+                os.environ["MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS"]
+            ),
+        ),
         listen_host="0.0.0.0",
         listen_port=8080,
         real_api_key=os.environ[PROVIDER_API_KEY_ENV],

@@ -135,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
             "PYTHONHOME": str(mounted_root / "usr"),
             "PYTHONPATH": ":".join(
                 (
+                    str(mounted_hermes),
                     str(mounted_hermes / ".venv/lib/python3.13/site-packages"),
                     str(mounted_root / "opt/model-benchmark-runtime"),
                 )

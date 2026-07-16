@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import subprocess
 import threading
 import tomllib
 from collections import Counter
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -228,7 +230,11 @@ def test_runtime_package_binds_prebuilt_main_and_verifier_images(
     source.mkdir()
     original = (
         'version = "1.0"\n\n[verifier]\nenvironment_mode = "separate"\n'
-        '\n[environment]\nnetwork_mode = "no-network"\n'
+        '\n[environment]\ndocker_image = "harbor-agent@sha256:old"\n'
+        'network_mode = "no-network"\n'
+        '\n[verifier.environment]\n'
+        'docker_image = "harbor-verifier@sha256:old"\n'
+        'network_mode = "no-network"\n'
     )
     (source / "task.toml").write_text(original, encoding="utf-8")
 
@@ -248,6 +254,132 @@ def test_runtime_package_binds_prebuilt_main_and_verifier_images(
     assert not ((package / "task.toml").stat().st_mode & 0o222)
     assert (source / "task.toml").read_text(encoding="utf-8") == original
     assert str(identity).startswith("artifact:sha256:")
+    execution._remove_sealed_tree(package)
+    assert not package.exists()
+
+
+def test_limit_probe_uses_overlay2_size_storage_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage_options: list[str] = []
+
+    def fake_docker(
+        arguments: list[str], **_: object
+    ) -> subprocess.CompletedProcess[str]:
+        if arguments[:2] == ["container", "create"]:
+            option = arguments[arguments.index("--storage-opt") + 1]
+            storage_options.append(option)
+            assert option == "size=8192M"
+            return subprocess.CompletedProcess(
+                arguments, 0, stdout="limit-probe\n", stderr=""
+            )
+        if arguments[:2] == ["container", "inspect"]:
+            host_config = {
+                "NanoCpus": 2_000_000_000,
+                "Memory": 4096 * 1024**2,
+                "MemorySwap": 4096 * 1024**2,
+                "PidsLimit": 256,
+            }
+            return subprocess.CompletedProcess(
+                arguments, 0, stdout=json.dumps(host_config), stderr=""
+            )
+        if arguments[:1] == ["run"]:
+            option = arguments[arguments.index("--storage-opt") + 1]
+            storage_options.append(option)
+            assert option == "size=8192M"
+        return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(execution, "_docker", fake_docker)
+    monkeypatch.setattr(
+        execution, "_probe_wall_time_enforcement", lambda *_: {"passed": True}
+    )
+
+    result = execution._probe_limits("coordinator:sealed", "run-id")
+
+    assert storage_options == ["size=8192M", "size=8192M"]
+    assert result["storage_mib"] == 8192
+
+
+def test_network_probe_launches_harbor_firewall_entrypoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+    cleaned: list[str] = []
+
+    def fake_docker(
+        arguments: list[str], **_: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(arguments)
+        if arguments[:2] == ["container", "inspect"]:
+            networks = {"mb-run-id-internal": {"IPAddress": "172.30.0.2"}}
+            return subprocess.CompletedProcess(
+                arguments, 0, stdout=json.dumps(networks), stderr=""
+            )
+        return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(execution, "_docker", fake_docker)
+    monkeypatch.setattr(execution, "_cleanup_owned", cleaned.append)
+
+    result = execution._probe_network(
+        "proxy:sealed", "coordinator:sealed", "egress:sealed", "run-id"
+    )
+
+    firewall = next(arguments for arguments in calls if "egress:sealed" in arguments)
+    assert "--entrypoint" in firewall
+    assert firewall[firewall.index("--entrypoint") + 1] == (
+        "/opt/egress-sidecar/entrypoint.sh"
+    )
+    assert [
+        "exec",
+        "mb-run-id-firewall",
+        "network-policy",
+        "allow",
+        "172.30.0.2",
+    ] in calls
+    main_probe = next(
+        arguments for arguments in calls if "coordinator:sealed" in arguments
+    )
+    assert "172.30.0.2" in main_probe[-1]
+    assert "mb-proxy" not in main_probe[-1]
+    assert result["direct_egress_denied"] is True
+    assert cleaned == ["run-id"]
+
+
+def test_condition_mount_probe_allows_coordinator_runtime_sibling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_docker(
+        arguments: list[str], **_: object
+    ) -> subprocess.CompletedProcess[str]:
+        if arguments[-2:] == ["ls", "/opt"]:
+            return subprocess.CompletedProcess(
+                arguments,
+                0,
+                stdout="model-benchmark-condition\nmodel-benchmark-runtime\n",
+                stderr="",
+            )
+        returncode = 1 if arguments[-2:] == ["-e", "/opt/model-benchmark-condition/verifier"] else 0
+        return subprocess.CompletedProcess(
+            arguments, returncode, stdout="", stderr=""
+        )
+
+    conditions = {
+        condition: {"image_id": f"oci-image:sha256:{condition}", "reference": f"condition:{condition}"}
+        for condition in execution.CONDITIONS
+    }
+    inventory = execution.ProvisioningInventory(
+        TypedDigest.from_bytes(DigestKind.ARTIFACT, b"inventory"),
+        {"conditions": conditions},
+        tmp_path / "inventory.json",
+    )
+    monkeypatch.setattr(execution, "_docker", fake_docker)
+
+    results = execution._probe_condition_mounts(
+        inventory, "coordinator:sealed", "run-id"
+    )
+
+    assert len(results) == 4
+    assert all(result["unselected_artifacts_present"] is False for result in results)
 
 
 def test_provider_limit_and_score_vector_are_terminal_facts(tmp_path: Path) -> None:
@@ -318,6 +450,17 @@ def test_missing_provider_usage_or_cost_is_invalid_infrastructure(
     assert outcome.evidence_valid is False
 
 
+def test_proxy_evidence_allows_container_append_and_host_read(tmp_path: Path) -> None:
+    evidence_root = tmp_path / "proxy-evidence"
+
+    event_log = execution._prepare_proxy_evidence(evidence_root)
+
+    assert evidence_root.stat().st_mode & 0o777 == 0o733
+    assert event_log.stat().st_mode & 0o777 == 0o622
+    event_log.write_text("event\n", encoding="utf-8")
+    assert event_log.read_text(encoding="utf-8") == "event\n"
+
+
 def test_harbor_overlay_exposes_only_selected_image_and_proxy_route(
     tmp_path: Path,
     acceptance_observation: Any,
@@ -340,8 +483,9 @@ def test_harbor_overlay_exposes_only_selected_image_and_proxy_route(
 
     assert main["image"] == "model-benchmark.local/scenario-main:locked"
     assert main["pull_policy"] == "never"
+    assert main["storage_opt"] == {"size": "8192M"}
     capture = value["services"]["capture"]
-    assert capture["build"] is None
+    assert "build" not in capture
     assert capture["image"] == "model-benchmark.local/scenario-capture:locked"
     assert capture["pull_policy"] == "never"
     assert "networks" not in main
@@ -370,6 +514,9 @@ def test_harbor_overlay_exposes_only_selected_image_and_proxy_route(
     assert value["networks"]["proxy-only"]["internal"] is True
     assert proxy["networks"] == ["proxy-only", "provider-egress"]
     assert "MODEL_BENCHMARK_PROVIDER_API_KEY" not in main.get("environment", {})
+    assert proxy["environment"]["MODEL_BENCHMARK_REQUESTS_PER_TRIAL"] == (
+        "${MODEL_BENCHMARK_REQUESTS_PER_TRIAL:?}"
+    )
     assert proxy["environment"]["MODEL_BENCHMARK_PROVIDER_API_KEY"] == (
         "${MODEL_BENCHMARK_PROVIDER_API_KEY:?}"
     )
@@ -412,6 +559,30 @@ def test_harbor_agent_command_has_only_proxy_credentials(tmp_path: Path) -> None
         "XDG_DATA_HOME",
     }
     assert "MODEL_BENCHMARK_PROVIDER_API_KEY" not in environment
+    assert environment["HOME"] == "/logs/agent/home"
+
+
+def test_harbor_agent_install_leaves_evidence_directory_fresh(tmp_path: Path) -> None:
+    calls: list[tuple[str, str, int]] = []
+
+    class Environment:
+        async def exec(
+            self, command: str, *, user: str, timeout_sec: int
+        ) -> SimpleNamespace:
+            calls.append((command, user, timeout_sec))
+            return SimpleNamespace(return_code=0)
+
+    agent = FunctionalV1ConditionAgent(
+        logs_dir=tmp_path,
+        condition="omp",
+        entrypoint="/opt/model-benchmark-condition/entrypoint",
+        artifact_identity="artifact:sha256:" + "a" * 64,
+    )
+    asyncio.run(agent.install(Environment()))
+
+    assert calls[0][1:] == ("root", 30)
+    assert calls[1] == ("mkdir -p /logs/agent/home", "65532", 30)
+    assert all(".model-benchmark" not in command for command, _, _ in calls)
 
 
 def test_native_preflight_rejects_before_docker_on_non_linux(

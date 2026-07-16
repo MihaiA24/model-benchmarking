@@ -10,6 +10,7 @@ from harbor.agents.installed.base import BaseInstalledAgent
 
 _CONDITIONS = frozenset({"omp", "opencode", "hermes", "raw-api"})
 _MOUNT = "/opt/model-benchmark-condition"
+_HOME = "/logs/agent/home"
 
 
 class FunctionalV1ConditionAgent(BaseInstalledAgent):
@@ -55,19 +56,18 @@ class FunctionalV1ConditionAgent(BaseInstalledAgent):
     async def install(self, environment) -> None:
         command = (
             f"test -x {shlex.quote(self._entrypoint)} && "
-            f"test ! -e {_MOUNT}/verifier && "
-            f"mkdir -p /logs/agent/home/.model-benchmark"
+            f"test ! -e {_MOUNT}/verifier"
         )
         result = await environment.exec(command, user="root", timeout_sec=30)
         if result.return_code != 0:
             raise RuntimeError("selected condition image mount failed closed preflight")
-        ownership = await environment.exec(
-            "chown -R 65532:65532 /logs/agent/home",
-            user="root",
+        home = await environment.exec(
+            f"mkdir -p {_HOME}",
+            user="65532",
             timeout_sec=30,
         )
-        if ownership.return_code != 0:
-            raise RuntimeError("condition home ownership could not be established")
+        if home.return_code != 0:
+            raise RuntimeError("ephemeral condition home is not writable")
 
     def _command(self) -> tuple[str, dict[str, str]]:
         arguments = [
@@ -81,10 +81,10 @@ class FunctionalV1ConditionAgent(BaseInstalledAgent):
             arguments.extend(["--target-path", self._target_path])
         return shlex.join(arguments), {
             **self.extra_env,
-            "HOME": "/logs/agent/home",
-            "XDG_CACHE_HOME": "/logs/agent/home/.cache",
-            "XDG_CONFIG_HOME": "/logs/agent/home/.config",
-            "XDG_DATA_HOME": "/logs/agent/home/.local/share",
+            "HOME": _HOME,
+            "XDG_CACHE_HOME": f"{_HOME}/.cache",
+            "XDG_CONFIG_HOME": f"{_HOME}/.config",
+            "XDG_DATA_HOME": f"{_HOME}/.local/share",
         }
 
     @override
