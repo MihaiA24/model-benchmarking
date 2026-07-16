@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
@@ -938,31 +939,33 @@ def _runtime_scenario_package(
     source: Path,
     destination: Path,
     *,
-    main_image: str,
-    verifier_image: str,
+    main_image_id: str,
+    verifier_image_id: str,
 ) -> tuple[Path, TypedDigest]:
     shutil.copytree(source, destination)
     task = destination / "task.toml"
-    text = task.read_text(encoding="utf-8")
-    environment = "[environment]\n"
-    if text.count(environment) != 1 or "docker_image" in text:
+    try:
+        parsed = tomllib.loads(task.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
         raise ExecutionError(
             "scenario-runtime-binding-failed",
-            "Scenario task environment cannot accept the sealed runtime images",
+            "Projected scenario task definition is unreadable",
+        ) from error
+    environment = parsed.get("environment")
+    verifier = parsed.get("verifier")
+    verifier_environment = (
+        verifier.get("environment") if isinstance(verifier, dict) else None
+    )
+    if (
+        not isinstance(environment, dict)
+        or not isinstance(verifier_environment, dict)
+        or environment.get("docker_image") != main_image_id
+        or verifier_environment.get("docker_image") != verifier_image_id
+    ):
+        raise ExecutionError(
+            "scenario-runtime-binding-failed",
+            "Projected scenario task does not bind the sealed runtime images",
         )
-    text = text.replace(
-        environment,
-        environment + f"docker_image = {json.dumps(main_image)}\n",
-    )
-    text += (
-        "\n[verifier.environment]\n"
-        f"docker_image = {json.dumps(verifier_image)}\n"
-        'network_mode = "no-network"\n'
-        f"cpus = {FIXED_LIMITS['cpu_cores_per_trial']}\n"
-        f"memory_mb = {FIXED_LIMITS['memory_mib_per_trial']}\n"
-        f"storage_mb = {FIXED_LIMITS['writable_disk_mib_per_trial']}\n"
-    )
-    task.write_text(text, encoding="utf-8")
     identity = _tree_digest(destination)
     for item in sorted(destination.rglob("*"), reverse=True):
         item.chmod(0o555 if item.is_dir() else 0o444)
@@ -2124,8 +2127,12 @@ class NativeFunctionalV1Runtime:
                 runtime_package, runtime_identity = _runtime_scenario_package(
                     Path(str(receipt["package_path"])),
                     temporary / f"{name}-runtime",
-                    main_image=str(main_record["reference"]),
-                    verifier_image=str(verifier_record["reference"]),
+                    main_image_id=str(main_record["image_id"]).removeprefix(
+                        "oci-image:"
+                    ),
+                    verifier_image_id=str(verifier_record["image_id"]).removeprefix(
+                        "oci-image:"
+                    ),
                 )
                 packages[name] = runtime_package
                 package_probes.append(
