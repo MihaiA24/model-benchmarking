@@ -17,6 +17,26 @@ from model_benchmark.declarations.schemas import SchemaRegistry
 _HEX = "0" * 64
 
 
+def _pricing_record() -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "schema_version": 1,
+        "currency": "USD",
+        "unit": "usd-per-million-tokens",
+        "input_usd_per_million_tokens": "1.00",
+        "output_usd_per_million_tokens": "2.00",
+        "effective_from_utc": "2026-01-01T00:00:00Z",
+        "effective_until_utc": "2027-01-01T00:00:00Z",
+        "source_url": "https://provider.example/pricing",
+        "retrieved_at_utc": "2026-01-01T00:00:00Z",
+    }
+    value["identity"] = str(
+        TypedDigest.from_bytes(
+            DigestKind.PRICING_RECORD, canonical_json_bytes(value)
+        )
+    )
+    return value
+
+
 def _scenario_lock(name: str) -> bytes:
     registry = SchemaRegistry(schema_root_path())
     value = {
@@ -150,6 +170,7 @@ def _manifest_value(root: Path) -> dict[str, Any]:
         "provider": {
             "base_url": "https://provider.example/v1",
             "model": "exact/model-slug",
+            "pricing": _pricing_record(),
         },
         "limits": {
             "requests_per_trial": 64,

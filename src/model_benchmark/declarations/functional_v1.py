@@ -6,6 +6,7 @@ import re
 import stat
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
@@ -216,6 +217,123 @@ def _validate_cost(value: object) -> str:
             "stop_after_cost_usd_per_trial must be between 0.01 and 20.00",
         )
     return value
+
+
+def _pricing_rate(value: object, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"(?:0|[1-9]\d*)\.\d{1,9}", value) is None
+    ):
+        _reject(
+            "invalid-pricing-record",
+            f"provider.pricing.{label} must be a canonical decimal string",
+        )
+    rate = Decimal(value)
+    if not Decimal("0") < rate <= Decimal("1000"):
+        _reject(
+            "invalid-pricing-record",
+            f"provider.pricing.{label} must be positive and at most 1000",
+        )
+    return value
+
+
+def _pricing_timestamp(value: object, label: str) -> datetime:
+    if not isinstance(value, str) or re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value
+    ) is None:
+        _reject(
+            "invalid-pricing-record",
+            f"provider.pricing.{label} must be a whole-second UTC timestamp",
+        )
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    except ValueError as error:
+        raise FunctionalV1ManifestError(
+            "invalid-pricing-record", f"invalid provider.pricing.{label}"
+        ) from error
+
+
+def _validate_pricing_record(value: object) -> dict[str, Any]:
+    record = _strict_object(
+        value,
+        {
+            "currency",
+            "effective_from_utc",
+            "effective_until_utc",
+            "identity",
+            "input_usd_per_million_tokens",
+            "output_usd_per_million_tokens",
+            "retrieved_at_utc",
+            "schema_version",
+            "source_url",
+            "unit",
+        },
+        "provider.pricing",
+    )
+    if (
+        record["schema_version"] != 1
+        or record["currency"] != "USD"
+        or record["unit"] != "usd-per-million-tokens"
+    ):
+        _reject(
+            "invalid-pricing-record",
+            "provider.pricing must use schema version 1 USD per million tokens",
+        )
+    _pricing_rate(
+        record["input_usd_per_million_tokens"],
+        "input_usd_per_million_tokens",
+    )
+    _pricing_rate(
+        record["output_usd_per_million_tokens"],
+        "output_usd_per_million_tokens",
+    )
+    effective_from = _pricing_timestamp(
+        record["effective_from_utc"], "effective_from_utc"
+    )
+    effective_until = _pricing_timestamp(
+        record["effective_until_utc"], "effective_until_utc"
+    )
+    retrieved_at = _pricing_timestamp(record["retrieved_at_utc"], "retrieved_at_utc")
+    if not effective_from <= retrieved_at < effective_until:
+        _reject(
+            "invalid-pricing-record",
+            "provider.pricing retrieval must fall within its effective interval",
+        )
+    source = record["source_url"]
+    if not isinstance(source, str):
+        _reject("invalid-pricing-record", "provider.pricing.source_url is invalid")
+    parsed_source = urlsplit(source)
+    if (
+        parsed_source.scheme != "https"
+        or parsed_source.hostname is None
+        or parsed_source.hostname != parsed_source.hostname.lower()
+        or parsed_source.username is not None
+        or parsed_source.password is not None
+        or parsed_source.query
+        or parsed_source.fragment
+        or parsed_source.path in {"", "/"}
+        or urlunsplit(parsed_source) != source
+    ):
+        _reject(
+            "invalid-pricing-record",
+            "provider.pricing.source_url must be a canonical HTTPS URL",
+        )
+    try:
+        identity = TypedDigest.parse(record["identity"])
+    except (IdentityError, TypeError) as error:
+        raise FunctionalV1ManifestError(
+            "invalid-pricing-record", "provider.pricing.identity is invalid"
+        ) from error
+    payload = {key: child for key, child in record.items() if key != "identity"}
+    expected = TypedDigest.from_bytes(
+        DigestKind.PRICING_RECORD, canonical_json_bytes(payload)
+    )
+    if identity != expected:
+        _reject(
+            "pricing-record-mismatch",
+            "provider.pricing.identity does not match its canonical content",
+        )
+    return record
 
 
 def _reject_secret_fields(value: object, path: str = "$") -> None:
@@ -506,9 +624,10 @@ class FunctionalV1Manifest:
         if manifest["schema_version"] != 1:
             _reject("unsupported-manifest-version", "schema_version must equal 1")
         provider = _strict_object(
-            manifest["provider"], {"base_url", "model"}, "provider"
+            manifest["provider"], {"base_url", "model", "pricing"}, "provider"
         )
         _validate_base_url(provider["base_url"])
+        _validate_pricing_record(provider["pricing"])
         if (
             not isinstance(provider["model"], str)
             or _MODEL.fullmatch(provider["model"]) is None

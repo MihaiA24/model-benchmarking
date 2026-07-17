@@ -852,7 +852,16 @@ def _probe_network(
                 "--env",
                 "MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL=1",
                 "--env",
+                "MODEL_BENCHMARK_REQUESTS_PER_TRIAL=1",
+                "--env",
                 "MODEL_BENCHMARK_STOP_AFTER_COST_USD_PER_TRIAL=0.01",
+                "--env",
+                "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY=pricing-record:sha256:"
+                + "0" * 64,
+                "--env",
+                "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS=1.00",
+                "--env",
+                "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS=1.00",
                 proxy_image,
             ]
         )
@@ -1275,7 +1284,11 @@ class HarborCellExecutor:
                         "MODEL_BENCHMARK_PROVIDER_API_KEY": "${MODEL_BENCHMARK_PROVIDER_API_KEY:?}",
                         "MODEL_BENCHMARK_PROVIDER_BASE_URL": "${MODEL_BENCHMARK_PROVIDER_BASE_URL:?}",
                         "MODEL_BENCHMARK_PROVIDER_MODEL": "${MODEL_BENCHMARK_PROVIDER_MODEL:?}",
+                        "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY": "${MODEL_BENCHMARK_PRICING_RECORD_IDENTITY:?}",
+                        "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS": "${MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS:?}",
+                        "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS": "${MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS:?}",
                         "MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL": "${MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL:?}",
+                        "MODEL_BENCHMARK_REQUESTS_PER_TRIAL": "${MODEL_BENCHMARK_REQUESTS_PER_TRIAL:?}",
                         "MODEL_BENCHMARK_PROXY_TOKEN": "${MODEL_BENCHMARK_PROXY_TOKEN:?}",
                         "MODEL_BENCHMARK_STOP_AFTER_COST_USD_PER_TRIAL": "${MODEL_BENCHMARK_STOP_AFTER_COST_USD_PER_TRIAL:?}",
                     },
@@ -1712,8 +1725,24 @@ class HarborCellExecutor:
                 "MODEL_BENCHMARK_PROVIDER_MODEL": str(
                     self.manifest.value["provider"]["model"]
                 ),
+                "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY": str(
+                    self.manifest.value["provider"]["pricing"]["identity"]
+                ),
+                "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS": str(
+                    self.manifest.value["provider"]["pricing"][
+                        "input_usd_per_million_tokens"
+                    ]
+                ),
+                "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS": str(
+                    self.manifest.value["provider"]["pricing"][
+                        "output_usd_per_million_tokens"
+                    ]
+                ),
                 "MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL": str(
                     self.manifest.value["limits"]["provider_tokens_per_trial"]
+                ),
+                "MODEL_BENCHMARK_REQUESTS_PER_TRIAL": str(
+                    self.manifest.value["limits"]["requests_per_trial"]
                 ),
                 "MODEL_BENCHMARK_PROXY_TOKEN": token,
                 "MODEL_BENCHMARK_STOP_AFTER_COST_USD_PER_TRIAL": str(
@@ -1796,6 +1825,8 @@ class HarborCellExecutor:
                     time.monotonic_ns() - started,
                 )
             except BaseException as error:
+                (root / "harbor.stdout.txt").write_text(stdout, encoding="utf-8")
+                (root / "harbor.stderr.txt").write_text(stderr, encoding="utf-8")
                 preserved = self._preserve_raw_evidence(
                     root, raw_root, (real_key.encode(), token.encode())
                 )

@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from model_benchmark.runtime.credential_proxy import (
     CredentialProxy,
     CredentialProxyConfig,
+    PricingRecord,
 )
 
 
@@ -25,6 +26,7 @@ def _proxy(
     *,
     tokens: int = 100_000,
     cost: str = "5.00",
+    pricing: PricingRecord | None = None,
 ) -> CredentialProxy:
     return CredentialProxy(
         CredentialProxyConfig(
@@ -35,6 +37,7 @@ def _proxy(
             provider_tokens_per_trial=tokens,
             stop_after_cost_usd_per_trial=Decimal(cost),
             evidence_path=tmp_path / "proxy-events.jsonl",
+            pricing_record=pricing,
         )
     )
 
@@ -183,6 +186,52 @@ def test_token_and_cost_thresholds_stop_after_one_overshooting_response(
     assert response["token_overshoot"] == 1
     assert response["cost_overshoot_usd"] == "0.25"
     assert evidence[1]["event"] == "request-rejected"
+
+
+def test_pricing_record_derives_cost_when_provider_omits_cost(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    pricing = PricingRecord(
+        identity="pricing-record:sha256:" + "0" * 64,
+        input_usd_per_million_tokens=Decimal("0.10"),
+        output_usd_per_million_tokens=Decimal("0.20"),
+    )
+    recording_provider.enqueue_json(
+        {
+            "choices": [],
+            "model": _MODEL,
+            "usage": {
+                "prompt_tokens": 1_000_000,
+                "completion_tokens": 500_000,
+                "total_tokens": 1_500_000,
+            },
+        }
+    )
+
+    with _proxy(
+        recording_provider,
+        tmp_path,
+        tokens=2_000_000,
+        cost="0.15",
+        pricing=pricing,
+    ) as proxy:
+        assert _post(proxy, _request_body())[0] == 200
+        assert _post(proxy, _request_body())[0] == 429
+        snapshot = proxy.snapshot
+
+    assert snapshot.provider_cost_usd == "0.20"
+    event = json.loads(
+        (tmp_path / "proxy-events.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert event["provider_reported_cost_usd"] is None
+    assert event["provider_cost_usd"] == "0.20"
+    assert event["cost_components_usd"] == {
+        "input": "0.10",
+        "output": "0.10",
+    }
+    assert event["pricing_record_identity"] == pricing.identity
+    assert event["budget_events"] == ["cost-stop-after-response"]
 
 
 def test_sixty_fifth_request_is_denied_without_an_upstream_retry(

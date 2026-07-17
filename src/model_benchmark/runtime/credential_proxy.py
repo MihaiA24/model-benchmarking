@@ -16,6 +16,11 @@ from typing import Self
 from urllib.parse import SplitResult, urlsplit
 
 from model_benchmark.declarations.canonical import canonical_json_bytes
+from model_benchmark.declarations.identities import (
+    DigestKind,
+    IdentityError,
+    TypedDigest,
+)
 
 
 PROVIDER_API_KEY_ENV = "MODEL_BENCHMARK_PROVIDER_API_KEY"
@@ -54,12 +59,44 @@ class CredentialProxyError(ValueError):
 
 
 @dataclass(frozen=True)
+class PricingRecord:
+    identity: str
+    input_usd_per_million_tokens: Decimal
+    output_usd_per_million_tokens: Decimal
+
+    def __post_init__(self) -> None:
+        try:
+            identity = TypedDigest.parse(self.identity)
+        except (IdentityError, TypeError) as error:
+            raise CredentialProxyError("pricing record identity is invalid") from error
+        if identity.kind is not DigestKind.PRICING_RECORD:
+            raise CredentialProxyError("pricing record identity has the wrong kind")
+        for rate in (
+            self.input_usd_per_million_tokens,
+            self.output_usd_per_million_tokens,
+        ):
+            if not rate.is_finite() or rate <= 0:
+                raise CredentialProxyError("pricing rates must be finite and positive")
+
+    def cost_usd(
+        self, input_tokens: int, output_tokens: int
+    ) -> tuple[Decimal, Decimal, Decimal]:
+        million = Decimal(1_000_000)
+        input_cost = Decimal(input_tokens) * self.input_usd_per_million_tokens / million
+        output_cost = (
+            Decimal(output_tokens) * self.output_usd_per_million_tokens / million
+        )
+        return input_cost + output_cost, input_cost, output_cost
+
+
+@dataclass(frozen=True)
 class CredentialProxyConfig:
     upstream_base_url: str
     model: str
     provider_tokens_per_trial: int
     stop_after_cost_usd_per_trial: Decimal
     evidence_path: Path
+    pricing_record: PricingRecord | None = None
     requests_per_trial: int = 64
     listen_host: str = "127.0.0.1"
     listen_port: int = 0
@@ -153,6 +190,7 @@ class CredentialProxyConfig:
         provider_tokens_per_trial: int,
         stop_after_cost_usd_per_trial: Decimal,
         evidence_path: Path,
+        pricing_record: PricingRecord | None = None,
         requests_per_trial: int = 64,
         allowed_endpoint_paths: tuple[str, ...] = ("/chat/completions",),
         listen_host: str = "127.0.0.1",
@@ -166,6 +204,7 @@ class CredentialProxyConfig:
             provider_tokens_per_trial=provider_tokens_per_trial,
             stop_after_cost_usd_per_trial=stop_after_cost_usd_per_trial,
             evidence_path=evidence_path,
+            pricing_record=pricing_record,
             requests_per_trial=requests_per_trial,
             listen_host=listen_host,
             listen_port=listen_port,
@@ -190,6 +229,8 @@ class _MetadataObserver:
         self._too_large = False
         self.model: str | None = None
         self.tokens: int | None = None
+        self.input_tokens: int | None = None
+        self.output_tokens: int | None = None
         self.cost: Decimal | None = None
 
     def feed(self, chunk: bytes) -> None:
@@ -238,9 +279,13 @@ class _MetadataObserver:
             self.model = model
         usage = value.get("usage")
         if isinstance(usage, dict):
-            tokens = usage.get("total_tokens")
-            if isinstance(tokens, int) and not isinstance(tokens, bool) and tokens >= 0:
+            tokens, input_tokens, output_tokens = _usage_token_counts(usage)
+            if tokens is not None:
                 self.tokens = tokens
+            if input_tokens is not None:
+                self.input_tokens = input_tokens
+            if output_tokens is not None:
+                self.output_tokens = output_tokens
             self._observe_cost(usage)
         self._observe_cost(value)
 
@@ -263,6 +308,24 @@ def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return value
 
 
+def _token_count(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
+def _usage_token_counts(
+    usage: dict[str, object],
+) -> tuple[int | None, int | None, int | None]:
+    input_tokens = _token_count(usage.get("prompt_tokens"))
+    if input_tokens is None:
+        input_tokens = _token_count(usage.get("input_tokens"))
+    output_tokens = _token_count(usage.get("completion_tokens"))
+    if output_tokens is None:
+        output_tokens = _token_count(usage.get("output_tokens"))
+    return _token_count(usage.get("total_tokens")), input_tokens, output_tokens
+
+
 def _parse_cost(value: object) -> Decimal | None:
     if not isinstance(value, (str, int)) or isinstance(value, bool):
         return None
@@ -275,6 +338,17 @@ def _parse_cost(value: object) -> Decimal | None:
 
 def _canonical_cost(value: Decimal) -> str:
     return format(value, "f")
+
+
+def _accounted_cost(
+    config: CredentialProxyConfig, observer: _MetadataObserver
+) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+    pricing = config.pricing_record
+    if pricing is None:
+        return observer.cost, None, None
+    if observer.input_tokens is None or observer.output_tokens is None:
+        return None, None, None
+    return pricing.cost_usd(observer.input_tokens, observer.output_tokens)
 
 
 class _ProxyState:
@@ -611,20 +685,23 @@ class CredentialProxy:
                 budget_events: list[str] = []
                 token_overshoot = 0
                 cost_overshoot = Decimal(0)
+                accounted_cost, input_cost, output_cost = _accounted_cost(
+                    state.config, observer
+                )
                 model_mismatch = (
                     observer.model is not None and observer.model != state.config.model
                 )
                 missing_success_metadata = successful and (
                     observer.model is None
                     or observer.tokens is None
-                    or observer.cost is None
+                    or accounted_cost is None
                 )
                 if model_mismatch or missing_success_metadata:
                     reason_code = "provider-contract-violation"
                     state.blocked_reason = reason_code
-                elif observer.tokens is not None and observer.cost is not None:
+                elif observer.tokens is not None and accounted_cost is not None:
                     state.provider_tokens += observer.tokens
-                    state.provider_cost += observer.cost
+                    state.provider_cost += accounted_cost
                     token_overshoot = max(
                         0,
                         state.provider_tokens - state.config.provider_tokens_per_trial,
@@ -643,17 +720,34 @@ class CredentialProxy:
                         budget_events.append("cost-stop-after-response")
                     if budget_events:
                         state.blocked_reason = budget_events[0]
+                pricing = state.config.pricing_record
                 event: dict[str, object] = {
                     "budget_events": budget_events,
+                    "cost_components_usd": (
+                        {
+                            "input": _canonical_cost(input_cost),
+                            "output": _canonical_cost(output_cost),
+                        }
+                        if input_cost is not None and output_cost is not None
+                        else None
+                    ),
                     "cost_overshoot_usd": _canonical_cost(cost_overshoot),
                     "duration_ns": time.monotonic_ns() - started_ns,
                     "event": "provider-response",
+                    "input_tokens": observer.input_tokens,
+                    "output_tokens": observer.output_tokens,
+                    "pricing_record_identity": pricing.identity if pricing else None,
                     "provider_cost_usd": (
+                        _canonical_cost(accounted_cost)
+                        if accounted_cost is not None
+                        else None
+                    ),
+                    "provider_model": observer.model,
+                    "provider_reported_cost_usd": (
                         _canonical_cost(observer.cost)
                         if observer.cost is not None
                         else None
                     ),
-                    "provider_model": observer.model,
                     "provider_tokens": observer.tokens,
                     "reason_code": reason_code,
                     "request_index": request_index,
