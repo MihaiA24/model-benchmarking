@@ -423,15 +423,33 @@ def _check_collect_manifest(
 ) -> None:
     if entries["harbor/collect-manifest.json"]["status"] != "present":
         return
-    manifest = _load_json_object(staging / "harbor/collect-manifest.json")
-    if manifest is None:
+
+    def fail() -> None:
         if "collector-failed" not in infrastructure_events:
             infrastructure_events.append("collector-failed")
+
+    # Harbor 0.18 writes the collect manifest as an array of entry objects:
+    # {source, destination, type, status, service} with status one of
+    # ok | empty | failed | skipped.
+    try:
+        manifest = json.loads((staging / "harbor/collect-manifest.json").read_bytes())
+    except (OSError, UnicodeDecodeError, ValueError):
+        fail()
         return
-    for source_path, outcome in manifest.items():
-        if "/capture/" in source_path and outcome == "failed":
-            if "collector-failed" not in infrastructure_events:
-                infrastructure_events.append("collector-failed")
+    if not isinstance(manifest, list):
+        fail()
+        return
+    for entry in manifest:
+        if not isinstance(entry, dict):
+            fail()
+            return
+        source = entry.get("source")
+        status = entry.get("status")
+        if not isinstance(source, str) or not isinstance(status, str):
+            fail()
+            return
+        if "/capture/" in source and status == "failed":
+            fail()
             return
 
 

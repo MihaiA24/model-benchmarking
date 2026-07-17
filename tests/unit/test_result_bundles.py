@@ -59,11 +59,39 @@ def _rejected_record(reason: str) -> bytes:
     return json.dumps(record, sort_keys=True).encode("utf-8")
 
 
+def _harbor_collect_manifest(capture_status: str = "ok") -> bytes:
+    entries = [
+        {
+            "source": "/logs/artifacts",
+            "destination": "artifacts/logs/artifacts",
+            "type": "directory",
+            "status": "empty",
+            "service": None,
+        },
+        {
+            "source": "/capture/capture.json",
+            "destination": "artifacts/capture/capture.json",
+            "type": "file",
+            "status": capture_status,
+            "service": "capture",
+        },
+        {
+            "source": "/capture/submission.patch",
+            "destination": "artifacts/capture/submission.patch",
+            "type": "file",
+            "status": capture_status,
+            "service": "capture",
+        },
+    ]
+    return json.dumps(entries).encode("utf-8")
+
+
 def _build_cell(
     root: Path,
     *,
     patch: bytes = DEFAULT_PATCH,
     capture: bytes | None = None,
+    collect_manifest: bytes | None = None,
     include_trial: bool = True,
     include_capture: bool = True,
     include_patch: bool = True,
@@ -80,6 +108,8 @@ def _build_cell(
             json.dumps({"status": "completed", "trial": "t1"}).encode("utf-8"),
         )
         _write(trial / "trial.log", b"trial started\ntrial finished\n")
+        if collect_manifest is not None:
+            _write(trial / "artifacts" / "manifest.json", collect_manifest)
         if include_capture:
             capture_bytes = (
                 capture
@@ -395,3 +425,37 @@ def test_symlinked_trial_result_fails_the_capture_seam(tmp_path: Path) -> None:
     assert "harbor/result.json" in outcome.details["missing_evidence"]
     inventory = _inventory(cell_dir)
     assert _entry_by_path(inventory, "harbor/result.json")["status"] == "collection_failed"
+
+
+def test_harbor_array_collect_manifest_is_accepted(tmp_path: Path) -> None:
+    # Harbor 0.18 writes artifacts/manifest.json as an array of entry
+    # objects; a healthy collection must not be reported as a failure.
+    cell_dir = _build_cell(tmp_path, collect_manifest=_harbor_collect_manifest())
+    outcome = _seal(cell_dir, _execution())
+
+    assert outcome.disposition == "valid_completed"
+    assert outcome.reason_code == "verifier-completed"
+    assert outcome.evidence_valid is True
+
+
+def test_capture_collection_failure_in_array_manifest_is_collector_failed(
+    tmp_path: Path,
+) -> None:
+    cell_dir = _build_cell(
+        tmp_path, collect_manifest=_harbor_collect_manifest("failed")
+    )
+    outcome = _seal(cell_dir, _execution())
+
+    assert outcome.disposition == "invalid_infrastructure"
+    assert outcome.reason_code == "collector-failed"
+    assert outcome.evidence_valid is False
+
+
+def test_non_array_collect_manifest_fails_closed(tmp_path: Path) -> None:
+    legacy_mapping = json.dumps({"/capture/capture.json": "ok"}).encode("utf-8")
+    cell_dir = _build_cell(tmp_path, collect_manifest=legacy_mapping)
+    outcome = _seal(cell_dir, _execution())
+
+    assert outcome.disposition == "invalid_infrastructure"
+    assert outcome.reason_code == "collector-failed"
+    assert outcome.evidence_valid is False
