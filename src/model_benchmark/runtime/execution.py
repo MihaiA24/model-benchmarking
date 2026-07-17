@@ -1270,6 +1270,7 @@ class HarborCellExecutor:
                 },
                 "credential-proxy": {
                     "cap_drop": ["ALL"],
+                    "dns": ["8.8.8.8", "1.1.1.1"],
                     "environment": {
                         "MODEL_BENCHMARK_PROVIDER_API_KEY": "${MODEL_BENCHMARK_PROVIDER_API_KEY:?}",
                         "MODEL_BENCHMARK_PROVIDER_BASE_URL": "${MODEL_BENCHMARK_PROVIDER_BASE_URL:?}",
