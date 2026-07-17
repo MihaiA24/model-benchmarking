@@ -59,7 +59,9 @@ def _rejected_record(reason: str) -> bytes:
     return json.dumps(record, sort_keys=True).encode("utf-8")
 
 
-def _harbor_collect_manifest(capture_status: str = "ok") -> bytes:
+def _harbor_collect_manifest(
+    capture_status: str = "ok", patch_status: str | None = None
+) -> bytes:
     entries = [
         {
             "source": "/logs/artifacts",
@@ -79,7 +81,7 @@ def _harbor_collect_manifest(capture_status: str = "ok") -> bytes:
             "source": "/capture/submission.patch",
             "destination": "artifacts/capture/submission.patch",
             "type": "file",
-            "status": capture_status,
+            "status": capture_status if patch_status is None else patch_status,
             "service": "capture",
         },
     ]
@@ -459,3 +461,49 @@ def test_non_array_collect_manifest_fails_closed(tmp_path: Path) -> None:
     assert outcome.disposition == "invalid_infrastructure"
     assert outcome.reason_code == "collector-failed"
     assert outcome.evidence_valid is False
+
+
+def test_rejected_capture_patch_collection_failure_is_not_collector_failed(
+    tmp_path: Path,
+) -> None:
+    # A rejected (or no-op) capture writes no submission.patch, so Harbor
+    # reports its collection as failed; that expected failure must not
+    # override the valid submission-rejected handoff.
+    cell_dir = _build_cell(
+        tmp_path,
+        capture=_rejected_record("undeclared_path"),
+        include_patch=False,
+        include_verifier=False,
+        collect_manifest=_harbor_collect_manifest("ok", patch_status="failed"),
+    )
+    execution = _execution(
+        disposition="valid_harness_outcome",
+        reason_code="submission-not-evaluable",
+        terminal_phase="capture",
+    )
+    outcome = _seal(cell_dir, execution)
+
+    assert outcome.disposition == "valid_harness_outcome"
+    assert outcome.reason_code == "submission-rejected"
+    assert outcome.evidence_valid is True
+    assert outcome.details["handoff"] == "rejected"
+
+
+def test_verifier_completed_with_rejected_capture_is_submission_rejected(
+    tmp_path: Path,
+) -> None:
+    # The verifier can complete on a repo whose submission the capture
+    # boundary rejected (undeclared path). That is a valid harness failure,
+    # not a handoff-mismatch infrastructure failure.
+    cell_dir = _build_cell(
+        tmp_path,
+        capture=_rejected_record("undeclared_path"),
+        include_patch=False,
+        collect_manifest=_harbor_collect_manifest("ok", patch_status="failed"),
+    )
+    outcome = _seal(cell_dir, _execution(disposition="valid_completed"))
+
+    assert outcome.disposition == "valid_harness_outcome"
+    assert outcome.reason_code == "submission-rejected"
+    assert outcome.evidence_valid is True
+    assert outcome.details["handoff"] == "rejected"

@@ -448,7 +448,13 @@ def _check_collect_manifest(
         if not isinstance(source, str) or not isinstance(status, str):
             fail()
             return
-        if "/capture/" in source and status == "failed":
+        # capture.json is the always-mandatory collected record; a failed
+        # collection of it is a true collector failure. submission.patch is
+        # only present for a patch handoff (a rejected or no-op capture writes
+        # no patch, so Harbor reports its collection as failed) and its
+        # mandatory presence for the patch handoff is enforced separately by
+        # _mandatory_paths, so a failed patch collection is not escalated here.
+        if source == "/capture/capture.json" and status == "failed":
             fail()
             return
 
@@ -649,6 +655,20 @@ def _reconcile(
             details=details,
         )
     if disposition == "valid_completed":
+        if handoff == "rejected":
+            # Harbor runs the verifier independently of capture acceptance, so
+            # a completed verifier can coexist with a submission the capture
+            # boundary rejected (e.g. the model wrote an undeclared path). The
+            # rejected submission, not the verifier reward on a dirty tree, is
+            # the graded outcome: a valid harness failure, not infrastructure.
+            return CellSealOutcome(
+                disposition="valid_harness_outcome",
+                terminal_phase="capture",
+                reason_code="submission-rejected",
+                evidence_valid=True,
+                result_bundle_identity=identity,
+                details=details,
+            )
         if handoff not in {"patch", "no-op"}:
             return CellSealOutcome(
                 disposition="invalid_infrastructure",
