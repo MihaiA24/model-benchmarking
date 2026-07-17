@@ -652,3 +652,31 @@ def test_unsupported_oneshot_behavior_is_unqualified_without_fallback(
         "unsupported-hermes-unqualified",
         {"fallback_attempts": 0, "reason_code": qualification.reason_code},
     )
+
+
+def test_image_identity_does_not_depend_on_storage_driver_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inspected = {
+        "Architecture": "amd64",
+        "Config": {
+            "Env": ["HERMES_DISABLE_LAZY_INSTALLS=1"],
+            "Labels": {
+                "org.opencontainers.image.revision": HERMES_RELEASE_COMMIT
+            },
+        },
+        "Id": HERMES_IMAGE_ID,
+        "Os": "linux",
+        "RepoDigests": [HERMES_IMAGE_REFERENCE],
+        "Size": HERMES_IMAGE_BYTES - 1,
+    }
+    completed = subprocess.CompletedProcess(
+        ["docker"], 0, stdout=json.dumps(inspected), stderr=""
+    )
+    monkeypatch.setattr(hermes_runtime, "_docker", lambda *_args, **_kwargs: completed)
+
+    record = hermes_runtime._inspect_image()
+
+    assert record is not None
+    assert record["identity"] == HERMES_IMAGE_IDENTITY
+    assert record["bytes"] == HERMES_IMAGE_BYTES
