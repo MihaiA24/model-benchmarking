@@ -1248,7 +1248,6 @@ class HarborCellExecutor:
         value = {
             "services": {
                 "capture": {
-                    "build": None,
                     "image": capture_image,
                     "labels": labels,
                     "pull_policy": "never",
@@ -1794,8 +1793,21 @@ class HarborCellExecutor:
                     events,
                     time.monotonic_ns() - started,
                 )
-            except BaseException:
+            except BaseException as error:
+                preserved = self._preserve_raw_evidence(
+                    root, raw_root, (real_key.encode(), token.encode())
+                )
                 _cleanup_owned(run_id, cell_id)
+                if isinstance(error, ExecutionError):
+                    context = (
+                        f"{error} [harbor exit {process.returncode};"
+                        f" raw evidence preserved: {preserved};"
+                        f" stdout tail: {stdout[-1200:]};"
+                        f" stderr tail: {stderr[-1200:]}]"
+                    )
+                    for secret in (real_key, token):
+                        context = context.replace(secret, "[REDACTED]")
+                    raise ExecutionError(error.reason_code, context) from error
                 raise
             cleanup_before = _resource_inventory(run_id, cell_id)
             _cleanup_owned(run_id, cell_id)
