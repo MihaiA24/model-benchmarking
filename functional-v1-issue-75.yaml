@@ -9,11 +9,11 @@ provider:
     unit: usd-per-million-tokens
     input_usd_per_million_tokens: "0.14"
     output_usd_per_million_tokens: "0.28"
-    effective_from_utc: "2026-07-16T00:00:00Z"
-    effective_until_utc: "2026-07-17T00:00:00Z"
+    effective_from_utc: "2026-07-17T00:00:00Z"
+    effective_until_utc: "2026-08-01T00:00:00Z"
     source_url: https://models.dev/providers/opencode-go
-    retrieved_at_utc: "2026-07-16T20:50:00Z"
-    identity: pricing-record:sha256:bb89d137afcc43a9ac8dd4a5e21c3e490f3ea46ec4d1a67caf35f38ebd4e1031
+    retrieved_at_utc: "2026-07-18T10:19:05Z"
+    identity: pricing-record:sha256:869a04aef3095ad01543db7afe6902d5eceb8f36a9a44f5c2e73d95dbf321cf9
 
 limits:
   requests_per_trial: 64
