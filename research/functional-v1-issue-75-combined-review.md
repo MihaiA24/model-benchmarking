@@ -70,27 +70,51 @@ condition home. These carried over from B unchanged.
   `functional-v1-issue-75.yaml` loads: manifest identity
   `functional-v1-manifest:sha256:9dd11a22…`, resolved `resolved-v1-manifest:sha256:3d998363…`.
 
-## Required runs on the qualified Linux worker (before merge)
+## Executed acceptance run on the qualified Linux worker
 
-The combined tree has **not** executed on hardware; both sealed runs prove their own
-trees, not this one. On the worker (`scripts/functional-v1-worker start`, `.env` with
-`MODEL_BENCHMARK_PROVIDER_API_KEY`, `DOCKER_HOST=unix:///run/model-benchmark-docker/docker.sock`):
+Executed 2026-07-18 on the same worker as runs A and B (`cachyos`, native
+linux/amd64, 24 CPU / 30.48 GiB, dedicated Docker Engine, overlay2 on the 128 GiB XFS
+`prjquota` loopback, cgroup v2), from worktree `~/code/nter/mb-issue75-combined` at
+`6bbd84f`, managed home `.model-benchmark`, credential only in `.env` (0600).
 
-1. Refresh the pricing block in `functional-v1-issue-75.yaml` (new `retrieved_at_utc`
-   inside a current effective interval; recompute `identity` over the canonical payload
-   without the `identity` field) — the committed record's interval ended 2026-07-17.
-2. `provision` from a clean managed home — exit 0, sealed inventory.
-3. Network-disabled `preflight` (down the netns uplink, e.g. `ip link set mb-host0 down`)
-   — must pass with the name-based isolation probe and the pricing-env proxy.
-4. Twelve-cell `run` — `complete`/`valid`, 12/12 sealed terminals; expect derived
-   (`provider_cost_usd`) and reported (`provider_reported_cost_usd`) spend on every
-   priced response.
-5. `inspect` twice (byte-identical), `run --resume` no-op, digest read-back 12/12,
-   cleanup inventory empty, exact-byte credential scan of the managed home: zero hits.
-6. Watch the two merged seams specifically: a streaming response must carry
-   `prompt_tokens`/`completion_tokens` (the pricing record derivation fail-closes into
-   `provider-contract-violation` when the split is missing), and a rejected-capture cell,
-   if one occurs, must seal `valid_harness_outcome`/`submission-rejected`.
+The committed `scripts/functional-v1-worker start` performed the worker bring-up
+(first live use: XFS remount, netns + veth + NAT, transient containerd/dockerd units).
+The daemon resolves registries itself (dockerd ignores the host's loopback-stub
+`resolv.conf` and falls back to public DNS through the veth NAT); the credential-proxy
+DNS pin in the cell overlay covers the container side.
+
+1. Pricing refreshed first: models.dev re-retrieved, deepseek-v4-flash still USD
+   0.14/0.28 per M tokens; new window 2026-07-17 → 2026-08-01, identity
+   `pricing-record:sha256:869a04ae…` (commit `6bbd84f`).
+2. `provision` from a clean managed home — `provisioned`, manifest
+   `functional-v1-manifest:sha256:265f6de0…`, provisioning manifest
+   `provisioning-manifest:sha256:5bffb000…`.
+3. Network-disabled `preflight` (uplink `mb-host0` down for the whole window, trap-restored)
+   — `passed`: capacity 24 CPU / 32.7 GB / 101 GiB free vs 8 / 24 GiB / 50 GiB required,
+   exact limits, quota and wall-time probes, and the name-based isolation probe with the
+   pricing-env proxy: `credential_proxy_ready`, direct/public/LAN/metadata/host-route all
+   denied, zero provider requests.
+4. Twelve-cell `run` — **`sealed` / `valid`**, Run ID `019f74c6-3c9c-70de-9e85-129aa2020fa2`,
+   Run Record `functional-v1-run-record:sha256:86a517dd10059ccf27c24597fb7dcb8d1aeaa4ec088df466a4b8ed5ccc0f9289`,
+   ~10 minutes wall with three active slots. Dispositions: 5 `valid_limit_outcome`
+   (tokens-stop-after-response), 1 `valid_completed` (Angular/OpenCode), 6
+   `valid_harness_outcome` (5 condition-ended-before-provider-response, and cell 02
+   python/OpenCode sealed **`submission-rejected`** — the reclassification seam exercised
+   live). 3/12 task passes (OMP python, OMP Angular, OpenCode Angular); 12/12
+   `evidence_valid=true`.
+5. Accounting: 45 provider requests, 652,015 tokens; **45/45 responses priced** with both
+   figures — derived `provider_cost_usd` USD 0.09271010 at the sealed rates and
+   provider-reported `provider_reported_cost_usd` USD 0.01505271 — each event carrying the
+   pricing record identity. No cell approached the USD 5.00 stop.
+6. Post-run: `inspect` twice byte-identical; `run --resume <run-id>` exit 0 with a payload
+   exactly equal to the inspect payload; Run Record digest read-back OK; 12/12 Result
+   Bundle identities recompute from `bundle/inventory.json` and all 251 present artifact
+   digests verify; cleanup left zero Run-owned containers/networks/volumes and only the
+   default `bridge`/`host`/`none` networks; exact-byte scan of the managed home for the
+   live credential: zero hits.
+
+Both merged seams behaved: streaming responses carried the token split (pricing
+derivation never fail-closed), and the one rejected capture sealed as valid harness data.
 
 ## Disposition of the open PRs
 
