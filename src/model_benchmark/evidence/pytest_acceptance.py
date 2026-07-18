@@ -27,7 +27,7 @@ from model_benchmark.evidence.verification import (
 )
 
 
-_ISSUE_DIRECTORY = re.compile(r"^issue_([1-9][0-9]*)$")
+_ISSUE_DIRECTORY = re.compile(r"^issue_([1-9][0-9]*)(?:_[a-z][a-z0-9_]*)?$")
 _SELECTION_OPTIONS = (
     "keyword",
     "markexpr",
@@ -145,9 +145,26 @@ def _acceptance_state(config: pytest.Config) -> _AcceptanceState | None:
     states = _recognized_issue_states(project_root, list(config.args))
     if len(states) != 1 or not states[0].issue_path.is_dir():
         raise pytest.UsageError(
-            "acceptance proof path must be tests/acceptance/issue_N"
+            "acceptance proof path must be a single tests/acceptance/issue_N[_slug]"
+            " directory"
         )
+    _assert_unambiguous_issue_directory(states[0])
     return states[0]
+
+
+def _assert_unambiguous_issue_directory(state: _AcceptanceState) -> None:
+    matches = sorted(
+        entry.name
+        for entry in state.issue_path.parent.iterdir()
+        if entry.is_dir()
+        and (found := _ISSUE_DIRECTORY.fullmatch(entry.name)) is not None
+        and int(found.group(1)) == state.issue
+    )
+    if len(matches) > 1:
+        raise pytest.UsageError(
+            f"issue {state.issue} is claimed by multiple acceptance directories: "
+            + ", ".join(matches)
+        )
 
 
 def _state(config: pytest.Config) -> _AcceptanceState | None:

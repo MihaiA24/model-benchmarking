@@ -17,9 +17,13 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_ROOT = ROOT / "schemas"
 
 
-def _project(tmp_path: Path, test_source: str = "def test_case():\n    assert True\n") -> Path:
+def _project(
+    tmp_path: Path,
+    test_source: str = "def test_case():\n    assert True\n",
+    directory: str = "issue_99",
+) -> Path:
     project = tmp_path / "nested"
-    issue = project / "tests/acceptance/issue_99"
+    issue = project / "tests/acceptance" / directory
     issue.mkdir(parents=True)
     (project / "src").mkdir()
     (project / "src/foundation.txt").write_text("source\n", encoding="utf-8")
@@ -29,13 +33,18 @@ def _project(tmp_path: Path, test_source: str = "def test_case():\n    assert Tr
     return project
 
 
-def _run(project: Path, *extra: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    project: Path,
+    *extra: str,
+    env: dict[str, str] | None = None,
+    directory: str = "issue_99",
+) -> subprocess.CompletedProcess[str]:
     command = [
         sys.executable,
         "-m",
         "pytest",
         "-q",
-        "tests/acceptance/issue_99",
+        f"tests/acceptance/{directory}",
         "--maxfail=1",
         *extra,
     ]
@@ -139,3 +148,27 @@ def test_non_exact_acceptance_path_is_rejected(tmp_path: Path) -> None:
     )
 
     assert completed.returncode != 0
+
+
+def test_slugged_issue_directory_publishes_numeric_artifacts(tmp_path: Path) -> None:
+    project = _project(tmp_path, directory="issue_99_sample_suite")
+
+    completed = _run(project, directory="issue_99_sample_suite")
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    artifact_root = project / "artifacts/acceptance/issue-99"
+    assert (artifact_root / "verification.json").is_file()
+    assert (artifact_root / "sha256sums.txt").is_file()
+
+
+def test_duplicate_issue_directories_are_rejected(tmp_path: Path) -> None:
+    project = _project(tmp_path, directory="issue_99_sample_suite")
+    twin = project / "tests/acceptance/issue_99"
+    twin.mkdir()
+    (twin / "test_case.py").write_text("def test_case():\n    assert True\n", encoding="utf-8")
+
+    completed = _run(project, directory="issue_99_sample_suite")
+
+    assert completed.returncode != 0
+    assert "multiple acceptance directories" in completed.stdout + completed.stderr
+    assert not (project / "artifacts/acceptance/issue-99/verification.json").exists()

@@ -23,7 +23,7 @@ POLICY = load_policy(ROOT / "verification/policy.json")
 def test_closed_world_selection_covers_targeted_and_fail_closed_paths() -> None:
     expected_new_paths = {
         "scripts/verify.py",
-        "tests/acceptance/issue_54/test_verification_policy.py",
+        "tests/acceptance/issue_54_verification_policy/test_verification_policy.py",
         "tests/architecture/test_import_boundaries.py",
         "tests/unit/test_verification_policy.py",
         "verification/__init__.py",
@@ -53,7 +53,7 @@ def test_closed_world_selection_covers_targeted_and_fail_closed_paths() -> None:
 
 def test_issue_and_shared_inputs_select_local_verification() -> None:
     issue = POLICY.select(
-        [Change(status="M", path="tests/acceptance/issue_29/test_case.py")]
+        [Change(status="M", path="tests/acceptance/issue_29_scenario_authoring/test_case.py")]
     )
     assert issue.development == ("scenarios",)
     assert issue.cached_integration == ("scenario-contracts",)

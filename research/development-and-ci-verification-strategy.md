@@ -84,7 +84,7 @@ Every verification command must be one of the issue's four classes. Preparation 
 | Ordered [Prove trusted post-stop Submission capture with pinned Harbor](https://github.com/MihaiA24/model-benchmarking/issues/27) gate below | Authoritative merge/release proof | Complete pinned-Harbor substrate proof |
 | Ordered [Establish the Python project, canonical serialization, and strict schema foundation](https://github.com/MihaiA24/model-benchmarking/issues/28) gate below | Authoritative merge/release proof | Foundation issue proof; all companion commands must pass |
 | Ordered [Harden shared acceptance proof harness and architecture guards](https://github.com/MihaiA24/model-benchmarking/issues/51) gate below | Authoritative merge/release proof | Shared proof authority; all companion commands must pass |
-| `uv run --frozen pytest -q tests/acceptance/issue_29 --maxfail=1` | Authoritative merge/release proof | Full 19-case/7-environment Scenario Package gate |
+| `uv run --frozen pytest -q tests/acceptance/issue_29_scenario_authoring --maxfail=1` | Authoritative merge/release proof | Full 19-case/7-environment Scenario Package gate |
 | `uv run --frozen model-benchmark --json scenario qualify ... --measure-output ...` | Live qualification | Fresh Docker technical qualification; package authority still requires complete review/seal |
 | An owning issue's exact `--run-live --require-docker` command | Live qualification | Explicit prerequisite, worker, credentials/budget, and complete mandatory inventory |
 
@@ -96,18 +96,18 @@ uv run --project proofs/harbor-submission-capture --frozen pytest -q proofs/harb
 
 # Establish the Python project, canonical serialization, and strict schema foundation
 uv sync --frozen
-uv run --frozen pytest -q tests/acceptance/issue_28 --maxfail=1
+uv run --frozen pytest -q tests/acceptance/issue_28_foundation_harness --maxfail=1
 uv run --frozen model-benchmark --help
 git diff --check origin/master...HEAD
 
 # Harden shared acceptance proof harness and architecture guards
 uv sync --frozen
-uv run --frozen pytest -q tests/acceptance/issue_51 --maxfail=1 --require-docker --acceptance-input=tests/architecture
+uv run --frozen pytest -q tests/acceptance/issue_51_proof_hardening --maxfail=1 --require-docker --acceptance-input=tests/architecture
 uv run --frozen pytest -q tests/unit/test_pytest_acceptance.py tests/unit/test_verification_artifacts.py tests/architecture/test_import_boundaries.py --maxfail=1
 git diff --check origin/master...HEAD
 
 # Implement Scenario Package and standard-v1 authoring tooling
-uv run --frozen pytest -q tests/acceptance/issue_29 --maxfail=1
+uv run --frozen pytest -q tests/acceptance/issue_29_scenario_authoring --maxfail=1
 ```
 
 `uv sync --frozen` and `model-benchmark scenario qualify ... --provision` are support operations, not a fifth verification class. The former realizes the immutable environment; the latter is the only network-enabled cache population path. Bare `uv run --frozen pytest -q` is retired as an authority-bearing command because it mixes classes; named jobs replace it, though developers may retain it as a non-authoritative convenience.
