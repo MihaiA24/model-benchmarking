@@ -189,6 +189,7 @@ sealed images). The dev gate (`uv run python scripts/verify.py run-development
 | `unsupported-native-platform` before any Docker call | not native Linux/amd64 |
 | provision/preflight can't reach the daemon | reboot cleared the transient units — `sudo bash scripts/functional-v1-worker start` |
 | `condition-image-pin-mismatch` / `reference-digest-mismatch` | runtime tree changed — section 6 |
-| `invalid-pricing-record` / `pricing-record-mismatch` | pricing window lapsed or fields edited without resealing — section 3 |
+| `invalid-pricing-record` / `pricing-record-mismatch` | pricing fields edited without resealing — section 3 |
+| `pricing-record-expired` at `run` start | the sealed record's `effective_until_utc` has passed — re-retrieve and reseal per section 3; `inspect` and sealed-run `run --resume` are unaffected |
 | preflight isolation probe fails on proxy name | proxy container died at start — check its env is complete; the proxy import closure must stay stdlib-only (guarded by `tests/architecture`) |
 | provider unreachable during `run` only | uplink still down from the preflight window — `sudo ip link set mb-host0 up` |
