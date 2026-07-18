@@ -56,14 +56,20 @@ class FunctionalV1ConditionAgent(BaseInstalledAgent):
         command = (
             f"test -x {shlex.quote(self._entrypoint)} && "
             f"test ! -e {_MOUNT}/verifier && "
-            f"mkdir -p /logs/agent/home/.model-benchmark"
+            f"mkdir -p /logs/agent/home && "
+            f"chmod -R a+rwX /logs/agent/home"
         )
         result = await environment.exec(command, user="root", timeout_sec=30)
         if result.return_code != 0:
             raise RuntimeError("selected condition image mount failed closed preflight")
+        # The condition process runs as 65532 while the main service drops
+        # every capability, so root cannot chown; each launch script creates
+        # its own .model-benchmark, so only prove the home is writable by the
+        # condition user here.
         ownership = await environment.exec(
-            "chown -R 65532:65532 /logs/agent/home",
-            user="root",
+            "touch /logs/agent/home/.writable"
+            " && rm /logs/agent/home/.writable",
+            user="65532:65532",
             timeout_sec=30,
         )
         if ownership.return_code != 0:

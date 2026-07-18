@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+import model_benchmark.runtime.execution as execution
+
 from model_benchmark.declarations.canonical import canonical_json_bytes
 from model_benchmark.declarations.functional_v1 import (
     CONDITIONS,
@@ -86,6 +88,86 @@ def test_manifest_fixes_matrix_and_execution_envelope(
         "writable_disk_mib_per_trial": 8_192,
     }
 
+
+def test_manifest_rejects_pricing_changed_without_new_identity(
+    manifest_bundle: tuple[Path, dict[str, object]],
+) -> None:
+    path, manifest = manifest_bundle
+    manifest["provider"]["pricing"]["input_usd_per_million_tokens"] = "1.01"
+    _write_manifest(path, manifest)
+
+    with pytest.raises(FunctionalV1ManifestError) as captured:
+        FunctionalV1Manifest.load(path)
+
+    assert captured.value.reason_code == "pricing-record-mismatch"
+
+
+def _reseal_pricing(pricing: dict[str, object]) -> None:
+    payload = {key: value for key, value in pricing.items() if key != "identity"}
+    pricing["identity"] = str(
+        TypedDigest.from_bytes(DigestKind.PRICING_RECORD, canonical_json_bytes(payload))
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("input_usd_per_million_tokens", "1"),
+        ("input_usd_per_million_tokens", "1001.0"),
+        ("output_usd_per_million_tokens", "0.0"),
+        ("retrieved_at_utc", "2026-01-01T00:00:00.000Z"),
+        ("retrieved_at_utc", "2027-06-01T00:00:00Z"),
+        ("effective_until_utc", "2026-01-01T00:00:00Z"),
+        ("source_url", "http://provider.example/pricing"),
+        ("source_url", "https://provider.example/pricing?plan=team"),
+        ("unit", "usd-per-token"),
+        ("currency", "EUR"),
+        ("schema_version", 2),
+    ],
+)
+def test_manifest_rejects_invalid_pricing_fields_before_identity(
+    manifest_bundle: tuple[Path, dict[str, object]],
+    field: str,
+    value: object,
+) -> None:
+    # The identity is resealed over the mutated content, so only the field
+    # rules — not digest drift — can produce the rejection.
+    path, manifest = manifest_bundle
+    pricing = manifest["provider"]["pricing"]
+    pricing[field] = value
+    _reseal_pricing(pricing)
+    _write_manifest(path, manifest)
+
+    with pytest.raises(FunctionalV1ManifestError) as captured:
+        FunctionalV1Manifest.load(path)
+
+    assert captured.value.reason_code == "invalid-pricing-record"
+
+
+def test_manifest_rejects_unparseable_pricing_identity(
+    manifest_bundle: tuple[Path, dict[str, object]],
+) -> None:
+    path, manifest = manifest_bundle
+    manifest["provider"]["pricing"]["identity"] = "not-a-typed-digest"
+    _write_manifest(path, manifest)
+
+    with pytest.raises(FunctionalV1ManifestError) as captured:
+        FunctionalV1Manifest.load(path)
+
+    assert captured.value.reason_code == "invalid-pricing-record"
+
+
+def test_manifest_rejects_pricing_with_missing_field(
+    manifest_bundle: tuple[Path, dict[str, object]],
+) -> None:
+    path, manifest = manifest_bundle
+    del manifest["provider"]["pricing"]["source_url"]
+    _write_manifest(path, manifest)
+
+    with pytest.raises(FunctionalV1ManifestError) as captured:
+        FunctionalV1Manifest.load(path)
+
+    assert captured.value.reason_code == "invalid-manifest-schema"
 
 @pytest.mark.parametrize(
     ("section", "field", "value", "reason_code"),
@@ -194,3 +276,110 @@ def test_published_template_has_the_exact_fixed_shape() -> None:
         "memory_mib_per_trial": 4_096,
         "writable_disk_mib_per_trial": 8_192,
     }
+
+
+def test_functional_v1_provisioning_records_sealed_store_images(
+    tmp_path: Path,
+    manifest_bundle: tuple[Path, dict[str, object]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = FunctionalV1Manifest.load(manifest_bundle[0])
+    home = execution.FunctionalV1Home(tmp_path / "home")
+    runtime = execution.NativeFunctionalV1Runtime(home)
+    monkeypatch.setattr(execution, "_native_host", lambda: {})
+    monkeypatch.setattr(execution, "_scenario_package", lambda *_: tmp_path)
+    store_ids = {
+        "agent": "sha256:" + "1" * 64,
+        "capture": "sha256:" + "2" * 64,
+        "verifier": "sha256:" + "3" * 64,
+    }
+    provisioned: list[str] = []
+
+    def fake_scenario_provisioning(
+        *_: object,
+        manifest_output: Path,
+        qualification_record: Path | None,
+        **__: object,
+    ) -> dict[str, object]:
+        assert qualification_record is None
+        manifest_output.write_bytes(
+            canonical_json_bytes(
+                {
+                    "runtime_images": [
+                        {"role": role, "image": {"id": image_id}}
+                        for role, image_id in store_ids.items()
+                    ]
+                }
+            )
+        )
+        provisioned.append(str(manifest_output))
+        return {"manifest_sha256": "provisioning-manifest:sha256:" + "0" * 64}
+
+    def unexpected_scenario_build(*arguments: object, **_: object) -> None:
+        raise AssertionError(
+            f"coordinator must not rebuild sealed store images: {arguments}"
+        )
+
+    monkeypatch.setattr(
+        execution, "provision_scenario_package", fake_scenario_provisioning
+    )
+    monkeypatch.setattr(execution, "_build_image", unexpected_scenario_build)
+
+    class _ConditionBoundaryReached(RuntimeError):
+        pass
+
+    def stop_at_conditions(*_: object, **__: object) -> Path:
+        raise _ConditionBoundaryReached
+
+    monkeypatch.setattr(execution, "provision_omp", stop_at_conditions)
+
+    with pytest.raises(_ConditionBoundaryReached):
+        runtime._provision(manifest)
+
+    assert len(provisioned) == 3
+
+
+class _PreflightBoundaryReached(RuntimeError):
+    pass
+
+
+def test_functional_v1_preflight_uses_diagnostic_integration_boundary(
+    tmp_path: Path,
+    manifest_bundle: tuple[Path, dict[str, object]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = FunctionalV1Manifest.load(manifest_bundle[0])
+    home = execution.FunctionalV1Home(tmp_path / "home")
+    home.store_manifest_inputs(manifest)
+    runtime = execution.NativeFunctionalV1Runtime(home)
+    inventory = execution.ProvisioningInventory(
+        TypedDigest.from_bytes(DigestKind.PROVISIONING_MANIFEST, b"inventory"),
+        {
+            "scenarios": {
+                name: {"provisioning_manifest": "unused"} for name in SCENARIOS
+            }
+        },
+        tmp_path / "inventory.json",
+    )
+    monkeypatch.setenv("MODEL_BENCHMARK_PROVIDER_API_KEY", "secret")
+    monkeypatch.setattr(execution, "_native_host", lambda: {})
+    monkeypatch.setattr(execution, "_load_inventory", lambda *_: inventory)
+    monkeypatch.setattr(execution, "_verify_inventory_images", lambda *_: None)
+    monkeypatch.setattr(execution, "_scenario_package", lambda *_: tmp_path)
+
+    def stop_at_scenario_preflight(
+        *_: object,
+        mode: str,
+        qualification_record: Path | None,
+        **__: object,
+    ) -> dict[str, object]:
+        assert mode == "integration"
+        assert qualification_record is None
+        raise _PreflightBoundaryReached
+
+    monkeypatch.setattr(
+        execution, "preflight_scenario_package", stop_at_scenario_preflight
+    )
+
+    with pytest.raises(_PreflightBoundaryReached):
+        runtime._preflight(manifest)

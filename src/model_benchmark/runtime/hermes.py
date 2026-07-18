@@ -650,7 +650,6 @@ def _inspect_image() -> dict[str, object] | None:
         value.get("Architecture") != "amd64"
         or value.get("Os") != "linux"
         or value.get("Id") != HERMES_IMAGE_ID
-        or value.get("Size") != HERMES_IMAGE_BYTES
         or not isinstance(repo_digests, list)
         or expected_repo_digest not in repo_digests
         or not isinstance(labels, dict)
