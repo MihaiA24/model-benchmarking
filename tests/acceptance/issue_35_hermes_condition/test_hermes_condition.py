@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import stat
 import subprocess
 import sys
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 import model_benchmark.runtime.hermes as hermes_runtime
+import model_benchmark.runtime.hermes_mounted_launch as mounted_launch
 from model_benchmark.declarations.canonical import (
     canonical_json_bytes,
     load_canonical_json,
@@ -680,3 +683,173 @@ def test_image_identity_does_not_depend_on_storage_driver_size(
     assert record is not None
     assert record["identity"] == HERMES_IMAGE_IDENTITY
     assert record["bytes"] == HERMES_IMAGE_BYTES
+
+
+_MOUNT_PREFIX = "/opt/model-benchmark-condition"
+
+
+def _mounted_launch_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[str, Path, dict[str, Any]]:
+    mount = tmp_path / _MOUNT_PREFIX.lstrip("/")
+    shim = mount / "opt/hermes/bin/hermes"
+    shim.parent.mkdir(parents=True)
+    shim.write_bytes(b"#!/bin/sh\nexec hermes-shim\n")
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv(
+        "MODEL_BENCHMARK_PROXY_BASE_URL", "http://credential-proxy:8080/v1"
+    )
+    monkeypatch.setenv("MODEL_BENCHMARK_PROVIDER_MODEL", "locked/model")
+
+    real_path = Path
+
+    def rebased(*arguments: object) -> Path:
+        candidate = real_path(*arguments)
+        if candidate.is_absolute() and str(candidate).startswith(_MOUNT_PREFIX):
+            return tmp_path / candidate.relative_to("/")
+        return candidate
+
+    rebased.cwd = real_path.cwd
+    monkeypatch.setattr(mounted_launch, "Path", rebased)
+    monkeypatch.setattr(
+        mounted_launch,
+        "sys",
+        SimpleNamespace(
+            stdin=SimpleNamespace(buffer=io.BytesIO(b"do the task")),
+            stdout=SimpleNamespace(buffer=io.BytesIO()),
+            stderr=SimpleNamespace(buffer=io.BytesIO()),
+        ),
+    )
+    captured: dict[str, Any] = {}
+    return mounted_launch._digest(shim), home, captured
+
+
+def _fake_hermes_run(
+    captured: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    usage: dict[str, Any],
+) -> None:
+    def run(
+        arguments: list[str], *, cwd: Path, env: dict[str, str], **_: Any
+    ) -> subprocess.CompletedProcess[bytes]:
+        captured["arguments"] = arguments
+        captured["env"] = env
+        usage_path = Path(arguments[arguments.index("--usage-file") + 1])
+        usage_path.write_text(json.dumps(usage), encoding="utf-8")
+        return subprocess.CompletedProcess(arguments, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(
+        mounted_launch,
+        "subprocess",
+        SimpleNamespace(
+            run=run,
+            PIPE=subprocess.PIPE,
+            SubprocessError=subprocess.SubprocessError,
+        ),
+    )
+
+
+_VALID_USAGE = {
+    "api_calls": 3,
+    "completed": True,
+    "failed": False,
+    "input_tokens": 10,
+    "model": "locked/model",
+    "output_tokens": 5,
+    "total_tokens": 15,
+}
+
+
+def test_mounted_launch_pins_the_hermes_environment_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity, home, captured = _mounted_launch_fixture(tmp_path, monkeypatch)
+    _fake_hermes_run(captured, monkeypatch, _VALID_USAGE)
+
+    assert mounted_launch.main(["--artifact-identity", identity]) == 0
+
+    mount = tmp_path / _MOUNT_PREFIX.lstrip("/")
+    hermes_root = mount / "opt/hermes"
+    environment = captured["env"]
+    assert environment["PYTHONPATH"] == ":".join(
+        (
+            str(hermes_root),
+            str(hermes_root / ".venv/lib/python3.13/site-packages"),
+            str(mount / "opt/model-benchmark-runtime"),
+        )
+    )
+    assert environment["PYTHONHOME"] == str(mount / "usr")
+    assert environment["HERMES_DISABLE_LAZY_INSTALLS"] == "1"
+    assert environment["HERMES_INFERENCE_MODEL"] == "locked/model"
+    assert environment["HERMES_INFERENCE_PROVIDER"] == (
+        "custom:model-benchmark-proxy"
+    )
+    arguments = captured["arguments"]
+    assert arguments[0] == str(mount / "lib64/ld-linux-x86-64.so.2")
+    assert arguments[1] == "--library-path"
+    assert str(mount / "usr/bin/python3") in arguments
+    assert str(hermes_root / ".venv/bin/hermes") in arguments
+    assert "--ignore-rules" in arguments
+    assert arguments[arguments.index("-z") + 1] == "do the task"
+    assert arguments[arguments.index("--model") + 1] == "locked/model"
+    config = json.loads(
+        (home / ".hermes/config.yaml").read_text(encoding="utf-8")
+    )
+    assert config["providers"]["model-benchmark-proxy"]["key_env"] == (
+        "MODEL_BENCHMARK_PROXY_TOKEN"
+    )
+    assert config["providers"]["model-benchmark-proxy"]["api"] == (
+        "http://credential-proxy:8080/v1"
+    )
+    delivery = json.loads(
+        (home / ".model-benchmark/hermes-delivery.json").read_text(encoding="utf-8")
+    )
+    assert delivery["transport"] == "oneshot-argument-with-native-tools"
+    assert delivery["runtime_installation"] is False
+
+
+def test_mounted_launch_rejects_an_invalid_usage_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity, _, captured = _mounted_launch_fixture(tmp_path, monkeypatch)
+    _fake_hermes_run(captured, monkeypatch, {**_VALID_USAGE, "failed": True})
+
+    assert mounted_launch.main(["--artifact-identity", identity]) == 78
+
+
+def test_mounted_launch_fails_closed_without_the_mounted_tree() -> None:
+    # On any host without the sealed condition mount the launch must exit
+    # unqualified, never crash.
+    assert (
+        mounted_launch.main(
+            ["--artifact-identity", "artifact:sha256:" + "0" * 64]
+        )
+        == 78
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "valid"),
+    [
+        ({}, True),
+        ({"completed": False}, False),
+        ({"failed": True}, False),
+        ({"model": "other/model"}, False),
+        ({"api_calls": True}, False),
+        ({"total_tokens": "15"}, False),
+    ],
+)
+def test_mounted_launch_usage_matrix(
+    tmp_path: Path,
+    mutation: dict[str, Any],
+    valid: bool,
+) -> None:
+    usage_path = tmp_path / "usage.json"
+    usage_path.write_text(json.dumps({**_VALID_USAGE, **mutation}), encoding="utf-8")
+
+    assert mounted_launch._valid_usage(usage_path, "locked/model") is valid

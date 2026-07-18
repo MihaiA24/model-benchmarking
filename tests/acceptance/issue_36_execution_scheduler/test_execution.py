@@ -773,3 +773,182 @@ def test_drained_cell_evidence_with_symlink_is_dropped_not_leaked(
 
     assert preserved is False
     assert not destination.exists()
+
+
+_REAL_KEY = "sk-live-forensics-secret-0123456789"
+
+
+def _cell_executor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    harbor_script: str,
+) -> tuple[HarborCellExecutor, dict[str, object], list[tuple[str, ...]]]:
+    monkeypatch.setenv("MODEL_BENCHMARK_PROVIDER_API_KEY", _REAL_KEY)
+    cleaned: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        execution, "_cleanup_owned", lambda *arguments: cleaned.append(arguments)
+    )
+    harbor = tmp_path / "fake-harbor"
+    harbor.write_text(harbor_script, encoding="utf-8")
+    harbor.chmod(0o755)
+    records = {
+        ("conditions", "omp"): {"reference": "condition:img"},
+        ("shared", "credential-proxy"): {"reference": "proxy:img"},
+        ("scenarios", "sales"): {
+            "reference": "scenario:img",
+            "runtime_images": {
+                "main": {"reference": "main:img"},
+                "capture": {"reference": "capture:img"},
+            },
+        },
+    }
+    executor = HarborCellExecutor.__new__(HarborCellExecutor)
+    executor.manifest = SimpleNamespace(
+        value={
+            "provider": {
+                "base_url": "https://provider.example/v1",
+                "model": "locked/model",
+                "pricing": {
+                    "identity": "pricing-record:sha256:" + "0" * 64,
+                    "input_usd_per_million_tokens": "1.00",
+                    "output_usd_per_million_tokens": "1.00",
+                },
+            },
+            "limits": {
+                "provider_tokens_per_trial": 100_000,
+                "requests_per_trial": 64,
+                "stop_after_cost_usd_per_trial": "5.00",
+            },
+        },
+        condition_locks={
+            "omp": {
+                "adapter": {"harbor_agent": "pkg:Agent"},
+                "artifact": {"digest": "artifact:sha256:" + "a" * 64},
+            }
+        },
+    )
+    executor.packages = {"sales": tmp_path / "package"}
+    executor._lock = threading.Lock()
+    executor._processes = set()
+    executor._harbor_binary = lambda: str(harbor)
+    normalized: list[Path] = []
+    executor._normalize_scratch_ownership = normalized.append
+    state: dict[str, object] = {"normalized": normalized}
+    executor._record = lambda section, name: records[(section, name)]
+    return executor, state, cleaned
+
+
+def test_executor_crash_preserves_forensics_and_redacts_the_reraise(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The fake harbor leaks both secrets to its streams, records its trial
+    # proxy token out of band for the assertions, creates the empty trials
+    # directory, and exits nonzero without a result.json — the authentic
+    # harbor-result-missing crash.
+    token_sink = tmp_path / "leaked-token.txt"
+    script = (
+        "#!/bin/sh\n"
+        f'printf %s "$MODEL_BENCHMARK_PROXY_TOKEN" > {token_sink}\n'
+        'previous=""\n'
+        'for argument in "$@"; do\n'
+        '  if [ "$previous" = "--trials-dir" ]; then mkdir -p "$argument"; fi\n'
+        '  previous="$argument"\n'
+        "done\n"
+        'echo "stdout leak key=$MODEL_BENCHMARK_PROVIDER_API_KEY'
+        ' token=$MODEL_BENCHMARK_PROXY_TOKEN"\n'
+        'echo "stderr leak key=$MODEL_BENCHMARK_PROVIDER_API_KEY" >&2\n'
+        "exit 7\n"
+    )
+    executor, state, cleaned = _cell_executor(tmp_path, monkeypatch, script)
+    raw_root = tmp_path / "raw"
+
+    with pytest.raises(ExecutionError) as captured:
+        executor.run_cell(
+            {"cell_id": "sales--omp", "scenario": "sales", "condition": "omp"},
+            run_id="0198ae70-0000-7000-8000-000000000036",
+            raw_root=raw_root,
+            cancel=threading.Event(),
+        )
+
+    token = token_sink.read_text(encoding="utf-8")
+    assert token
+    message = str(captured.value)
+    assert captured.value.reason_code == "harbor-result-missing"
+    assert "harbor exit 7" in message
+    assert "raw evidence preserved: True" in message
+    assert "stdout tail:" in message and "stderr tail:" in message
+    assert "[REDACTED]" in message
+    assert _REAL_KEY not in message and token not in message
+    stdout_copy = (raw_root / "harbor.stdout.txt").read_bytes()
+    stderr_copy = (raw_root / "harbor.stderr.txt").read_bytes()
+    assert b"[REDACTED]" in stdout_copy and b"[REDACTED]" in stderr_copy
+    for path in sorted(raw_root.rglob("*")):
+        if path.is_file():
+            data = path.read_bytes()
+            assert _REAL_KEY.encode() not in data
+            assert token.encode() not in data
+    assert state["normalized"], "scratch ownership was not normalized"
+    assert cleaned == [("0198ae70-0000-7000-8000-000000000036", "sales--omp")]
+
+
+def test_wall_time_expiry_seals_a_valid_limit_outcome(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor, state, cleaned = _cell_executor(
+        tmp_path, monkeypatch, "#!/bin/sh\nsleep 30\n"
+    )
+    monkeypatch.setattr(execution, "_WALL_TIME_SECONDS", 0)
+    monkeypatch.setattr(execution, "_WALL_TIME_GRACE_SECONDS", 0)
+
+    outcome = executor.run_cell(
+        {"cell_id": "sales--omp", "scenario": "sales", "condition": "omp"},
+        run_id="0198ae70-0000-7000-8000-000000000036",
+        raw_root=tmp_path / "raw",
+        cancel=threading.Event(),
+    )
+
+    assert outcome.disposition == "valid_limit_outcome"
+    assert outcome.terminal_phase == "condition"
+    assert outcome.reason_code == "wall-time-limit"
+    assert outcome.evidence_valid is True
+    assert outcome.details["limit"] == "wall_time_seconds_per_trial"
+    assert outcome.details["raw_evidence_preserved"] is True
+    assert state["normalized"], "scratch ownership was not normalized"
+    assert cleaned == [("0198ae70-0000-7000-8000-000000000036", "sales--omp")]
+
+
+def test_scratch_ownership_is_returned_to_the_coordinator_user(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_docker(
+        arguments: list[str], **keywords: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append((arguments, keywords))
+        return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(execution, "_docker", fake_docker)
+    executor = HarborCellExecutor.__new__(HarborCellExecutor)
+    executor._record = lambda section, name: {"reference": "coordinator:img"}
+
+    executor._normalize_scratch_ownership(tmp_path)
+
+    (arguments, keywords), = calls
+    assert arguments == [
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--mount",
+        f"type=bind,src={tmp_path},dst=/scratch",
+        "coordinator:img",
+        "chown",
+        "--recursive",
+        f"{os.getuid()}:{os.getgid()}",
+        "/scratch",
+    ]
+    assert keywords == {"timeout": 120, "check": False}
