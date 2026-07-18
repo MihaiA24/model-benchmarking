@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import http.client
 import json
+import signal
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import pytest
+
+import model_benchmark.runtime.credential_proxy_service as proxy_service
 from model_benchmark.runtime.credential_proxy import (
     CredentialProxy,
     CredentialProxyConfig,
+    CredentialProxyError,
     PricingRecord,
+    _usage_token_counts,
 )
 
 
@@ -452,3 +458,137 @@ def test_enforcement_uses_derived_total_and_records_reported_cost_alongside(
     assert event["cost_components_usd"] == {"input": "0.10", "output": "0.10"}
     assert event["pricing_record_identity"] == pricing.identity
     assert event["budget_events"] == ["cost-stop-after-response"]
+
+
+@pytest.mark.parametrize(
+    ("identity", "input_rate", "output_rate", "message"),
+    [
+        ("not-a-typed-digest", "0.10", "0.20", "identity is invalid"),
+        ("artifact:sha256:" + "0" * 64, "0.10", "0.20", "wrong kind"),
+        ("pricing-record:sha256:" + "0" * 64, "0", "0.20", "finite and positive"),
+        ("pricing-record:sha256:" + "0" * 64, "0.10", "-0.20", "finite and positive"),
+        ("pricing-record:sha256:" + "0" * 64, "NaN", "0.20", "finite and positive"),
+        ("pricing-record:sha256:" + "0" * 64, "0.10", "Infinity", "finite and positive"),
+    ],
+)
+def test_pricing_record_rejects_invalid_identity_and_rates(
+    identity: str,
+    input_rate: str,
+    output_rate: str,
+    message: str,
+) -> None:
+    with pytest.raises(CredentialProxyError, match=message):
+        PricingRecord(
+            identity=identity,
+            input_usd_per_million_tokens=Decimal(input_rate),
+            output_usd_per_million_tokens=Decimal(output_rate),
+        )
+
+
+def test_usage_token_counts_accept_alternate_field_names() -> None:
+    assert _usage_token_counts(
+        {"total_tokens": 12, "input_tokens": 5, "output_tokens": 7}
+    ) == (12, 5, 7)
+    assert _usage_token_counts(
+        {"total_tokens": 12, "prompt_tokens": 5, "completion_tokens": 7}
+    ) == (12, 5, 7)
+    # The OpenAI-compatible names win over the fallbacks when both appear.
+    assert _usage_token_counts(
+        {
+            "completion_tokens": 7,
+            "input_tokens": 9,
+            "output_tokens": 9,
+            "prompt_tokens": 5,
+            "total_tokens": 12,
+        }
+    ) == (12, 5, 7)
+    # Booleans and negatives are not token counts.
+    assert _usage_token_counts(
+        {"total_tokens": True, "prompt_tokens": -1, "completion_tokens": 7}
+    ) == (None, None, 7)
+
+
+_SERVICE_ENVIRONMENT = {
+    "MODEL_BENCHMARK_PROVIDER_BASE_URL": "https://provider.example/v1",
+    "MODEL_BENCHMARK_PROVIDER_MODEL": _MODEL,
+    "MODEL_BENCHMARK_REQUESTS_PER_TRIAL": "64",
+    "MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL": "100000",
+    "MODEL_BENCHMARK_STOP_AFTER_COST_USD_PER_TRIAL": "5.00",
+    "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY": "pricing-record:sha256:" + "0" * 64,
+    "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS": "0.14",
+    "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS": "0.28",
+    "MODEL_BENCHMARK_PROVIDER_API_KEY": _REAL_KEY,
+    "MODEL_BENCHMARK_PROXY_TOKEN": _TRIAL_TOKEN,
+}
+
+
+def _preserving_signal_handlers() -> list[tuple[int, object]]:
+    return [
+        (selected, signal.getsignal(selected))
+        for selected in (signal.SIGINT, signal.SIGTERM)
+    ]
+
+
+def test_service_main_builds_its_config_from_the_cell_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name, value in _SERVICE_ENVIRONMENT.items():
+        monkeypatch.setenv(name, value)
+    captured: dict[str, CredentialProxyConfig] = {}
+
+    class _ImmediateStopProxy:
+        def __init__(self, config: CredentialProxyConfig) -> None:
+            captured["config"] = config
+
+        def __enter__(self) -> _ImmediateStopProxy:
+            signal.raise_signal(signal.SIGTERM)
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    monkeypatch.setattr(proxy_service, "CredentialProxy", _ImmediateStopProxy)
+    saved = _preserving_signal_handlers()
+    try:
+        assert proxy_service.main() == 0
+    finally:
+        for selected, handler in saved:
+            signal.signal(selected, handler)
+
+    config = captured["config"]
+    assert config.upstream_base_url == "https://provider.example/v1"
+    assert config.model == _MODEL
+    assert config.requests_per_trial == 64
+    assert config.provider_tokens_per_trial == 100_000
+    assert config.stop_after_cost_usd_per_trial == Decimal("5.00")
+    assert config.evidence_path == Path("/evidence/proxy.jsonl")
+    assert config.listen_host == "0.0.0.0"
+    assert config.listen_port == 8080
+    assert config.real_api_key == _REAL_KEY
+    assert config.trial_token == _TRIAL_TOKEN
+    pricing = config.pricing_record
+    assert pricing is not None
+    assert pricing.identity == "pricing-record:sha256:" + "0" * 64
+    assert pricing.input_usd_per_million_tokens == Decimal("0.14")
+    assert pricing.output_usd_per_million_tokens == Decimal("0.28")
+
+
+def test_service_main_fails_at_startup_when_an_environment_variable_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name, value in _SERVICE_ENVIRONMENT.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("MODEL_BENCHMARK_REQUESTS_PER_TRIAL")
+
+    class _UnreachableProxy:
+        def __init__(self, config: CredentialProxyConfig) -> None:
+            raise AssertionError("the proxy must not start without its request cap")
+
+    monkeypatch.setattr(proxy_service, "CredentialProxy", _UnreachableProxy)
+    saved = _preserving_signal_handlers()
+    try:
+        with pytest.raises(KeyError, match="MODEL_BENCHMARK_REQUESTS_PER_TRIAL"):
+            proxy_service.main()
+    finally:
+        for selected, handler in saved:
+            signal.signal(selected, handler)
