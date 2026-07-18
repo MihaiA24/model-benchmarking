@@ -365,3 +365,90 @@ def test_zero_request_trial_still_produces_readable_empty_evidence(
         assert evidence_path.is_file()
     assert evidence_path.read_bytes() == b""
     assert recording_provider.requests == []
+
+
+def test_missing_token_split_under_pricing_record_blocks_fail_closed(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    # With a pricing record sealed, a successful response that reports no
+    # input/output token split cannot be priced; a reported cost figure alone
+    # must not satisfy the contract, or budget enforcement silently degrades.
+    pricing = PricingRecord(
+        identity="pricing-record:sha256:" + "0" * 64,
+        input_usd_per_million_tokens=Decimal("0.10"),
+        output_usd_per_million_tokens=Decimal("0.20"),
+    )
+    recording_provider.enqueue_json(
+        {
+            "choices": [],
+            "cost": "0.05",
+            "model": _MODEL,
+            "usage": {"total_tokens": 128},
+        }
+    )
+
+    with _proxy(recording_provider, tmp_path, pricing=pricing) as proxy:
+        assert _post(proxy, _request_body())[0] == 200
+        assert _post(proxy, _request_body())[0] == 429
+        snapshot = proxy.snapshot
+
+    assert snapshot.blocked_reason == "provider-contract-violation"
+    assert len(recording_provider.requests) == 1
+    assert snapshot.provider_tokens == 0
+    assert snapshot.provider_cost_usd == "0"
+    event = json.loads(
+        (tmp_path / "proxy-events.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert event["reason_code"] == "provider-contract-violation"
+    assert event["provider_cost_usd"] is None
+    assert event["provider_reported_cost_usd"] == "0.05"
+
+
+def test_enforcement_uses_derived_total_and_records_reported_cost_alongside(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    # Dual accounting: stop-after-cost is enforced against the total derived
+    # at the sealed rates (0.20 crosses the 0.15 stop) while the
+    # provider-reported figure (0.05, which alone would not stop the Trial)
+    # is recorded alongside.
+    pricing = PricingRecord(
+        identity="pricing-record:sha256:" + "0" * 64,
+        input_usd_per_million_tokens=Decimal("0.10"),
+        output_usd_per_million_tokens=Decimal("0.20"),
+    )
+    recording_provider.enqueue_json(
+        {
+            "choices": [],
+            "cost": "0.05",
+            "model": _MODEL,
+            "usage": {
+                "prompt_tokens": 1_000_000,
+                "completion_tokens": 500_000,
+                "total_tokens": 1_500_000,
+            },
+        }
+    )
+
+    with _proxy(
+        recording_provider,
+        tmp_path,
+        tokens=2_000_000,
+        cost="0.15",
+        pricing=pricing,
+    ) as proxy:
+        assert _post(proxy, _request_body())[0] == 200
+        assert _post(proxy, _request_body())[0] == 429
+        snapshot = proxy.snapshot
+
+    assert snapshot.blocked_reason == "cost-stop-after-response"
+    assert snapshot.provider_cost_usd == "0.20"
+    event = json.loads(
+        (tmp_path / "proxy-events.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert event["provider_cost_usd"] == "0.20"
+    assert event["provider_reported_cost_usd"] == "0.05"
+    assert event["cost_components_usd"] == {"input": "0.10", "output": "0.10"}
+    assert event["pricing_record_identity"] == pricing.identity
+    assert event["budget_events"] == ["cost-stop-after-response"]

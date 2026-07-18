@@ -101,6 +101,74 @@ def test_manifest_rejects_pricing_changed_without_new_identity(
 
     assert captured.value.reason_code == "pricing-record-mismatch"
 
+
+def _reseal_pricing(pricing: dict[str, object]) -> None:
+    payload = {key: value for key, value in pricing.items() if key != "identity"}
+    pricing["identity"] = str(
+        TypedDigest.from_bytes(DigestKind.PRICING_RECORD, canonical_json_bytes(payload))
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("input_usd_per_million_tokens", "1"),
+        ("input_usd_per_million_tokens", "1001.0"),
+        ("output_usd_per_million_tokens", "0.0"),
+        ("retrieved_at_utc", "2026-01-01T00:00:00.000Z"),
+        ("retrieved_at_utc", "2027-06-01T00:00:00Z"),
+        ("effective_until_utc", "2026-01-01T00:00:00Z"),
+        ("source_url", "http://provider.example/pricing"),
+        ("source_url", "https://provider.example/pricing?plan=team"),
+        ("unit", "usd-per-token"),
+        ("currency", "EUR"),
+        ("schema_version", 2),
+    ],
+)
+def test_manifest_rejects_invalid_pricing_fields_before_identity(
+    manifest_bundle: tuple[Path, dict[str, object]],
+    field: str,
+    value: object,
+) -> None:
+    # The identity is resealed over the mutated content, so only the field
+    # rules — not digest drift — can produce the rejection.
+    path, manifest = manifest_bundle
+    pricing = manifest["provider"]["pricing"]
+    pricing[field] = value
+    _reseal_pricing(pricing)
+    _write_manifest(path, manifest)
+
+    with pytest.raises(FunctionalV1ManifestError) as captured:
+        FunctionalV1Manifest.load(path)
+
+    assert captured.value.reason_code == "invalid-pricing-record"
+
+
+def test_manifest_rejects_unparseable_pricing_identity(
+    manifest_bundle: tuple[Path, dict[str, object]],
+) -> None:
+    path, manifest = manifest_bundle
+    manifest["provider"]["pricing"]["identity"] = "not-a-typed-digest"
+    _write_manifest(path, manifest)
+
+    with pytest.raises(FunctionalV1ManifestError) as captured:
+        FunctionalV1Manifest.load(path)
+
+    assert captured.value.reason_code == "invalid-pricing-record"
+
+
+def test_manifest_rejects_pricing_with_missing_field(
+    manifest_bundle: tuple[Path, dict[str, object]],
+) -> None:
+    path, manifest = manifest_bundle
+    del manifest["provider"]["pricing"]["source_url"]
+    _write_manifest(path, manifest)
+
+    with pytest.raises(FunctionalV1ManifestError) as captured:
+        FunctionalV1Manifest.load(path)
+
+    assert captured.value.reason_code == "invalid-manifest-schema"
+
 @pytest.mark.parametrize(
     ("section", "field", "value", "reason_code"),
     [
