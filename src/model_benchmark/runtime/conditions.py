@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import signal
@@ -10,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
-from typing import Mapping
+from typing import Callable, Mapping
 
 from model_benchmark.declarations.canonical import canonical_json_bytes
 from model_benchmark.declarations.identities import DigestKind, IdentityError, TypedDigest
@@ -25,6 +26,116 @@ _REDACTION = b"[REDACTED]"
 
 class ConditionRunnerError(ValueError):
     """A sealed Harness launch or fresh Trial boundary is invalid."""
+
+
+class ConditionAdapterError(RuntimeError):
+    """The pinned condition cannot be provisioned or qualified safely."""
+
+    def __init__(self, reason_code: str, message: str) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
+@dataclass(frozen=True)
+class ConditionQualification:
+    qualified: bool
+    reason_code: str
+    evidence: Mapping[str, object]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence", MappingProxyType(dict(self.evidence)))
+
+
+@dataclass(frozen=True)
+class ConditionDefinition:
+    """One Condition behind the seam.
+
+    The typed verb callables are the adapter's entire host-side surface;
+    ``kind`` distinguishes the three Harness Conditions from the Raw API
+    Baseline, which shares the seam but provisions nothing host-side and
+    is never qualified through RPC trials.
+    """
+
+    name: str
+    kind: str
+    lock_path: Callable[[], Path]
+    load_lock: Callable[[], tuple[bytes, Mapping[str, object], TypedDigest]]
+    launch_shim_path: Callable[[], Path]
+    validate_lock: Callable[[bytes], TypedDigest] | None = None
+    provision: Callable[..., object] | None = None
+    seal_process: Callable[..., SealedConditionProcess] | None = None
+    evaluate_qualification: Callable[..., ConditionQualification] | None = None
+    image_base: str | None = None
+    entrypoint_script: str | None = None
+    requires_scenario_target: bool = False
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"harness", "baseline"}:
+            raise ConditionAdapterError(
+                "invalid-condition-definition",
+                f"{self.name} kind must be harness or baseline",
+            )
+        if self.kind == "harness" and None in (
+            self.validate_lock,
+            self.provision,
+            self.seal_process,
+            self.evaluate_qualification,
+        ):
+            raise ConditionAdapterError(
+                "invalid-condition-definition",
+                f"{self.name} harness definition is missing a verb",
+            )
+
+
+def publish_bytes(
+    destination: Path, data: bytes, *, mode: int, condition: str
+) -> None:
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("xb") as output:
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.chmod(mode)
+        os.link(temporary, destination)
+    except FileExistsError:
+        if read_regular_file(destination) != data:
+            raise ConditionAdapterError(
+                "immutable-cache-conflict",
+                f"immutable {condition} cache path changed: {destination.name}",
+            )
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def read_regular_file(path: Path) -> bytes:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError("not a regular file")
+        chunks: list[bytes] = []
+        while chunk := os.read(descriptor, 1024 * 1024):
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def provider_events(path: Path) -> list[dict[str, object]]:
+    try:
+        lines = read_regular_file(path).splitlines()
+    except OSError:
+        return []
+    events: list[dict[str, object]] = []
+    for line in lines:
+        try:
+            value = json.loads(line.decode("utf-8", errors="strict"))
+        except (UnicodeError, json.JSONDecodeError):
+            return []
+        if isinstance(value, dict) and value.get("event") == "provider-response":
+            events.append(value)
+    return events
 
 
 @dataclass(frozen=True)

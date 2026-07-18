@@ -16,7 +16,11 @@ import pytest
 import model_benchmark.runtime.opencode as opencode_runtime
 from model_benchmark.declarations.canonical import canonical_json_bytes, load_canonical_json
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
-from model_benchmark.runtime.conditions import ConditionRunRequest, ConditionRunner
+from model_benchmark.runtime.conditions import (
+    ConditionAdapterError,
+    ConditionRunRequest,
+    ConditionRunner,
+)
 from model_benchmark.runtime.credential_proxy import CredentialProxy, CredentialProxyConfig
 from model_benchmark.runtime.opencode import (
     OPENCODE_ARCHIVE_BYTES,
@@ -28,7 +32,6 @@ from model_benchmark.runtime.opencode import (
     OPENCODE_RELEASE_COMMIT,
     OPENCODE_SHIM_IDENTITY,
     OPENCODE_VERSION,
-    OpenCodeConditionError,
     OpenCodeProvisioning,
     evaluate_opencode_qualification,
     load_opencode_condition_lock,
@@ -195,7 +198,7 @@ def test_provision_extracts_once_and_warm_preflight_is_read_only(
 
     cold.artifact_path.chmod(0o755)
     cold.artifact_path.write_bytes(b"changed")
-    with pytest.raises(OpenCodeConditionError, match="cached executable") as captured:
+    with pytest.raises(ConditionAdapterError, match="cached executable") as captured:
         opencode_runtime.preflight_opencode(cache, lock_bytes)
     assert captured.value.reason_code == "condition-unqualified"
 
@@ -414,7 +417,7 @@ def test_fresh_run_trials_preserve_stock_autonomy_and_complete_evidence(
         (first, second)
     ):
         requests = recording_provider.requests[index * 2 : index * 2 + 2]
-        bodies = [json.loads(request["body"]) for request in requests]
+        bodies = [json.loads(request.body) for request in requests]
         observation = json.loads(
             (trial_root / "repository/opencode-observation.json").read_text(
                 encoding="utf-8"
@@ -485,8 +488,8 @@ def test_fresh_run_trials_preserve_stock_autonomy_and_complete_evidence(
         assert provider["options"]["baseURL"] == delivery["proxy_base_url"]
         assert list(provider["models"]) == [_MODEL]
         for request, body in zip(requests, bodies, strict=True):
-            assert request["path"] == "/chat/completions"
-            assert request["authorization"] == f"Bearer {_REAL_KEY}"
+            assert request.path == "/chat/completions"
+            assert request.headers["authorization"] == f"Bearer {_REAL_KEY}"
             assert body["model"] == _MODEL
             assert body["messages"][-1]["content"].encode() == _BRIEF
         assert not (trial_root / "home/.local/share/opencode/auth.json").exists()

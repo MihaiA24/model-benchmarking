@@ -20,7 +20,11 @@ from model_benchmark.declarations.canonical import (
     load_canonical_json,
 )
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
-from model_benchmark.runtime.conditions import ConditionRunRequest, ConditionRunner
+from model_benchmark.runtime.conditions import (
+    ConditionAdapterError,
+    ConditionRunRequest,
+    ConditionRunner,
+)
 from model_benchmark.runtime.credential_proxy import (
     CredentialProxy,
     CredentialProxyConfig,
@@ -38,7 +42,6 @@ from model_benchmark.runtime.hermes import (
     HERMES_RELEASE_TAG,
     HERMES_SHIM_IDENTITY,
     HERMES_VERSION,
-    HermesConditionError,
     HermesProvisioning,
     evaluate_hermes_qualification,
     load_hermes_condition_lock,
@@ -237,7 +240,7 @@ def test_provision_pulls_exact_image_once_and_warm_preflight_is_read_only(
 
     cold.artifact_path.chmod(0o755)
     cold.artifact_path.write_bytes(b"changed")
-    with pytest.raises(HermesConditionError, match="cached executable") as captured:
+    with pytest.raises(ConditionAdapterError, match="cached executable") as captured:
         hermes_runtime.preflight_hermes(cache, lock_bytes)
     assert captured.value.reason_code == "condition-unqualified"
 
@@ -421,6 +424,14 @@ def _install_fake_condition(
     )
 
 
+_CAPABILITY_REPLY = {
+    "cost_usd": "0.00",
+    "model": _MODEL,
+    "model_info": {"context_length": 131_072},
+    "usage": {"total_tokens": 0},
+}
+
+
 def _run_trial(
     recording_provider: Any,
     tmp_path: Path,
@@ -435,6 +446,8 @@ def _run_trial(
     (repository / "baseline.txt").write_text("sealed baseline\n", encoding="utf-8")
     if unsupported:
         (repository / "unsupported").write_text("true\n", encoding="utf-8")
+    else:
+        recording_provider.enqueue_json(_CAPABILITY_REPLY)
     token = f"opaque-token-{name}"
     evidence_path = tmp_path / f"proxy-{name}.jsonl"
     proxy = CredentialProxy(
@@ -516,8 +529,8 @@ def test_fresh_oneshot_trials_preserve_native_behavior_and_complete_evidence(
     ):
         capability = recording_provider.requests[index * 2]
         request = recording_provider.requests[index * 2 + 1]
-        capability_body = json.loads(capability["body"])
-        body = json.loads(request["body"])
+        capability_body = json.loads(capability.body)
+        body = json.loads(request.body)
         observation = json.loads(
             (trial_root / "repository/hermes-observation.json").read_text(
                 encoding="utf-8"
@@ -585,11 +598,11 @@ def test_fresh_oneshot_trials_preserve_native_behavior_and_complete_evidence(
         assert snapshot.request_count == 2
         assert snapshot.provider_tokens == 17
         assert snapshot.provider_cost_usd == "0.10"
-        assert capability["path"] == "/api/show"
-        assert capability["authorization"] == f"Bearer {_REAL_KEY}"
+        assert capability.path == "/api/show"
+        assert capability.headers["authorization"] == f"Bearer {_REAL_KEY}"
         assert capability_body == {"name": _MODEL}
-        assert request["path"] == "/chat/completions"
-        assert request["authorization"] == f"Bearer {_REAL_KEY}"
+        assert request.path == "/chat/completions"
+        assert request.headers["authorization"] == f"Bearer {_REAL_KEY}"
         assert body["model"] == _MODEL
         assert observed_brief == _BRIEF
         assert [tool["function"]["name"] for tool in body["tools"]] == ["terminal"]
