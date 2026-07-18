@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
@@ -33,12 +34,12 @@ from model_benchmark.declarations.canonical import (
 )
 from model_benchmark.declarations.functional_v1 import (
     CONDITIONS,
-    FIXED_LIMITS,
     MAX_PARALLEL,
     SCENARIOS,
     FunctionalV1Manifest,
 )
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
+from model_benchmark.declarations.limits import FIXED_LIMITS
 from model_benchmark.declarations.scenarios import (
     ScenarioPackageError,
     check_scenario_package,
@@ -302,15 +303,6 @@ def _target_config(path: Path) -> None:
     path.write_text(yaml.safe_dump(value, sort_keys=True), encoding="utf-8")
 
 
-def _qualification_record(name: str) -> Path:
-    path = _project_root() / "artifacts/qualification/functional-v1" / f"{name}.json"
-    if not path.is_file():
-        raise ExecutionError(
-            "scenario-unqualified", f"missing Functional V1 qualification for {name}"
-        )
-    return path
-
-
 def _scenario_package(manifest: FunctionalV1Manifest, name: str) -> Path:
     package = _manifest_reference_path(manifest, "scenarios", name).parent
     checked = check_scenario_package(package)
@@ -373,8 +365,7 @@ def _write_build_context(
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
         if artifact is not None:
-            artifact_name = "omp" if condition == "omp" else "opencode"
-            target = temporary / "artifact" / artifact_name
+            target = temporary / "artifact" / str(condition)
             target.parent.mkdir()
             shutil.copyfile(artifact, target)
             target.chmod(0o555)
@@ -434,11 +425,11 @@ def _pull_exact_image(reference: str) -> None:
     _docker(["pull", "--platform", _NATIVE_PLATFORM, reference], timeout=900)
 
 
-def _dockerfile_base(context: Path) -> str:
-    first = (context / "Dockerfile").read_text(encoding="utf-8").splitlines()[0]
+def _dockerfile_base(dockerfile: Path) -> str:
+    first = dockerfile.read_text(encoding="utf-8").splitlines()[0]
     if not first.startswith("FROM "):
         raise ExecutionError(
-            "invalid-image-recipe", f"{context}/Dockerfile has no pinned base"
+            "invalid-image-recipe", f"{dockerfile} has no pinned base"
         )
     return first.removeprefix("FROM ").split()[0]
 
@@ -486,7 +477,7 @@ def _harbor_egress_identity() -> tuple[Path, str]:
 def _build_harbor_egress_image() -> dict[str, object]:
     context, hash_key = _harbor_egress_identity()
     dockerfile = context / "Dockerfile"
-    _pull_exact_image(_dockerfile_base(context))
+    _pull_exact_image(_dockerfile_base(dockerfile))
     reference = "harbor-prebuilt:harbor-docker-egress-control-sidecar--" + hash_key
     try:
         record = _image_record(reference, "harbor-egress-control")
@@ -507,14 +498,19 @@ def _build_harbor_egress_image() -> dict[str, object]:
     return record
 
 
-def _build_image(context: Path, reference: str) -> dict[str, object]:
-    _pull_exact_image(_dockerfile_base(context))
+def _build_image(
+    context: Path, reference: str, *, dockerfile: Path | None = None
+) -> dict[str, object]:
+    dockerfile = context / "Dockerfile" if dockerfile is None else dockerfile
+    _pull_exact_image(_dockerfile_base(dockerfile))
     _docker(
         [
             "build",
             "--network",
             "none",
             "--pull=false",
+            "--file",
+            str(dockerfile),
             "--tag",
             reference,
             str(context),
@@ -695,7 +691,7 @@ def _probe_limits(image: str, run_id: str) -> dict[str, object]:
             "--pids-limit",
             str(_PIDS_LIMIT),
             "--storage-opt",
-            _STORAGE_OPT_SIZE,
+            f"size={_STORAGE_OPT_SIZE}",
             image,
             "python3",
             "-c",
@@ -710,14 +706,22 @@ def _probe_limits(image: str, run_id: str) -> dict[str, object]:
             "resource probe",
         )
         expected = {
-            "CpuQuota": 200000,
-            "CpuPeriod": 100000,
             "Memory": FIXED_LIMITS["memory_mib_per_trial"] * 1024**2,
             "MemorySwap": FIXED_LIMITS["memory_mib_per_trial"] * 1024**2,
             "PidsLimit": _PIDS_LIMIT,
         }
-        if not isinstance(inspected, dict) or any(
-            inspected.get(key) != value for key, value in expected.items()
+        cores = FIXED_LIMITS["cpu_cores_per_trial"]
+        cpu_exact = isinstance(inspected, dict) and (
+            inspected.get("NanoCpus") == cores * 1_000_000_000
+            or (
+                inspected.get("CpuQuota") == cores * 100000
+                and inspected.get("CpuPeriod") == 100000
+            )
+        )
+        if (
+            not isinstance(inspected, dict)
+            or not cpu_exact
+            or any(inspected.get(key) != value for key, value in expected.items())
         ):
             raise ExecutionError(
                 "resource-enforcement-failed", "Docker resource limits were not exact"
@@ -735,7 +739,7 @@ def _probe_limits(image: str, run_id: str) -> dict[str, object]:
             "--network",
             "none",
             "--storage-opt",
-            _STORAGE_OPT_SIZE,
+            f"size={_STORAGE_OPT_SIZE}",
             image,
             "sh",
             "-c",
@@ -803,7 +807,7 @@ def _probe_wall_time_enforcement(image: str, run_id: str) -> dict[str, object]:
         )
     return {
         "budget_seconds": budget_seconds,
-        "enforced_after_seconds": round(time.monotonic() - started, 3),
+        "enforced_after_ms": round((time.monotonic() - started) * 1000),
         "mechanism": "coordinator-timeout-forced-termination",
     }
 
@@ -848,7 +852,16 @@ def _probe_network(
                 "--env",
                 "MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL=1",
                 "--env",
+                "MODEL_BENCHMARK_REQUESTS_PER_TRIAL=1",
+                "--env",
                 "MODEL_BENCHMARK_STOP_AFTER_COST_USD_PER_TRIAL=0.01",
+                "--env",
+                "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY=pricing-record:sha256:"
+                + "0" * 64,
+                "--env",
+                "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS=1.00",
+                "--env",
+                "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS=1.00",
                 proxy_image,
             ]
         )
@@ -863,6 +876,9 @@ def _probe_network(
                 label,
                 "--network",
                 internal,
+                "--entrypoint",
+                "/opt/egress-sidecar/entrypoint.sh",
+                "--init",
                 "--cap-add",
                 "NET_ADMIN",
                 "--cap-add",
@@ -938,35 +954,54 @@ for host, port in [('1.1.1.1', 443), ('10.0.0.1', 443), ('169.254.169.254', 80),
     }
 
 
+def _remove_sealed_tree(root: Path) -> None:
+    if not root.exists():
+        return
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            continue
+        try:
+            path.chmod(0o700 if path.is_dir() else 0o600)
+        except OSError:
+            continue
+    try:
+        root.chmod(0o700)
+    except OSError:
+        pass
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def _runtime_scenario_package(
     source: Path,
     destination: Path,
     *,
-    main_image: str,
-    verifier_image: str,
+    main_image_id: str,
+    verifier_image_id: str,
 ) -> tuple[Path, TypedDigest]:
     shutil.copytree(source, destination)
     task = destination / "task.toml"
-    text = task.read_text(encoding="utf-8")
-    environment = "[environment]\n"
-    if text.count(environment) != 1 or "docker_image" in text:
+    try:
+        parsed = tomllib.loads(task.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
         raise ExecutionError(
             "scenario-runtime-binding-failed",
-            "Scenario task environment cannot accept the sealed runtime images",
+            "Projected scenario task definition is unreadable",
+        ) from error
+    environment = parsed.get("environment")
+    verifier = parsed.get("verifier")
+    verifier_environment = (
+        verifier.get("environment") if isinstance(verifier, dict) else None
+    )
+    if (
+        not isinstance(environment, dict)
+        or not isinstance(verifier_environment, dict)
+        or environment.get("docker_image") != main_image_id
+        or verifier_environment.get("docker_image") != verifier_image_id
+    ):
+        raise ExecutionError(
+            "scenario-runtime-binding-failed",
+            "Projected scenario task does not bind the sealed runtime images",
         )
-    text = text.replace(
-        environment,
-        environment + f"docker_image = {json.dumps(main_image)}\n",
-    )
-    text += (
-        "\n[verifier.environment]\n"
-        f"docker_image = {json.dumps(verifier_image)}\n"
-        'network_mode = "no-network"\n'
-        f"cpus = {FIXED_LIMITS['cpu_cores_per_trial']}\n"
-        f"memory_mb = {FIXED_LIMITS['memory_mib_per_trial']}\n"
-        f"storage_mb = {FIXED_LIMITS['writable_disk_mib_per_trial']}\n"
-    )
-    task.write_text(text, encoding="utf-8")
     identity = _tree_digest(destination)
     for item in sorted(destination.rglob("*"), reverse=True):
         item.chmod(0o555 if item.is_dir() else 0o444)
@@ -1024,12 +1059,17 @@ def _probe_condition_mounts(
             timeout=60,
             check=False,
         )
-        mounted = _docker([*arguments, "ls", "/opt"], timeout=60, check=False)
-        mounted_entries = mounted.stdout.split()
+        artifact_root = f"{_CONDITION_MOUNT}/artifact"
+        artifact_probe = _docker(
+            [*arguments, "sh", "-c", f"test ! -e {artifact_root} || ls {artifact_root}"],
+            timeout=60,
+            check=False,
+        )
+        artifact_entries = artifact_probe.stdout.split()
+        expected_entries = [condition] if condition in ("omp", "opencode", "hermes") else []
         verifier_present = verifier_probe.returncode == 0
         unselected_present = (
-            mounted.returncode != 0
-            or mounted_entries != [_CONDITION_MOUNT.rsplit("/", 1)[1]]
+            artifact_probe.returncode != 0 or artifact_entries != expected_entries
         )
         if verifier_present or unselected_present:
             raise ExecutionError(
@@ -1040,7 +1080,7 @@ def _probe_condition_mounts(
             {
                 "condition": condition,
                 "image_id": record["image_id"],
-                "mounted_opt_entries": mounted_entries,
+                "artifact_entries": artifact_entries,
                 "read_only": True,
                 "unselected_artifacts_present": unselected_present,
                 "verifier_bytes_present": verifier_present,
@@ -1217,7 +1257,6 @@ class HarborCellExecutor:
         value = {
             "services": {
                 "capture": {
-                    "build": None,
                     "image": capture_image,
                     "labels": labels,
                     "pull_policy": "never",
@@ -1240,11 +1279,16 @@ class HarborCellExecutor:
                 },
                 "credential-proxy": {
                     "cap_drop": ["ALL"],
+                    "dns": ["8.8.8.8", "1.1.1.1"],
                     "environment": {
                         "MODEL_BENCHMARK_PROVIDER_API_KEY": "${MODEL_BENCHMARK_PROVIDER_API_KEY:?}",
                         "MODEL_BENCHMARK_PROVIDER_BASE_URL": "${MODEL_BENCHMARK_PROVIDER_BASE_URL:?}",
                         "MODEL_BENCHMARK_PROVIDER_MODEL": "${MODEL_BENCHMARK_PROVIDER_MODEL:?}",
+                        "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY": "${MODEL_BENCHMARK_PRICING_RECORD_IDENTITY:?}",
+                        "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS": "${MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS:?}",
+                        "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS": "${MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS:?}",
                         "MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL": "${MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL:?}",
+                        "MODEL_BENCHMARK_REQUESTS_PER_TRIAL": "${MODEL_BENCHMARK_REQUESTS_PER_TRIAL:?}",
                         "MODEL_BENCHMARK_PROXY_TOKEN": "${MODEL_BENCHMARK_PROXY_TOKEN:?}",
                         "MODEL_BENCHMARK_STOP_AFTER_COST_USD_PER_TRIAL": "${MODEL_BENCHMARK_STOP_AFTER_COST_USD_PER_TRIAL:?}",
                     },
@@ -1266,7 +1310,8 @@ class HarborCellExecutor:
                     "pids_limit": 64,
                     "read_only": True,
                     "security_opt": ["no-new-privileges:true"],
-                    "tmpfs": ["/tmp:rw,noexec,nosuid,nodev,size=16m"],
+                    "tmpfs": ["/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777"],
+                    "user": f"{os.getuid()}:{os.getgid()}",
                     "volumes": [f"{proxy_evidence}:/evidence"],
                 },
             },
@@ -1306,6 +1351,29 @@ class HarborCellExecutor:
                 )
             events.append(value)
         return events
+
+    def _normalize_scratch_ownership(self, root: Path) -> None:
+        # Condition containers write Trial evidence as container root; hand
+        # the scratch tree back to the coordinator user so redacted copies
+        # and scratch removal cannot fail on container-owned paths.
+        coordinator = str(self._record("shared", "coordinator")["reference"])
+        _docker(
+            [
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--mount",
+                f"type=bind,src={root},dst=/scratch",
+                coordinator,
+                "chown",
+                "--recursive",
+                f"{os.getuid()}:{os.getgid()}",
+                "/scratch",
+            ],
+            timeout=120,
+            check=False,
+        )
 
     def _copy_redacted(
         self,
@@ -1657,8 +1725,24 @@ class HarborCellExecutor:
                 "MODEL_BENCHMARK_PROVIDER_MODEL": str(
                     self.manifest.value["provider"]["model"]
                 ),
+                "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY": str(
+                    self.manifest.value["provider"]["pricing"]["identity"]
+                ),
+                "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS": str(
+                    self.manifest.value["provider"]["pricing"][
+                        "input_usd_per_million_tokens"
+                    ]
+                ),
+                "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS": str(
+                    self.manifest.value["provider"]["pricing"][
+                        "output_usd_per_million_tokens"
+                    ]
+                ),
                 "MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL": str(
                     self.manifest.value["limits"]["provider_tokens_per_trial"]
+                ),
+                "MODEL_BENCHMARK_REQUESTS_PER_TRIAL": str(
+                    self.manifest.value["limits"]["requests_per_trial"]
                 ),
                 "MODEL_BENCHMARK_PROXY_TOKEN": token,
                 "MODEL_BENCHMARK_STOP_AFTER_COST_USD_PER_TRIAL": str(
@@ -1688,6 +1772,7 @@ class HarborCellExecutor:
                     except subprocess.TimeoutExpired:
                         os.killpg(process.pid, signal.SIGKILL)
                         stdout, stderr = process.communicate()
+                    self._normalize_scratch_ownership(root)
                     preserved = self._preserve_raw_evidence(
                         root, raw_root, (real_key.encode(), token.encode())
                     )
@@ -1708,6 +1793,7 @@ class HarborCellExecutor:
             finally:
                 with self._lock:
                     self._processes.discard(process)
+            self._normalize_scratch_ownership(root)
             if cancel.is_set():
                 preserved = self._preserve_raw_evidence(
                     root, raw_root, (real_key.encode(), token.encode())
@@ -1738,8 +1824,23 @@ class HarborCellExecutor:
                     events,
                     time.monotonic_ns() - started,
                 )
-            except BaseException:
+            except BaseException as error:
+                (root / "harbor.stdout.txt").write_text(stdout, encoding="utf-8")
+                (root / "harbor.stderr.txt").write_text(stderr, encoding="utf-8")
+                preserved = self._preserve_raw_evidence(
+                    root, raw_root, (real_key.encode(), token.encode())
+                )
                 _cleanup_owned(run_id, cell_id)
+                if isinstance(error, ExecutionError):
+                    context = (
+                        f"{error} [harbor exit {process.returncode};"
+                        f" raw evidence preserved: {preserved};"
+                        f" stdout tail: {stdout[-1200:]};"
+                        f" stderr tail: {stderr[-1200:]}]"
+                    )
+                    for secret in (real_key, token):
+                        context = context.replace(secret, "[REDACTED]")
+                    raise ExecutionError(error.reason_code, context) from error
                 raise
             cleanup_before = _resource_inventory(run_id, cell_id)
             _cleanup_owned(run_id, cell_id)
@@ -1911,21 +2012,45 @@ class NativeFunctionalV1Runtime:
                     jobs_dir=jobs,
                     manifest_output=output,
                     target_config=target,
-                    qualification_record=_qualification_record(name),
+                    qualification_record=None,
                 )
-                runtime_images: dict[str, object] = {}
-                for role, relative in (
-                    ("main", "environment"),
-                    ("capture", "environment/capture"),
-                    ("verifier", "tests"),
-                ):
-                    context = package / relative
-                    context_digest = _tree_digest(context)
-                    reference = (
-                        f"model-benchmark.local/scenario-{name}-{role}:"
-                        f"{context_digest.value.rsplit(':', 1)[1]}"
+                store_manifest = load_canonical_json(output.read_bytes())
+                if not isinstance(store_manifest, dict):
+                    raise ExecutionError(
+                        "provisioning-inventory-mismatch",
+                        f"{name} provisioning manifest is malformed",
                     )
-                    image_record = _build_image(context, reference)
+                store_images = {
+                    record["role"]: record
+                    for record in store_manifest["runtime_images"]
+                    if isinstance(record, Mapping)
+                }
+                runtime_images: dict[str, object] = {}
+                for role, store_role in (
+                    ("main", "agent"),
+                    ("capture", "capture"),
+                    ("verifier", "verifier"),
+                ):
+                    store_record = store_images.get(store_role)
+                    image = (
+                        store_record.get("image")
+                        if isinstance(store_record, Mapping)
+                        else None
+                    )
+                    image_id = image.get("id") if isinstance(image, Mapping) else None
+                    if (
+                        not isinstance(image_id, str)
+                        or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None
+                    ):
+                        raise ExecutionError(
+                            "provisioning-inventory-mismatch",
+                            f"{name} sealed {store_role} image identity is missing",
+                        )
+                    image_record = {
+                        "image_id": f"oci-image:{image_id}",
+                        "reference": image_id,
+                        "role": role,
+                    }
                     runtime_images[role] = image_record
                     images.append(image_record)
                 scenarios[name] = {
@@ -2103,9 +2228,9 @@ class NativeFunctionalV1Runtime:
                 receipt = preflight_scenario_package(
                     package,
                     manifest_path=Path(str(record["provisioning_manifest"])),
-                    mode="measured",
+                    mode="integration",
                     output=output,
-                    qualification_record=_qualification_record(name),
+                    qualification_record=None,
                 )
                 runtime_images = record.get("runtime_images")
                 if not isinstance(runtime_images, Mapping):
@@ -2125,8 +2250,12 @@ class NativeFunctionalV1Runtime:
                 runtime_package, runtime_identity = _runtime_scenario_package(
                     Path(str(receipt["package_path"])),
                     temporary / f"{name}-runtime",
-                    main_image=str(main_record["reference"]),
-                    verifier_image=str(verifier_record["reference"]),
+                    main_image_id=str(main_record["image_id"]).removeprefix(
+                        "oci-image:"
+                    ),
+                    verifier_image_id=str(verifier_record["image_id"]).removeprefix(
+                        "oci-image:"
+                    ),
                 )
                 packages[name] = runtime_package
                 package_probes.append(
@@ -2201,7 +2330,7 @@ class NativeFunctionalV1Runtime:
             }
             return PreflightProjection(report, packages, temporary)
         except BaseException:
-            shutil.rmtree(temporary, ignore_errors=True)
+            _remove_sealed_tree(temporary)
             raise
 
     def preflight(self, manifest: FunctionalV1Manifest) -> CommandResult:
@@ -2233,7 +2362,7 @@ class NativeFunctionalV1Runtime:
                 },
             )
         finally:
-            shutil.rmtree(projection.temporary_root, ignore_errors=True)
+            _remove_sealed_tree(projection.temporary_root)
 
     def run(self, manifest: FunctionalV1Manifest) -> CommandResult:
         return self._run_schedule(manifest, CELL_SCHEDULE)
@@ -2267,7 +2396,7 @@ class NativeFunctionalV1Runtime:
                     )
                     return self._execute_schedule(workspace, executor, schedule)
                 finally:
-                    shutil.rmtree(projection.temporary_root, ignore_errors=True)
+                    _remove_sealed_tree(projection.temporary_root)
         except (ExecutionError, FunctionalV1HomeError, ScenarioPackageError) as error:
             reason = getattr(error, "reason_code", "run-rejected")
             return CommandResult(
@@ -2564,7 +2693,7 @@ class NativeFunctionalV1Runtime:
             )
         finally:
             if projection is not None:
-                shutil.rmtree(projection.temporary_root, ignore_errors=True)
+                _remove_sealed_tree(projection.temporary_root)
             if manifest_root is not None:
                 shutil.rmtree(manifest_root, ignore_errors=True)
 

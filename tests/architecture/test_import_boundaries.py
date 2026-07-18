@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -142,4 +143,51 @@ def test_runtime_modules_do_not_import_developer_verification() -> None:
                 violations.append(
                     f"{path.relative_to(ROOT)}: runtime imports {imported}"
                 )
+    assert violations == []
+
+
+def _first_party_module_file(candidate: str) -> Path | None:
+    parts = candidate.split(".")
+    for length in range(len(parts), 0, -1):
+        base = ROOT / "src" / Path(*parts[:length])
+        for path in (base.with_suffix(".py"), base / "__init__.py"):
+            if path.is_file():
+                return path
+    return None
+
+
+def _package_init_files(path: Path) -> list[Path]:
+    inits: list[Path] = []
+    for parent in path.parents:
+        if not parent.is_relative_to(SOURCE_ROOT):
+            break
+        init = parent / "__init__.py"
+        if init.is_file() and init != path:
+            inits.append(init)
+    return inits
+
+
+def test_credential_proxy_service_import_closure_is_stdlib_only() -> None:
+    # The sealed credential-proxy image is a bare Python base plus the copied
+    # model_benchmark tree: no third-party distribution exists inside it, so
+    # any non-stdlib import in the service's closure crashes the container
+    # before it can serve /healthz.
+    pending = [SOURCE_ROOT / "runtime/credential_proxy_service.py"]
+    seen: set[Path] = set()
+    violations: list[str] = []
+    while pending:
+        path = pending.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        pending.extend(_package_init_files(path))
+        for imported in sorted(_imports(path)):
+            top = imported.split(".", 1)[0]
+            if top == "model_benchmark":
+                resolved = _first_party_module_file(imported)
+                if resolved is not None:
+                    pending.append(resolved)
+                continue
+            if top not in sys.stdlib_module_names:
+                violations.append(f"{path.relative_to(ROOT)}: {imported}")
     assert violations == []
