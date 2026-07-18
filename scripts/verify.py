@@ -25,6 +25,12 @@ from verification.policy import (  # noqa: E402
     load_policy,
     tracked_paths,
 )
+from verification.freshness import (  # noqa: E402
+    FreshnessError,
+    check_acceptance_proofs,
+)
+
+
 class DevelopmentRunError(RuntimeError):
     """A Docker-free development command violated its execution contract."""
 
@@ -58,6 +64,8 @@ def main(argv: list[str] | None = None) -> int:
     policy_path = arguments.policy.resolve()
     try:
         policy = load_policy(policy_path)
+        if arguments.action == "check-acceptance-proofs":
+            return _check_acceptance_proofs(policy)
         if arguments.action == "audit-policy":
             paths = tracked_paths(PROJECT_ROOT)
             missing = policy.audit_paths(paths)
@@ -83,9 +91,43 @@ def main(argv: list[str] | None = None) -> int:
             _emit(run_development(policy, selection))
             return 0
         parser.error(f"unsupported action: {arguments.action}")
-    except (DevelopmentRunError, PolicyError) as error:
+    except (DevelopmentRunError, FreshnessError, PolicyError) as error:
         print(f"verification failed: {error}", file=sys.stderr)
         return 2
+
+
+def _check_acceptance_proofs(policy: Policy) -> int:
+    from scripts import acceptance
+
+    input_paths: dict[int, tuple[str, ...]] = {}
+    for stage in acceptance.STAGES:
+        declared = tuple(
+            item.split("=", 1)[1]
+            for item in stage.extra
+            if item.startswith("--acceptance-input=")
+        )
+        if declared:
+            input_paths[stage.issue] = declared
+    reports = check_acceptance_proofs(PROJECT_ROOT, input_paths)
+    _emit(
+        {
+            "authority": "none",
+            "policy_sha256": policy.sha256,
+            "proofs": [
+                {
+                    "directory": report.directory,
+                    "detail": report.detail,
+                    "issue": report.issue,
+                    "not_recomputable": list(report.not_recomputable),
+                    "stale_inputs": list(report.stale_inputs),
+                    "status": report.status,
+                }
+                for report in reports
+            ],
+            "schema": "acceptance-proof-freshness-v1",
+        }
+    )
+    return 0 if all(report.fresh for report in reports) else 1
 
 
 def run_development(policy: Policy, selection: object) -> dict[str, object]:
@@ -177,6 +219,9 @@ def _parser() -> argparse.ArgumentParser:
 
     audit = subparsers.add_parser("audit-policy")
     audit.add_argument("--policy", type=Path, default=default_policy)
+
+    freshness = subparsers.add_parser("check-acceptance-proofs")
+    freshness.add_argument("--policy", type=Path, default=default_policy)
 
     for name in ("select", "run-development"):
         command = subparsers.add_parser(name)
