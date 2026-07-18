@@ -156,6 +156,22 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+def _check_pricing_window(manifest: FunctionalV1Manifest) -> None:
+    # Enforced only where provider money can move (fresh runs and the
+    # pending-cell resume path); sealed-run inspection and resume never
+    # reach this check, so historical projections do not expire.
+    pricing = manifest.value["provider"]["pricing"]
+    until_text = str(pricing["effective_until_utc"])
+    until = datetime.strptime(until_text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    if datetime.now(UTC) >= until:
+        raise ExecutionError(
+            "pricing-record-expired",
+            "provider.pricing effective window closed at "
+            f"{until_text}; re-retrieve and reseal the Pricing Record "
+            "before spending against it",
+        )
+
+
 def _command(
     arguments: Sequence[str],
     *,
@@ -2385,6 +2401,7 @@ class NativeFunctionalV1Runtime:
         schedule: Sequence[Mapping[str, object]],
     ) -> CommandResult:
         try:
+            _check_pricing_window(manifest)
             with self.home.coordinator_lease():
                 projection = self._preflight(manifest)
                 workspace = self.home.create_workspace(manifest)
@@ -2674,6 +2691,7 @@ class NativeFunctionalV1Runtime:
                 if not pending:
                     return _inspect_result(workspace.seal())
                 manifest, manifest_root = _workspace_manifest(self.home, workspace)
+                _check_pricing_window(manifest)
                 projection = self._preflight(manifest)
                 inventory = _load_inventory(self.home, manifest)
                 executor = HarborCellExecutor(
