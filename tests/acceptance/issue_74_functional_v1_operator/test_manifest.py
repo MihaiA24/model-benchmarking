@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 import yaml
@@ -331,7 +333,17 @@ def test_functional_v1_provisioning_records_sealed_store_images(
     def stop_at_conditions(*_: object, **__: object) -> Path:
         raise _ConditionBoundaryReached
 
-    monkeypatch.setattr(execution, "provision_omp", stop_at_conditions)
+    registry = MappingProxyType(
+        {
+            name: (
+                dataclasses.replace(definition, provision=stop_at_conditions)
+                if definition.provision is not None
+                else definition
+            )
+            for name, definition in execution.CONDITION_REGISTRY.items()
+        }
+    )
+    monkeypatch.setattr(execution, "CONDITION_REGISTRY", registry)
 
     with pytest.raises(_ConditionBoundaryReached):
         runtime._provision(manifest)

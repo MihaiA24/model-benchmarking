@@ -45,6 +45,10 @@ from model_benchmark.declarations.scenarios import (
     check_scenario_package,
 )
 from model_benchmark.runtime.bundles import seal_cell_evidence
+from model_benchmark.runtime.condition_registry import (
+    CONDITIONS as CONDITION_REGISTRY,
+    HARNESS_CONDITIONS,
+)
 from model_benchmark.runtime.functional_v1 import (
     CELL_SCHEDULE,
     CommandResult,
@@ -55,12 +59,6 @@ from model_benchmark.runtime.functional_v1 import (
     _inspect_result,
     _load_canonical_object,
 )
-from model_benchmark.runtime.hermes import (
-    HERMES_IMAGE_REFERENCE,
-    provision_hermes,
-)
-from model_benchmark.runtime.omp import provision_omp
-from model_benchmark.runtime.opencode import provision_opencode
 from model_benchmark.runtime.provisioning import preflight as preflight_scenario_package
 from model_benchmark.runtime.scenario_qualification import provision_scenario_package
 
@@ -97,7 +95,8 @@ def _stage_schedules() -> Mapping[str, tuple[Mapping[str, object], ...]]:
             for cell in CELL_SCHEDULE
             if cell["scenario"] == scenario and cell["condition"] == condition
         )
-        for condition in ("omp", "opencode", "hermes")
+        for condition, definition in CONDITION_REGISTRY.items()
+        if definition.kind == "harness"
     }
     stages["four-condition"] = tuple(
         cell for cell in CELL_SCHEDULE if cell["scenario"] == scenario
@@ -254,7 +253,7 @@ def _condition_build_value(
     lock: Mapping[str, object],
     runtime_tree_digest: str,
 ) -> dict[str, object]:
-    base_image = HERMES_IMAGE_REFERENCE if condition == "hermes" else _PYTHON_BASE
+    base_image = CONDITION_REGISTRY[condition].image_base or _PYTHON_BASE
     return {
         "adapter": lock["adapter"],
         "artifact": lock["artifact"],
@@ -400,20 +399,7 @@ def _write_build_context(
                 "LOADER=$ROOT/lib64/ld-linux-x86-64.so.2\n"
                 "LIBRARY_PATH=$ROOT/lib/x86_64-linux-gnu:$ROOT/usr/lib/x86_64-linux-gnu:$ROOT/usr/local/lib\n"
             )
-            if condition == "hermes":
-                entrypoint += (
-                    "export PYTHONHOME=$ROOT/usr\n"
-                    "export PYTHONPATH=$ROOT/opt/model-benchmark-runtime:$ROOT/opt/hermes/.venv/lib/python3.13/site-packages\n"
-                    "exec $LOADER --library-path $LIBRARY_PATH $ROOT/usr/bin/python3 -m "
-                    'model_benchmark.runtime.condition_image "$@"\n'
-                )
-            else:
-                entrypoint += (
-                    "export PYTHONHOME=$ROOT/usr/local\n"
-                    "export PYTHONPATH=$ROOT/opt/model-benchmark-runtime\n"
-                    "exec $LOADER --library-path $LIBRARY_PATH $ROOT/usr/local/bin/python3.12 -m "
-                    'model_benchmark.runtime.condition_image "$@"\n'
-                )
+            entrypoint += str(CONDITION_REGISTRY[str(condition)].entrypoint_script)
             (temporary / "entrypoint").write_text(entrypoint, encoding="utf-8")
             (temporary / "entrypoint").chmod(0o555)
             copy_artifact = (
@@ -1082,7 +1068,7 @@ def _probe_condition_mounts(
             check=False,
         )
         artifact_entries = artifact_probe.stdout.split()
-        expected_entries = [condition] if condition in ("omp", "opencode", "hermes") else []
+        expected_entries = [condition] if condition in HARNESS_CONDITIONS else []
         verifier_present = verifier_probe.returncode == 0
         unselected_present = (
             artifact_probe.returncode != 0 or artifact_entries != expected_entries
@@ -1728,7 +1714,7 @@ class HarborCellExecutor:
                 "--agent-env",
                 f"MODEL_BENCHMARK_PROXY_TOKEN={token}",
             ]
-            if condition == "raw-api":
+            if CONDITION_REGISTRY[condition].requires_scenario_target:
                 arguments.extend(
                     ["--agent-kwarg", f"target_path={self._target_path(scenario)}"]
                 )
@@ -2079,13 +2065,11 @@ class NativeFunctionalV1Runtime:
 
             cache = root / "conditions-cache"
             condition_sources = {
-                "omp": provision_omp(cache, manifest.condition_lock_bytes["omp"]),
-                "opencode": provision_opencode(
-                    cache, manifest.condition_lock_bytes["opencode"]
-                ),
-                "hermes": provision_hermes(
-                    cache, manifest.condition_lock_bytes["hermes"]
-                ),
+                name: definition.provision(
+                    cache, manifest.condition_lock_bytes[name]
+                )
+                for name, definition in CONDITION_REGISTRY.items()
+                if definition.provision is not None
             }
             runtime_digest = _tree_digest(_runtime_source_root())
             conditions: dict[str, object] = {}
@@ -2118,9 +2102,7 @@ class NativeFunctionalV1Runtime:
                     context,
                     condition=name,
                     artifact=artifact_path,
-                    base_image=HERMES_IMAGE_REFERENCE
-                    if name == "hermes"
-                    else _PYTHON_BASE,
+                    base_image=CONDITION_REGISTRY[name].image_base or _PYTHON_BASE,
                     lock_identity=str(lock_identity),
                     content_digest=expected_content,
                 )

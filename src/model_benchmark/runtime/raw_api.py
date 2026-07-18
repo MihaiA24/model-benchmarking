@@ -7,14 +7,60 @@ import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 from urllib.parse import urlsplit
 
-from model_benchmark.declarations.canonical import canonical_json_bytes
-from model_benchmark.runtime.conditions import FinalRepositoryHandoff
+from model_benchmark.declarations.canonical import (
+    CanonicalizationError,
+    canonical_json_bytes,
+    load_canonical_json,
+)
+from model_benchmark.declarations.identities import DigestKind, TypedDigest
+from model_benchmark.declarations.scenario_locks import project_resource_root
+from model_benchmark.runtime.conditions import (
+    ConditionAdapterError,
+    FinalRepositoryHandoff,
+)
 
 
 _MAX_PROVIDER_ENVELOPE_OVERHEAD = 1024 * 1024
+
+
+def raw_api_condition_lock_path() -> Path:
+    path = (
+        project_resource_root("profiles", "published_profiles")
+        / "functional-v1"
+        / "raw-api-v1.condition.json"
+    )
+    if not path.is_file():
+        raise ConditionAdapterError(
+            "condition-lock-unavailable", "Raw API condition lock is unavailable"
+        )
+    return path
+
+
+def raw_api_launch_shim_path() -> Path:
+    path = Path(__file__).with_name("raw_api_launch.py")
+    if not path.is_file():
+        raise ConditionAdapterError(
+            "launch-shim-unavailable", "Raw API launch shim is unavailable"
+        )
+    return path
+
+
+def load_raw_api_condition_lock() -> tuple[bytes, Mapping[str, object], TypedDigest]:
+    try:
+        data = raw_api_condition_lock_path().read_bytes()
+        value = load_canonical_json(data)
+    except (OSError, CanonicalizationError) as error:
+        raise ConditionAdapterError("invalid-condition-lock", str(error)) from error
+    if not isinstance(value, dict):
+        raise ConditionAdapterError(
+            "invalid-condition-lock", "Raw API condition lock is not an object"
+        )
+    identity = TypedDigest.from_bytes(DigestKind.FUNCTIONAL_V1_CONDITION, data)
+    return data, MappingProxyType(value), identity
 
 
 class RawApiError(ValueError):

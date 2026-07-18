@@ -23,8 +23,13 @@ from model_benchmark.declarations.scenario_locks import (
     standard_profile_path,
 )
 from model_benchmark.runtime.conditions import (
+    ConditionAdapterError,
     ConditionProcessResult,
+    ConditionQualification,
     SealedConditionProcess,
+    provider_events,
+    publish_bytes,
+    read_regular_file,
 )
 from model_benchmark.runtime.credential_proxy import TRIAL_PROXY_TOKEN_ENV
 
@@ -54,14 +59,6 @@ OPENCODE_ENVIRONMENT_NAMES = (
 _QUALIFIED = "qualified"
 
 
-class OpenCodeConditionError(RuntimeError):
-    """The pinned OpenCode condition cannot be provisioned or qualified safely."""
-
-    def __init__(self, reason_code: str, message: str) -> None:
-        super().__init__(message)
-        self.reason_code = reason_code
-
-
 @dataclass(frozen=True)
 class OpenCodeProvisioning:
     condition_identity: str
@@ -74,16 +71,6 @@ class OpenCodeProvisioning:
     manifest_path: Path
 
 
-@dataclass(frozen=True)
-class OpenCodeQualification:
-    qualified: bool
-    reason_code: str
-    evidence: Mapping[str, object]
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "evidence", MappingProxyType(dict(self.evidence)))
-
-
 def opencode_condition_lock_path() -> Path:
     path = (
         project_resource_root("profiles", "published_profiles")
@@ -91,7 +78,7 @@ def opencode_condition_lock_path() -> Path:
         / "opencode-v1.17.18.condition.json"
     )
     if not path.is_file():
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "condition-lock-unavailable",
             "OpenCode condition lock is unavailable",
         )
@@ -101,7 +88,7 @@ def opencode_condition_lock_path() -> Path:
 def opencode_launch_shim_path() -> Path:
     path = Path(__file__).with_name("opencode_launch.py")
     if not path.is_file():
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "launch-shim-unavailable",
             "OpenCode launch shim is unavailable",
         )
@@ -169,9 +156,9 @@ def load_opencode_condition_lock() -> tuple[bytes, Mapping[str, object], TypedDi
         data = opencode_condition_lock_path().read_bytes()
         value = load_canonical_json(data)
     except (OSError, CanonicalizationError) as error:
-        raise OpenCodeConditionError("invalid-condition-lock", str(error)) from error
+        raise ConditionAdapterError("invalid-condition-lock", str(error)) from error
     if not isinstance(value, dict):
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "invalid-condition-lock",
             "OpenCode condition lock is not an object",
         )
@@ -183,7 +170,7 @@ def load_opencode_condition_lock() -> tuple[bytes, Mapping[str, object], TypedDi
 def validate_opencode_condition_lock(data: bytes) -> TypedDigest:
     expected, _, identity = load_opencode_condition_lock()
     if data != expected:
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "condition-unqualified",
             "OpenCode condition lock differs from the qualified v1.17.18 lock",
         )
@@ -194,7 +181,7 @@ def _verify_lock_dependencies(lock: dict[str, object]) -> None:
     artifact = lock.get("artifact")
     adapter = lock.get("adapter")
     if not isinstance(artifact, dict) or not isinstance(adapter, dict):
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "invalid-condition-lock",
             "OpenCode lock structure is invalid",
         )
@@ -231,7 +218,7 @@ def _verify_lock_dependencies(lock: dict[str, object]) -> None:
         or adapter.get("working_directory") != "/workspace"
         or str(expected_shim) != OPENCODE_SHIM_IDENTITY
     ):
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "invalid-condition-lock",
             "OpenCode v1.17.18 artifact, profile, or adapter declaration does not match",
         )
@@ -294,7 +281,7 @@ def provision_opencode(cache_root: Path, condition_lock: bytes) -> OpenCodeProvi
             label="launch shim",
         )
     else:
-        _publish_bytes(shim_path, shim_data, mode=0o555)
+        publish_bytes(shim_path, shim_data, mode=0o555, condition="OpenCode")
         _verify_file(
             shim_path,
             OPENCODE_SHIM_IDENTITY,
@@ -310,7 +297,9 @@ def provision_opencode(cache_root: Path, condition_lock: bytes) -> OpenCodeProvi
         shim_relative=shim_relative,
         shim_bytes=len(shim_data),
     )
-    _publish_bytes(manifest_path, canonical_json_bytes(manifest), mode=0o400)
+    publish_bytes(
+        manifest_path, canonical_json_bytes(manifest), mode=0o400, condition="OpenCode"
+    )
     return preflight_opencode(cache_root, condition_lock)
 
 
@@ -319,9 +308,9 @@ def preflight_opencode(cache_root: Path, condition_lock: bytes) -> OpenCodeProvi
     root = cache_root / "opencode" / condition_identity.value
     manifest_path = root / "provisioning.json"
     try:
-        manifest = load_canonical_json(_read_regular_file(manifest_path))
+        manifest = load_canonical_json(read_regular_file(manifest_path))
     except (OSError, CanonicalizationError) as error:
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "condition-unqualified",
             f"OpenCode provisioning manifest is unavailable or invalid: {error}",
         ) from error
@@ -347,7 +336,7 @@ def preflight_opencode(cache_root: Path, condition_lock: bytes) -> OpenCodeProvi
         shim_bytes=len(shim_data),
     )
     if manifest != expected:
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "condition-unqualified",
             "OpenCode provisioning manifest does not match the sealed condition",
         )
@@ -445,7 +434,7 @@ def sealed_opencode_process(
         or provisioning.artifact_identity != artifact.get("digest")
         or provisioning.launch_shim_identity != shim.get("digest")
     ):
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "condition-unqualified",
             "measured OpenCode launch does not match the sealed condition",
         )
@@ -457,7 +446,7 @@ def sealed_opencode_process(
         or not isinstance(artifact_bytes, int)
         or isinstance(artifact_bytes, bool)
     ):
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "condition-unqualified",
             "sealed OpenCode artifact sizes are invalid",
         )
@@ -492,19 +481,19 @@ def sealed_opencode_process(
         or parsed.fragment
         or proxy_base_url.endswith("/")
     ):
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "condition-unqualified",
             "OpenCode must receive one canonical internal HTTP Credential Proxy route",
         )
     if not provider_model or any(ord(character) < 32 for character in provider_model):
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "condition-unqualified",
             "OpenCode provider model is invalid",
         )
     if not trial_proxy_token or any(
         character in trial_proxy_token for character in "\r\n\x00"
     ):
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "condition-unqualified",
             "OpenCode proxy token is invalid",
         )
@@ -538,7 +527,7 @@ def evaluate_opencode_qualification(
     observed_brief_sha256: str,
     workspace_verified: bool,
     unexpected_network_requests: int,
-) -> OpenCodeQualification:
+) -> ConditionQualification:
     evidence = {
         "artifact_digests": dict(result.artifact_digests),
         "brief_sha256": observed_brief_sha256,
@@ -569,9 +558,9 @@ def evaluate_opencode_qualification(
     elif unexpected_network_requests != 0:
         reason_code = "opencode-unexpected-network"
 
-    provider_events = _provider_events(proxy_evidence_path)
-    evidence["provider_response_count"] = len(provider_events)
-    if reason_code is None and not provider_events:
+    events = provider_events(proxy_evidence_path)
+    evidence["provider_response_count"] = len(events)
+    if reason_code is None and not events:
         reason_code = "opencode-provider-evidence-missing"
     if reason_code is None and any(
         event.get("reason_code") is not None
@@ -579,31 +568,15 @@ def evaluate_opencode_qualification(
         or not isinstance(event.get("provider_tokens"), int)
         or isinstance(event.get("provider_tokens"), bool)
         or event.get("provider_cost_usd") is None
-        for event in provider_events
+        for event in events
     ):
         reason_code = "opencode-provider-contract-violation"
 
-    return OpenCodeQualification(
+    return ConditionQualification(
         qualified=reason_code is None,
         reason_code=_QUALIFIED if reason_code is None else reason_code,
         evidence=evidence,
     )
-
-
-def _provider_events(path: Path) -> list[dict[str, object]]:
-    try:
-        lines = _read_regular_file(path).splitlines()
-    except OSError:
-        return []
-    events: list[dict[str, object]] = []
-    for line in lines:
-        try:
-            value = json.loads(line.decode("utf-8", errors="strict"))
-        except (UnicodeError, json.JSONDecodeError):
-            return []
-        if isinstance(value, dict) and value.get("event") == "provider-response":
-            events.append(value)
-    return events
 
 
 def _download_archive(destination: Path) -> None:
@@ -621,7 +594,7 @@ def _download_archive(destination: Path) -> None:
                 os.fsync(output.fileno())
         identity = f"artifact:sha256:{digest.hexdigest()}"
         if identity != OPENCODE_ARCHIVE_IDENTITY or size != OPENCODE_ARCHIVE_BYTES:
-            raise OpenCodeConditionError(
+            raise ConditionAdapterError(
                 "artifact-verification-failed",
                 "downloaded OpenCode v1.17.18 archive does not match its sealed identity",
             )
@@ -650,13 +623,13 @@ def _extract_artifact(archive_path: Path, destination: Path) -> None:
                 or not members[0].isfile()
                 or members[0].size != OPENCODE_ARTIFACT_BYTES
             ):
-                raise OpenCodeConditionError(
+                raise ConditionAdapterError(
                     "artifact-verification-failed",
                     "OpenCode archive does not contain exactly the sealed executable",
                 )
             source = archive.extractfile(members[0])
             if source is None:
-                raise OpenCodeConditionError(
+                raise ConditionAdapterError(
                     "artifact-verification-failed",
                     "OpenCode executable cannot be read from the sealed archive",
                 )
@@ -683,45 +656,12 @@ def _extract_artifact(archive_path: Path, destination: Path) -> None:
             label="executable",
         )
     except (OSError, tarfile.TarError) as error:
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "artifact-verification-failed",
             f"OpenCode archive extraction failed: {error}",
         ) from error
     finally:
         temporary.unlink(missing_ok=True)
-
-
-def _publish_bytes(destination: Path, data: bytes, *, mode: int) -> None:
-    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
-    try:
-        with temporary.open("xb") as output:
-            output.write(data)
-            output.flush()
-            os.fsync(output.fileno())
-        temporary.chmod(mode)
-        os.link(temporary, destination)
-    except FileExistsError:
-        if _read_regular_file(destination) != data:
-            raise OpenCodeConditionError(
-                "immutable-cache-conflict",
-                f"immutable OpenCode cache path changed: {destination.name}",
-            )
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def _read_regular_file(path: Path) -> bytes:
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise OSError("not a regular file")
-        chunks: list[bytes] = []
-        while chunk := os.read(descriptor, 1024 * 1024):
-            chunks.append(chunk)
-        return b"".join(chunks)
-    finally:
-        os.close(descriptor)
 
 
 def _verify_file(
@@ -748,12 +688,12 @@ def _verify_file(
         finally:
             os.close(descriptor)
     except OSError as error:
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "condition-unqualified",
             f"OpenCode cached {label} is unavailable: {error}",
         ) from error
     if f"artifact:sha256:{digest.hexdigest()}" != identity:
-        raise OpenCodeConditionError(
+        raise ConditionAdapterError(
             "condition-unqualified",
             f"OpenCode cached {label} identity mismatch",
         )

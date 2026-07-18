@@ -14,7 +14,11 @@ import pytest
 import model_benchmark.runtime.omp as omp_runtime
 from model_benchmark.declarations.canonical import canonical_json_bytes, load_canonical_json
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
-from model_benchmark.runtime.conditions import ConditionRunRequest, ConditionRunner
+from model_benchmark.runtime.conditions import (
+    ConditionAdapterError,
+    ConditionRunRequest,
+    ConditionRunner,
+)
 from model_benchmark.runtime.credential_proxy import CredentialProxy, CredentialProxyConfig
 from model_benchmark.runtime.omp import (
     OMP_ARTIFACT_BYTES,
@@ -23,7 +27,6 @@ from model_benchmark.runtime.omp import (
     OMP_ENVIRONMENT_NAMES,
     OMP_SHIM_IDENTITY,
     OMP_VERSION,
-    OmpConditionError,
     OmpProvisioning,
     evaluate_omp_qualification,
     load_omp_condition_lock,
@@ -144,7 +147,7 @@ def test_provision_is_digest_first_and_warm_preflight_is_read_only(
 
     cold.artifact_path.chmod(0o755)
     cold.artifact_path.write_bytes(b"changed")
-    with pytest.raises(OmpConditionError, match="cached executable") as captured:
+    with pytest.raises(ConditionAdapterError, match="cached executable") as captured:
         omp_runtime.preflight_omp(cache, lock_bytes)
     assert captured.value.reason_code == "condition-unqualified"
 
@@ -319,7 +322,7 @@ def test_fresh_rpc_trials_preserve_stock_transport_and_complete_evidence(
         (first, second)
     ):
         request = recording_provider.requests[index]
-        body = json.loads(request["body"])
+        body = json.loads(request.body)
         observation = json.loads(
             (trial_root / "repository/omp-observation.json").read_text(encoding="utf-8")
         )
@@ -361,8 +364,8 @@ def test_fresh_rpc_trials_preserve_stock_transport_and_complete_evidence(
         assert snapshot.request_count == 1
         assert snapshot.provider_tokens == 17
         assert snapshot.provider_cost_usd == "0.10"
-        assert request["path"] == "/chat/completions"
-        assert request["authorization"] == f"Bearer {_REAL_KEY}"
+        assert request.path == "/chat/completions"
+        assert request.headers["authorization"] == f"Bearer {_REAL_KEY}"
         assert body["model"] == _MODEL
         assert observed_brief == _BRIEF
         assert observation["provider"]["api"] == "openai-completions"
