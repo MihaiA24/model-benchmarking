@@ -210,3 +210,86 @@ def test_cli_writes_the_page(tmp_path: Path) -> None:
     page = output.read_text(encoding="utf-8")
     assert page.startswith("<!doctype html>")
     assert "authority: none" in page
+
+
+def _names(tmp_path: Path, mapping: dict[str, str]) -> Path:
+    path = tmp_path / "names.json"
+    path.write_text(json.dumps(mapping), encoding="utf-8")
+    return path
+
+
+def test_named_versions_replace_hashes_in_headings_and_nav(tmp_path: Path) -> None:
+    first = _two_runs(tmp_path, "functional-v1-manifest:sha256:" + "a" * 64)
+    second = _two_runs(tmp_path, "functional-v1-manifest:sha256:" + "c" * 64)
+    names = _names(
+        tmp_path,
+        {"a" * 8: "Production baseline", "c" * 8: "Candidate v2"},
+    )
+
+    page = build_dashboard(first + second, "Results", names)
+
+    assert "Version 1: Production baseline" in page
+    assert "Version 2: Candidate v2" in page
+    assert '<a href="#v1">Production baseline</a>' in page
+    # Comparison bars and table headers carry labels, not digests.
+    assert "omp · Production baseline" in page
+    assert "<th>Candidate v2</th>" in page
+    # The sealed identities stay reachable in the internal drawer.
+    assert "Internal identities" in page
+    assert ("a" * 64) in page and ("c" * 64) in page
+
+
+def test_hostile_names_are_escaped(tmp_path: Path) -> None:
+    paths = _two_runs(tmp_path)
+    names = _names(tmp_path, {"a" * 8: '<img src=x onerror="1">'})
+
+    page = build_dashboard(paths, "Results", names)
+
+    assert '<img src=x' not in page
+    assert "&lt;img src=x" in page
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        {"f" * 8: "matches nothing"},
+        {"aaaa": "too short"},
+        {"a" * 8: ""},
+    ],
+)
+def test_bad_names_files_are_refused(
+    tmp_path: Path, mapping: dict[str, str]
+) -> None:
+    from scripts.dashboard import DashboardError as Error
+
+    paths = _two_runs(tmp_path)
+    names = _names(tmp_path, mapping)
+
+    with pytest.raises(Error):
+        build_dashboard(paths, "Results", names)
+
+
+def test_ambiguous_names_key_is_refused(tmp_path: Path) -> None:
+    first = _two_runs(tmp_path, "functional-v1-manifest:sha256:" + "a" * 64)
+    second = _two_runs(
+        tmp_path, "functional-v1-manifest:sha256:" + "a" * 8 + "b" * 56
+    )
+    names = _names(tmp_path, {"a" * 8: "which one?"})
+
+    with pytest.raises(DashboardError):
+        build_dashboard(first + second, "Results", names)
+
+
+def test_runs_render_as_ordinals_with_start_dates(tmp_path: Path) -> None:
+    record = _record("0198-a")
+    for cell in record["cells"]:  # type: ignore[union-attr]
+        cell["started_at_utc"] = "2026-07-19T13:21:02.786559Z"
+    path = _write(tmp_path, "dated.json", record)
+
+    page = build_dashboard([path], "Results")
+
+    assert "<strong>Run 1</strong>" in page
+    assert "2026-07-19" in page
+    # Raw run ids stay out of the runs table; the drawer keeps them.
+    assert page.count("0198-a") >= 1
+    assert "Internal identities" in page

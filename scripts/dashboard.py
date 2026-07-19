@@ -7,6 +7,18 @@ and every group is validated and analyzed by ``scripts/readout.py``'s
 adds presentation only: a hero summary, tables, inline-SVG charts, and a
 display-only cross-version comparison of observed rates. stdlib-only, zero
 JavaScript, deterministic output bytes, every record field escaped.
+
+Human-friendly version names come from an optional ``--names`` JSON file
+mapping a manifest-identity prefix (>= 8 hex chars, with or without the
+``functional-v1-manifest:sha256:`` prefix) to a display label::
+
+    {"57e2ba7a": "deepseek-v4-flash — July campaign"}
+
+Named versions show their label everywhere; runs render as "Run N". The
+sealed identities are never dropped — every version carries a collapsed
+"Internal identities" drawer with the full manifest, resolved-manifest,
+run-id, and record digests, so traceability to the sealed evidence stays
+one click away.
 """
 
 from __future__ import annotations
@@ -42,6 +54,7 @@ _DISPOSITION_CLASS = {
     "valid_limit_outcome": "warn",
     "valid_harness_outcome": "na",
 }
+_MIN_NAME_KEY_HEX = 8
 _CHART_WIDTH = 720
 _CHART_GUTTER = 190
 _BAR_HEIGHT = 22
@@ -87,6 +100,87 @@ def _decimal(value: object) -> Decimal:
         return Decimal(str(value))
     except InvalidOperation:
         return Decimal(0)
+
+
+# --------------------------------------------------------------------------
+# version naming (presentation-only; sealed identities stay in the page)
+
+
+def _identity_hex(identity: str) -> str:
+    return identity.rsplit(":", 1)[-1]
+
+
+def _load_names(path: Path | None) -> dict[str, str]:
+    if path is None:
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise DashboardError(f"unreadable names file {path}: {error}") from error
+    if not isinstance(value, dict) or not all(
+        isinstance(key, str) and isinstance(label, str) and label.strip()
+        for key, label in value.items()
+    ):
+        raise DashboardError(
+            f"{path} must map manifest-identity prefixes to non-empty labels"
+        )
+    return {key: str(label).strip() for key, label in value.items()}
+
+
+def _resolve_names(names: dict[str, str], manifests: list[str]) -> dict[str, str]:
+    resolved: dict[str, str] = {}
+    for key, label in names.items():
+        key_hex = _identity_hex(key.strip())
+        if len(key_hex) < _MIN_NAME_KEY_HEX:
+            raise DashboardError(
+                f"names key needs at least {_MIN_NAME_KEY_HEX} hex characters: {key!r}"
+            )
+        matches = [
+            manifest
+            for manifest in manifests
+            if _identity_hex(manifest).startswith(key_hex)
+        ]
+        if not matches:
+            raise DashboardError(f"names key matches no input manifest: {key!r}")
+        if len(matches) > 1:
+            raise DashboardError(f"names key is ambiguous: {key!r}")
+        if matches[0] in resolved:
+            raise DashboardError(f"manifest named twice: {matches[0]}")
+        resolved[matches[0]] = label
+    return resolved
+
+
+class _Version:
+    """Presentation bundle for one manifest identity."""
+
+    def __init__(
+        self,
+        index: int,
+        manifest: str,
+        label: str | None,
+        readout: dict[str, object],
+        records: list[dict[str, object]],
+    ) -> None:
+        self.index = index
+        self.manifest = manifest
+        self.label = label
+        self.readout = readout
+        self.records = records
+        self.totals = _version_totals(readout, records)
+
+    @property
+    def display(self) -> str:
+        return self.label or f"v{self.index} ·…{_identity_hex(self.manifest)[-12:]}"
+
+    @property
+    def tag(self) -> str:
+        return self.label or f"v{self.index}"
+
+    @property
+    def heading(self) -> str:
+        if self.label:
+            return html.escape(self.label)
+        return f"<code>…{html.escape(_identity_hex(self.manifest)[-12:])}</code>"
 
 
 def _condition_color(condition: str, conditions: list[str]) -> str:
@@ -223,12 +317,16 @@ def _state_chip(record: dict[str, object]) -> str:
     return f'<span class="chip {variant}">{html.escape(state)}</span>'
 
 
-def _runs_table(readout: dict[str, object], records: list[dict[str, object]]) -> str:
-    digests = {
-        str(entry["run_id"]): str(entry["digest"])
-        for entry in readout["inputs"]  # type: ignore[union-attr]
-        if isinstance(entry, dict)
-    }
+def _run_started(record: dict[str, object]) -> str:
+    stamps = sorted(
+        str(cell["started_at_utc"])
+        for cell in record["cells"]  # type: ignore[union-attr]
+        if isinstance(cell, dict) and isinstance(cell.get("started_at_utc"), str)
+    )
+    return stamps[0][:10] if stamps else "—"
+
+
+def _runs_table(records: list[dict[str, object]]) -> str:
     totals = []
     for record in records:
         cells = [cell for cell in record["cells"] if isinstance(cell, dict)]  # type: ignore[union-attr]
@@ -243,12 +341,11 @@ def _runs_table(readout: dict[str, object], records: list[dict[str, object]]) ->
     max_tokens = max((tokens for _, _, tokens, _ in totals), default=0)
     max_cost = max((cost for _, _, _, cost in totals), default=Decimal(0))
     rows = []
-    for record, requests, tokens, cost in totals:
-        run_id = str(record["run_id"])
+    for number, (record, requests, tokens, cost) in enumerate(totals, start=1):
         rows.append(
             "<tr>"
-            f"<td><code>{html.escape(run_id)}</code></td>"
-            f"<td><code>{html.escape(digests.get(run_id, '-'))}</code></td>"
+            f"<td><strong>Run {number}</strong></td>"
+            f"<td>{html.escape(_run_started(record))}</td>"
             f"<td>{_state_chip(record)}</td>"
             f"<td>{requests}</td>"
             f"<td>{tokens}{_minibar(tokens, max_tokens)}</td>"
@@ -256,9 +353,34 @@ def _runs_table(readout: dict[str, object], records: list[dict[str, object]]) ->
             "</tr>"
         )
     return (
-        '<div class="tbl-wrap"><table><thead><tr><th>run</th><th>record identity</th>'
+        '<div class="tbl-wrap"><table><thead><tr><th>run</th><th>started</th>'
         "<th>state</th><th>requests</th><th>tokens</th><th>derived cost</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
+def _internal_identities(version: _Version) -> str:
+    digests = {
+        str(entry["run_id"]): str(entry["digest"])
+        for entry in version.readout["inputs"]  # type: ignore[union-attr]
+        if isinstance(entry, dict)
+    }
+    rows = [
+        "<tr><th>manifest</th>"
+        f"<td colspan=\"2\"><code>{html.escape(version.manifest)}</code></td></tr>",
+        "<tr><th>resolved manifest</th>"
+        f"<td colspan=\"2\"><code>{html.escape(str(version.readout['resolved_manifest_identity']))}</code></td></tr>",
+    ]
+    for number, record in enumerate(version.records, start=1):
+        run_id = str(record["run_id"])
+        rows.append(
+            f"<tr><th>Run {number}</th><td><code>{html.escape(run_id)}</code></td>"
+            f"<td><code>{html.escape(digests.get(run_id, '-'))}</code></td></tr>"
+        )
+    return (
+        '<details class="internal"><summary>Internal identities</summary>'
+        f'<div class="tbl-wrap"><table><tbody>{"".join(rows)}</tbody></table></div>'
+        "</details>"
     )
 
 
@@ -357,8 +479,7 @@ def _rate_chart(readout: dict[str, object]) -> str:
 
 def _cells_table(records: list[dict[str, object]]) -> str:
     rows = []
-    for record in records:
-        run_id = html.escape(str(record["run_id"]))
+    for number, record in enumerate(records, start=1):
         for cell in record["cells"]:  # type: ignore[union-attr]
             scores = cell.get("scores") if isinstance(cell, dict) else None
             success = scores.get("task_success") if isinstance(scores, dict) else None
@@ -369,7 +490,7 @@ def _cells_table(records: list[dict[str, object]]) -> str:
             )
             rows.append(
                 "<tr>"
-                f"<td><code>{run_id}</code></td>"
+                f"<td>Run {number}</td>"
                 f"<td>{html.escape(str(cell.get('cell_id')))}</td>"
                 f'<td class="{klass}">{html.escape(disposition)}</td>'
                 f"<td>{html.escape(str(cell.get('reason_code')))}</td>"
@@ -393,39 +514,36 @@ def _cells_table(records: list[dict[str, object]]) -> str:
 # cross-version comparison (observed rates only, display-only)
 
 
-def _comparison_section(
-    versions: list[tuple[str, dict[str, object], dict[str, object]]],
-) -> str:
+def _comparison_section(versions: list[_Version]) -> str:
     conditions = sorted(
         {
             str(condition)
-            for _, readout, _ in versions
-            for condition in readout["conditions"]  # type: ignore[union-attr]
+            for version in versions
+            for condition in version.readout["conditions"]  # type: ignore[union-attr]
         }
     )
     bar_rows = []
     for condition in conditions:
         color = _condition_color(condition, conditions)
-        for index, (_, readout, totals) in enumerate(versions, start=1):
-            successes, runs = totals["rates"].get(condition, (0, 0))  # type: ignore[union-attr]
+        for version in versions:
+            successes, runs = version.totals["rates"].get(condition, (0, 0))  # type: ignore[union-attr]
             rate = successes / runs if runs else 0.0
             bar_rows.append(
                 (
-                    f"{condition} · v{index}",
+                    f"{condition} · {version.tag}",
                     rate,
                     color,
                     f"{successes}/{runs} ({rate * 100:.0f}%)",
                 )
             )
     header = "".join(
-        f"<th>v{index}<br><code>…{html.escape(manifest[-12:])}</code></th>"
-        for index, (manifest, _, _) in enumerate(versions, start=1)
+        f"<th>{html.escape(version.tag)}</th>" for version in versions
     )
     condition_rows = []
     for condition in conditions:
         cells = []
-        for _, _, totals in versions:
-            successes, runs = totals["rates"].get(condition, (0, 0))  # type: ignore[union-attr]
+        for version in versions:
+            successes, runs = version.totals["rates"].get(condition, (0, 0))  # type: ignore[union-attr]
             cells.append(
                 f'<td style="{_rate_style(successes, runs)}">{successes}/{runs}</td>'
             )
@@ -433,8 +551,9 @@ def _comparison_section(
             f"<tr><th>{html.escape(condition)}</th>{''.join(cells)}</tr>"
         )
     totals_row = "".join(
-        f"<td>{totals['runs']} runs · {totals['tokens']} tok · ${totals['cost']}</td>"
-        for _, _, totals in versions
+        f"<td>{version.totals['runs']} runs · {version.totals['tokens']} tok"
+        f" · ${version.totals['cost']}</td>"
+        for version in versions
     )
     return (
         '<section id="comparison"><h2>Cross-version comparison</h2>'
@@ -516,6 +635,7 @@ tr:nth-child(even) td { background: #f8fafc; }
 code { font-size: .8em; word-break: break-all; }
 details { margin: 1rem 0 0; }
 summary { cursor: pointer; font-weight: 600; color: var(--brand); }
+details.internal summary { color: var(--muted); font-weight: 500; font-size: .85rem; }
 .mini { background: #e5e7eb; border-radius: 3px; height: 5px; margin-top: 5px;
         width: 130px; }
 .mini i { background: var(--accent); border-radius: 3px; height: 5px; display: block; }
@@ -532,15 +652,12 @@ footer { color: var(--muted); font-size: .85em; text-align: center; margin-top: 
 """
 
 
-def _hero(
-    title: str,
-    versions: list[tuple[str, dict[str, object], dict[str, object]]],
-) -> str:
-    runs = sum(int(totals["runs"]) for _, _, totals in versions)  # type: ignore[arg-type]
-    cells = sum(int(totals["cells"]) for _, _, totals in versions)  # type: ignore[arg-type]
-    requests = sum(int(totals["requests"]) for _, _, totals in versions)  # type: ignore[arg-type]
-    tokens = sum(int(totals["tokens"]) for _, _, totals in versions)  # type: ignore[arg-type]
-    cost = sum((totals["cost"] for _, _, totals in versions), Decimal(0))  # type: ignore[misc]
+def _hero(title: str, versions: list[_Version]) -> str:
+    runs = sum(int(version.totals["runs"]) for version in versions)  # type: ignore[arg-type]
+    cells = sum(int(version.totals["cells"]) for version in versions)  # type: ignore[arg-type]
+    requests = sum(int(version.totals["requests"]) for version in versions)  # type: ignore[arg-type]
+    tokens = sum(int(version.totals["tokens"]) for version in versions)  # type: ignore[arg-type]
+    cost = sum((version.totals["cost"] for version in versions), Decimal(0))  # type: ignore[misc]
     items = (
         (str(len(versions)), "versions"),
         (str(runs), "sealed runs"),
@@ -564,17 +681,13 @@ def _hero(
     )
 
 
-def _version_section(
-    index: int,
-    manifest: str,
-    readout: dict[str, object],
-    records: list[dict[str, object]],
-) -> str:
+def _version_section(version: _Version) -> str:
+    readout = version.readout
     conditions = [str(item) for item in readout["conditions"]]  # type: ignore[index]
     margins = readout["reference_margins"]
     return (
-        f'<section id="v{index}"><h2>Version {index}: <code>{html.escape(manifest)}</code></h2>'
-        f'<p class="meta">resolved: <code>{html.escape(str(readout["resolved_manifest_identity"]))}</code></p>'
+        f'<section id="v{version.index}">'
+        f"<h2>Version {version.index}: {version.heading}</h2>"
         f'<div class="legend">'
         f'<span class="chip chip-blue">blocks {readout["block_count"]}</span>'
         f'<span class="chip chip-blue">cells {readout["data_quality"]["cells"]}</span>'  # type: ignore[index]
@@ -582,30 +695,38 @@ def _version_section(
         f'<span class="chip">margins (annotation): task_success ±{margins["task_success_worthwhile_pp"]} pp'  # type: ignore[index]
         f' · regression harm {margins["regression_harm_pp"]} pp</span>'  # type: ignore[index]
         "</div>"
-        f"<h3>Runs</h3>{_runs_table(readout, records)}"
+        f"<h3>Runs</h3>{_runs_table(version.records)}"
         f"<h3>Task-success rate by condition</h3>{_legend(conditions)}{_rate_chart(readout)}"
         f"<h3>Task success by scenario</h3>{_matrix_table(readout)}"
         f"<h3>Paired task-success differences (pp, 95% interval)</h3>"
         f"{_pair_whisker_chart(readout)}"
         f"<h3>Paired contrasts (pooled over blocks)</h3>{_pairs_table(readout)}"
-        f"{_cells_table(records)}"
+        f"{_cells_table(version.records)}"
+        f"{_internal_identities(version)}"
         "</section>"
     )
 
 
-def build_dashboard(paths: list[Path], title: str) -> str:
+def build_dashboard(
+    paths: list[Path], title: str, names_path: Path | None = None
+) -> str:
     if not paths:
         raise DashboardError("at least one run record is required")
-    versions: list[tuple[str, dict[str, object], dict[str, object]]] = []
+    groups = _grouped(paths)
+    labels = _resolve_names(
+        _load_names(names_path), [manifest for manifest, _, _ in groups]
+    )
+    versions: list[_Version] = []
     sections = []
-    for index, (manifest, group_paths, records) in enumerate(_grouped(paths), start=1):
+    for index, (manifest, group_paths, records) in enumerate(groups, start=1):
         readout = build_readout(group_paths)
-        versions.append((manifest, readout, _version_totals(readout, records)))
-        sections.append(_version_section(index, manifest, readout, records))
+        version = _Version(index, manifest, labels.get(manifest), readout, records)
+        versions.append(version)
+        sections.append(_version_section(version))
     links = ['<a href="#overview">Overview</a>']
     links.extend(
-        f'<a href="#v{index}">v{index} ·…{html.escape(manifest[-12:])}</a>'
-        for index, (manifest, _, _) in enumerate(versions, start=1)
+        f'<a href="#v{version.index}">{html.escape(version.display)}</a>'
+        for version in versions
     )
     if len(versions) > 1:
         links.append('<a href="#comparison">Comparison</a>')
@@ -632,9 +753,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("records", nargs="+", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--title", default="Functional V1 results")
+    parser.add_argument(
+        "--names",
+        type=Path,
+        default=None,
+        help="JSON file mapping manifest-identity prefixes to display labels",
+    )
     arguments = parser.parse_args(argv)
     try:
-        page = build_dashboard(list(arguments.records), str(arguments.title))
+        page = build_dashboard(
+            list(arguments.records), str(arguments.title), arguments.names
+        )
         arguments.output.write_text(page, encoding="utf-8")
     except (DashboardError, ReadoutError, OSError) as error:
         print(f"dashboard: {error}", file=sys.stderr)
