@@ -157,10 +157,14 @@ def _request_completion(request: RawApiRequest) -> tuple[int, bytes]:
             f"{path_prefix}/chat/completions",
             body=body,
             headers={
+                # http.client adds only Host and Content-Length; the
+                # provider's WAF tarpits requests that don't look like a
+                # normal API client (issue #99: missing UA/Accept). Send the
+                # full, honest header shape of a JSON API client.
+                "Accept": "application/json",
+                "Accept-Encoding": "identity",
                 "Authorization": f"Bearer {request.proxy_token}",
                 "Content-Type": "application/json",
-                # http.client sends no User-Agent by default; the provider's
-                # WAF tarpits UA-less requests (issue #99). Identify honestly.
                 "User-Agent": "model-benchmark-raw-api/1",
             },
         )
