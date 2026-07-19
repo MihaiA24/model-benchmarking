@@ -119,6 +119,36 @@ def test_versions_render_as_one_section_per_manifest(tmp_path: Path) -> None:
     assert ("a" * 64) in page and ("c" * 64) in page
 
 
+def test_charts_render_as_inline_svg_per_version(tmp_path: Path) -> None:
+    page = build_dashboard(_two_runs(tmp_path), "Results")
+
+    # Rate bars + whisker chart, all inline SVG, zero JavaScript.
+    assert page.count("<svg ") == 2
+    assert "Task-success rate by condition" in page
+    assert "Paired task-success differences" in page
+    assert "<script" not in page
+    # omp pooled 2/2 on python out of 6 blocks -> labeled 2/6 (33%).
+    assert "2/6 (33%)" in page
+    assert 'class="legend"' in page
+
+
+def test_cross_version_comparison_appears_only_with_two_versions(
+    tmp_path: Path,
+) -> None:
+    first = _two_runs(tmp_path, "functional-v1-manifest:sha256:" + "a" * 64)
+
+    single = build_dashboard(first, "Results")
+    assert "Cross-version comparison" not in single
+
+    second = _two_runs(tmp_path, "functional-v1-manifest:sha256:" + "c" * 64)
+    page = build_dashboard(first + second, "Results")
+
+    assert "Cross-version comparison" in page
+    assert "display-only" in page
+    assert "omp · v1" in page and "omp · v2" in page
+    assert 'href="#comparison"' in page
+
+
 def test_hostile_record_fields_are_escaped(tmp_path: Path) -> None:
     record = _record("0198-a", manifest="functional-v1-manifest:sha256:" + "a" * 64)
     record["cells"][0]["reason_code"] = "<script>alert(1)</script>"  # type: ignore[index]
