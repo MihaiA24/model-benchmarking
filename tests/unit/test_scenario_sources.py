@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import io
 import json
-import subprocess
-import sys
 import tarfile
 from pathlib import Path
 
@@ -17,18 +15,7 @@ from model_benchmark.declarations.scenario_sources import (
     normalized_tree_digest,
 )
 
-
-CLI = Path(sys.executable).with_name("model-benchmark-scenario")
-
-
-def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [CLI, "--json", *arguments],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
+from conftest import run_cli as _run
 
 
 def _artifact(path: Path) -> str:

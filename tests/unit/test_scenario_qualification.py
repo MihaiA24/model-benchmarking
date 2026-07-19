@@ -4,7 +4,6 @@ import base64
 import hashlib
 import json
 import subprocess
-import sys
 import threading
 from copy import deepcopy
 from decimal import Decimal
@@ -31,20 +30,11 @@ from model_benchmark.runtime.scenario_qualification import (
     _vector,
 )
 
+from conftest import run_cli as _run
+
 
 ROOT = Path(__file__).resolve().parents[2]
-CLI = Path(sys.executable).with_name("model-benchmark-scenario")
 REGISTRY = SchemaRegistry(ROOT / "schemas")
-
-
-def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [CLI, "--json", *arguments],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
 
 
 def test_numeric_projection_includes_every_declared_domain_score() -> None:

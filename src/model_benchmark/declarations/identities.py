@@ -4,6 +4,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import ClassVar, Self
 
 from model_benchmark.declarations.canonical import canonical_json_bytes
 
@@ -88,65 +89,35 @@ class TypedDigest:
 
 
 @dataclass(frozen=True)
-class ScenarioIdentity:
+class _VersionedIdentity:
     version: str
     digest: TypedDigest
+
+    _KIND: ClassVar[DigestKind]
 
     def __post_init__(self) -> None:
         _validate_version(self.version)
-        if self.digest.kind is not DigestKind.SCENARIO:
-            raise IdentityError("ScenarioIdentity requires a scenario digest")
-
-    @classmethod
-    def from_payload(cls, version: str, payload: object) -> "ScenarioIdentity":
-        _validate_version(version)
-        return cls(
-            version=version,
-            digest=TypedDigest.from_bytes(
-                DigestKind.SCENARIO, canonical_json_bytes(payload)
-            ),
-        )
-
-
-@dataclass(frozen=True)
-class VerifierIdentity:
-    version: str
-    digest: TypedDigest
-
-    def __post_init__(self) -> None:
-        _validate_version(self.version)
-        if self.digest.kind is not DigestKind.VERIFIER:
-            raise IdentityError("VerifierIdentity requires a verifier digest")
-
-    @classmethod
-    def from_payload(cls, version: str, payload: object) -> "VerifierIdentity":
-        _validate_version(version)
-        return cls(
-            version=version,
-            digest=TypedDigest.from_bytes(
-                DigestKind.VERIFIER, canonical_json_bytes(payload)
-            ),
-        )
-
-
-@dataclass(frozen=True)
-class ScoreContractIdentity:
-    version: str
-    digest: TypedDigest
-
-    def __post_init__(self) -> None:
-        _validate_version(version=self.version)
-        if self.digest.kind is not DigestKind.SCORE_CONTRACT:
+        if self.digest.kind is not self._KIND:
             raise IdentityError(
-                "ScoreContractIdentity requires a score-contract digest"
+                f"{type(self).__name__} requires a {self._KIND.value} digest"
             )
 
     @classmethod
-    def from_payload(cls, version: str, payload: object) -> "ScoreContractIdentity":
+    def from_payload(cls, version: str, payload: object) -> Self:
         _validate_version(version)
         return cls(
             version=version,
-            digest=TypedDigest.from_bytes(
-                DigestKind.SCORE_CONTRACT, canonical_json_bytes(payload)
-            ),
+            digest=TypedDigest.from_bytes(cls._KIND, canonical_json_bytes(payload)),
         )
+
+
+class ScenarioIdentity(_VersionedIdentity):
+    _KIND = DigestKind.SCENARIO
+
+
+class VerifierIdentity(_VersionedIdentity):
+    _KIND = DigestKind.VERIFIER
+
+
+class ScoreContractIdentity(_VersionedIdentity):
+    _KIND = DigestKind.SCORE_CONTRACT

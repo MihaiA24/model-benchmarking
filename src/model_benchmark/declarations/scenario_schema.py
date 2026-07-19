@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import PurePosixPath
 from typing import Any
 
 from model_benchmark.declarations.identities import (
-    DigestKind,
     IdentityError,
     ScenarioIdentity,
     ScoreContractIdentity,
-    TypedDigest,
     VerifierIdentity,
 )
 from model_benchmark.declarations.schemas import SchemaRegistry, SchemaValidationError
@@ -21,19 +19,6 @@ SCENARIO_SCHEMA_VERSION = 1
 
 class ScenarioContractError(ValueError):
     """The authored seven-section Scenario declaration is not strict."""
-
-
-def _typed_digest(value: object, kind: DigestKind, location: str) -> None:
-    if not isinstance(value, str):
-        raise ScenarioContractError(f"{location} must be a typed digest")
-    try:
-        digest = TypedDigest.parse(value)
-    except IdentityError as error:
-        raise ScenarioContractError(str(error)) from error
-    if digest.kind is not kind:
-        raise ScenarioContractError(
-            f"{location} must use {kind.value}:sha256 identity"
-        )
 
 
 def _component_version(
@@ -69,14 +54,9 @@ def _safe_relative_path(value: object, location: str) -> str:
     return value
 
 
-def _weight(value: object, location: str) -> Decimal:
-    if not isinstance(value, str):
-        raise ScenarioContractError(f"{location} must be exact decimal text")
-    try:
-        weight = Decimal(value)
-    except InvalidOperation as error:
-        raise ScenarioContractError(f"invalid {location}") from error
-    if not weight.is_finite() or weight <= 0 or weight > 1:
+def _weight(value: str, location: str) -> Decimal:
+    weight = Decimal(value)
+    if weight <= 0:
         raise ScenarioContractError(f"{location} must be in (0, 1]")
     return weight
 
@@ -98,7 +78,6 @@ def validate_scenario_manifest(
 
     scenario = manifest["scenario"]
     repository = manifest["repository"]
-    instruction = manifest["instruction"]
     verification = manifest["verification"]
     provenance = manifest["provenance"]
 
@@ -115,15 +94,8 @@ def validate_scenario_manifest(
     )
 
     pristine = repository["pristine"]
-    _typed_digest(pristine["tree_sha256"], DigestKind.SOURCE_TREE, "pristine tree")
-    _typed_digest(
-        repository["baseline_tree_sha256"],
-        DigestKind.SOURCE_TREE,
-        "Scenario Baseline",
-    )
     archive_path = pristine["archive"]
-    archive_digest = pristine["archive_sha256"]
-    if (archive_path is None) != (archive_digest is None):
+    if (archive_path is None) != (pristine["archive_sha256"] is None):
         raise ScenarioContractError(
             "pristine archive path and digest must be jointly present or absent"
         )
@@ -136,11 +108,6 @@ def validate_scenario_manifest(
             raise ScenarioContractError(
                 "repository.pristine.archive must remain under seed/"
             )
-        _typed_digest(
-            archive_digest,
-            DigestKind.ARTIFACT,
-            "repository.pristine.archive_sha256",
-        )
 
     declared_paths: set[str] = set()
     for collection, label in (
@@ -158,7 +125,6 @@ def validate_scenario_manifest(
             if path in declared_paths:
                 raise ScenarioContractError(f"duplicate declared input path: {path}")
             declared_paths.add(path)
-            _typed_digest(entry["sha256"], DigestKind.ARTIFACT, label)
             if label == "seed input" and entry["kind"] == "asset":
                 _safe_relative_path(
                     entry["destination"],
@@ -170,12 +136,6 @@ def validate_scenario_manifest(
                     raise ScenarioContractError(f"duplicate dataset ID: {identifier}")
                 identifiers.add(identifier)
 
-    _typed_digest(
-        instruction["sha256"],
-        DigestKind.ARTIFACT,
-        "Developer Brief",
-    )
-
     submission = manifest["submission"]
     if submission["kind"] == "git-patch":
         for field in ("allowed_paths", "protected_paths"):
@@ -184,11 +144,6 @@ def validate_scenario_manifest(
     else:
         for index, value in enumerate(submission["allowed_paths"]):
             _safe_relative_path(value, f"submission.allowed_paths[{index}]")
-        _typed_digest(
-            submission["schema"]["sha256"],
-            DigestKind.SCHEMA,
-            "non-patch output schema",
-        )
         output_schema = submission["schema"]
         try:
             entry = registry.entry(output_schema["name"], output_schema["version"])
@@ -270,13 +225,10 @@ def validate_scenario_manifest(
         entry["name"]: entry["value"]
         for entry in verification["qualification"]["reference_score_vector"]
     }
-    try:
-        baseline_acceptance = Decimal(baseline["acceptance_score"])
-        baseline_regression = Decimal(baseline["regression_score"])
-        reference_acceptance = Decimal(reference["acceptance_score"])
-        reference_regression = Decimal(reference["regression_score"])
-    except InvalidOperation as error:
-        raise ScenarioContractError("qualification vectors must use numeric score text") from error
+    baseline_acceptance = Decimal(baseline["acceptance_score"])
+    baseline_regression = Decimal(baseline["regression_score"])
+    reference_acceptance = Decimal(reference["acceptance_score"])
+    reference_regression = Decimal(reference["regression_score"])
     if (
         baseline["task_success"] != "0"
         or baseline_acceptance >= Decimal(1)

@@ -25,6 +25,45 @@ class SchemaEntry:
     sha256: str
 
 
+_ENTRY_PROPERTIES = {
+    "file": {"pattern": r"^[^/]+\.schema\.json$", "type": "string"},
+    "name": {"minLength": 1, "type": "string"},
+    "sha256": {"type": "string"},
+    "version": {"minimum": 1, "type": "integer"},
+}
+_CATALOG_VALIDATOR = Draft202012Validator(
+    {
+        "additionalProperties": False,
+        "properties": {
+            "canonicalization": {
+                "additionalProperties": False,
+                "properties": {
+                    **_ENTRY_PROPERTIES,
+                    "file": {"pattern": r"^[^/]+$", "type": "string"},
+                    "name": {"const": "model-benchmark/canonical-json"},
+                    "version": {"const": 1},
+                },
+                "required": ["file", "name", "sha256", "version"],
+                "type": "object",
+            },
+            "schemas": {
+                "items": {
+                    "additionalProperties": False,
+                    "properties": _ENTRY_PROPERTIES,
+                    "required": ["file", "name", "sha256", "version"],
+                    "type": "object",
+                },
+                "minItems": 1,
+                "type": "array",
+            },
+            "version": {"const": 1},
+        },
+        "required": ["canonicalization", "schemas", "version"],
+        "type": "object",
+    }
+)
+
+
 class SchemaRegistry:
     """Strict loader for the repository's published schema catalog."""
 
@@ -34,44 +73,18 @@ class SchemaRegistry:
             catalog_value = load_canonical_json((self._root / "catalog.json").read_bytes())
         except (OSError, CanonicalizationError) as error:
             raise SchemaValidationError(f"invalid schema catalog: {error}") from error
-        if not isinstance(catalog_value, dict) or set(catalog_value) != {
-            "canonicalization",
-            "schemas",
-            "version",
-        }:
-            raise SchemaValidationError("schema catalog has unknown or missing fields")
-        if catalog_value["version"] != 1:
-            raise SchemaValidationError("unsupported schema catalog version")
-        raw_canonicalization = catalog_value["canonicalization"]
-        if not isinstance(raw_canonicalization, dict) or set(raw_canonicalization) != {
-            "file",
-            "name",
-            "sha256",
-            "version",
-        }:
-            raise SchemaValidationError("canonicalization catalog entry is not strict")
-        if (
-            not isinstance(raw_canonicalization["file"], str)
-            or not isinstance(raw_canonicalization["name"], str)
-            or not isinstance(raw_canonicalization["sha256"], str)
-            or not isinstance(raw_canonicalization["version"], int)
-            or isinstance(raw_canonicalization["version"], bool)
-        ):
+        catalog_error = next(_CATALOG_VALIDATOR.iter_errors(catalog_value), None)
+        if catalog_error is not None:
             raise SchemaValidationError(
-                "canonicalization catalog entry contains invalid values"
+                f"invalid schema catalog: {catalog_error.message}"
             )
+        raw_canonicalization = catalog_value["canonicalization"]
         canonicalization = SchemaEntry(
             name=raw_canonicalization["name"],
             version=raw_canonicalization["version"],
             file=raw_canonicalization["file"],
             sha256=raw_canonicalization["sha256"],
         )
-        if (
-            canonicalization.name != "model-benchmark/canonical-json"
-            or canonicalization.version != 1
-            or Path(canonicalization.file).name != canonicalization.file
-        ):
-            raise SchemaValidationError("unsupported canonicalization identity")
         try:
             canonicalization_bytes = (
                 self._root / canonicalization.file
@@ -95,37 +108,16 @@ class SchemaRegistry:
         ):
             raise SchemaValidationError("canonicalization contract identity mismatch")
         self._canonicalization = canonicalization
-        raw_entries = catalog_value["schemas"]
-        if not isinstance(raw_entries, list) or not raw_entries:
-            raise SchemaValidationError("schema catalog must contain schemas")
 
         entries: list[SchemaEntry] = []
         validators: dict[tuple[str, int], Draft202012Validator] = {}
-        for raw_entry in raw_entries:
-            if not isinstance(raw_entry, dict) or set(raw_entry) != {
-                "file",
-                "name",
-                "sha256",
-                "version",
-            }:
-                raise SchemaValidationError("schema catalog entry is not strict")
-            file = raw_entry["file"]
-            name = raw_entry["name"]
-            version = raw_entry["version"]
-            sha256 = raw_entry["sha256"]
-            if (
-                not isinstance(file, str)
-                or Path(file).name != file
-                or not file.endswith(".schema.json")
-                or not isinstance(name, str)
-                or not name
-                or not isinstance(version, int)
-                or isinstance(version, bool)
-                or version < 1
-                or not isinstance(sha256, str)
-            ):
-                raise SchemaValidationError("schema catalog entry contains invalid values")
-            entry = SchemaEntry(name=name, version=version, file=file, sha256=sha256)
+        for raw_entry in catalog_value["schemas"]:
+            entry = SchemaEntry(
+                name=raw_entry["name"],
+                version=raw_entry["version"],
+                file=raw_entry["file"],
+                sha256=raw_entry["sha256"],
+            )
             key = (entry.name, entry.version)
             if key in validators:
                 raise SchemaValidationError(f"duplicate schema identity: {key}")
@@ -134,20 +126,30 @@ class SchemaRegistry:
                 schema = load_canonical_json(schema_bytes)
                 digest = str(TypedDigest.from_bytes(DigestKind.SCHEMA, schema_bytes))
             except (OSError, CanonicalizationError) as error:
-                raise SchemaValidationError(f"invalid published schema {file}: {error}") from error
+                raise SchemaValidationError(
+                    f"invalid published schema {entry.file}: {error}"
+                ) from error
             if digest != entry.sha256:
-                raise SchemaValidationError(f"published schema digest mismatch: {file}")
+                raise SchemaValidationError(
+                    f"published schema digest mismatch: {entry.file}"
+                )
             if not isinstance(schema, dict):
-                raise SchemaValidationError(f"published schema is not an object: {file}")
+                raise SchemaValidationError(
+                    f"published schema is not an object: {entry.file}"
+                )
             if (
-                schema.get("x-model-benchmark-schema-name") != name
-                or schema.get("x-model-benchmark-schema-version") != version
+                schema.get("x-model-benchmark-schema-name") != entry.name
+                or schema.get("x-model-benchmark-schema-version") != entry.version
             ):
-                raise SchemaValidationError(f"published schema identity mismatch: {file}")
+                raise SchemaValidationError(
+                    f"published schema identity mismatch: {entry.file}"
+                )
             try:
                 Draft202012Validator.check_schema(schema)
             except SchemaError as error:
-                raise SchemaValidationError(f"invalid JSON Schema {file}: {error}") from error
+                raise SchemaValidationError(
+                    f"invalid JSON Schema {entry.file}: {error}"
+                ) from error
             entries.append(entry)
             validators[key] = Draft202012Validator(schema)
 

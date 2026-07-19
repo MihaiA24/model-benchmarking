@@ -14,18 +14,7 @@ import yaml
 from model_benchmark.declarations.scenario_locks import _dockerfile_images
 from model_benchmark.evidence.capture import CaptureRejected, _read_regular_no_follow
 
-
-CLI = Path(sys.executable).with_name("model-benchmark-scenario")
-
-
-def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [CLI, "--json", *arguments],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
+from conftest import run_cli as _run
 
 
 def test_dockerfile_inventory_includes_every_external_stage_source(tmp_path: Path) -> None:
