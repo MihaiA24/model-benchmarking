@@ -1,1 +1,1 @@
-f3ba5862bcf1d09f491f08ab0401fe98863776ac8e42efa08e03baaa34b74eb5  artifacts/acceptance/issue-32/verification.json
+62de011df93e8fbecb6b91027bba94632b46b52d4d757bc7acaf22eefed9346f  artifacts/acceptance/issue-32/verification.json
