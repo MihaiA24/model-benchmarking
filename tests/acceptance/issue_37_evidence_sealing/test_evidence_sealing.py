@@ -12,7 +12,6 @@ from model_benchmark.runtime.execution import NativeFunctionalV1Runtime
 from model_benchmark.runtime.functional_v1 import (
     CELL_SCHEDULE,
     FunctionalV1Home,
-    OperatorContractRuntime,
     RunWorkspace,
 )
 
@@ -189,7 +188,7 @@ def test_full_run_drains_to_bundled_terminals_and_sealed_complete_record(
     assert result.payload["state"] == "complete"
     assert result.payload["validity"] == "valid"
 
-    inspected = OperatorContractRuntime(home).inspect(workspace.run_id)
+    inspected = NativeFunctionalV1Runtime(home).inspect(workspace.run_id)
     assert inspected.exit_code == 0
     lines = inspected.human.splitlines()
     assert lines[0].startswith("SCENARIO | CONDITION | DISPOSITION | TASK")

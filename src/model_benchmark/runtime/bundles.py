@@ -8,7 +8,7 @@ import stat
 import subprocess
 import sys
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -476,14 +476,18 @@ def _mandatory_paths(
     return tuple(mandatory)
 
 
+def _regular_files(root: Path) -> Iterator[Path]:
+    for path in sorted(root.rglob("*")):
+        if stat.S_ISREG(os.lstat(path).st_mode):
+            yield path
+
+
 def _scan_and_redact(root: Path, secrets: tuple[bytes, ...]) -> bool:
     hit = False
     live_secrets = tuple(secret for secret in secrets if secret)
     if not live_secrets:
         return False
-    for path in sorted(root.rglob("*")):
-        if not stat.S_ISREG(os.lstat(path).st_mode):
-            continue
+    for path in _regular_files(root):
         data = path.read_bytes()
         redacted = data
         for secret in live_secrets:
@@ -498,9 +502,7 @@ def _scan_and_redact(root: Path, secrets: tuple[bytes, ...]) -> bool:
 
 
 def _assert_redacted(root: Path, secrets: tuple[bytes, ...]) -> None:
-    for path in sorted(root.rglob("*")):
-        if not stat.S_ISREG(os.lstat(path).st_mode):
-            continue
+    for path in _regular_files(root):
         data = path.read_bytes()
         if any(secret and secret in data for secret in secrets):
             raise RuntimeError(f"secret survived redaction in {path}")
@@ -508,9 +510,7 @@ def _assert_redacted(root: Path, secrets: tuple[bytes, ...]) -> None:
 
 def _staged_regular_files(staging: Path) -> set[str]:
     return {
-        path.relative_to(staging).as_posix()
-        for path in staging.rglob("*")
-        if stat.S_ISREG(os.lstat(path).st_mode)
+        path.relative_to(staging).as_posix() for path in _regular_files(staging)
     }
 
 

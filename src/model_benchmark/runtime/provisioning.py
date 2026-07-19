@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import tomllib
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -77,6 +78,50 @@ def _canonical_repo_digest(reference: str) -> str:
     return f"{repository}@{digest}"
 
 
+def _provisioning_error(message: str) -> ScenarioPackageError:
+    return ScenarioPackageError("provisioning-runtime-failed", message)
+
+
+def run_captured_command(
+    command: Sequence[str],
+    *,
+    timeout: int,
+    environment: Mapping[str, str] | None = None,
+    check: bool = True,
+    failure_prefix: str,
+    error: Callable[[str], Exception],
+) -> subprocess.CompletedProcess[str]:
+    try:
+        completed = subprocess.run(
+            list(command),
+            env=None if environment is None else dict(environment),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as failure:
+        raise error(str(failure)) from failure
+    if check and completed.returncode != 0:
+        detail = (completed.stderr.strip() or completed.stdout.strip())[-2000:]
+        raise error(f"{failure_prefix} ({completed.returncode}): {detail}")
+    return completed
+
+
+def decode_json_stdout(
+    completed: subprocess.CompletedProcess[str],
+    *,
+    label: str,
+    error: Callable[[str], Exception],
+) -> Any:
+    try:
+        return json.loads(completed.stdout)
+    except json.JSONDecodeError as failure:
+        raise error(f"invalid {label}") from failure
+
+
 def _docker(
     arguments: list[str],
     *,
@@ -88,32 +133,17 @@ def _docker(
     if context is not None:
         command.extend(["--context", context])
     command.extend(arguments)
-    try:
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ScenarioPackageError("provisioning-runtime-failed", str(error)) from error
-    if check and completed.returncode != 0:
-        detail = (completed.stderr.strip() or completed.stdout.strip())[-2000:]
-        raise ScenarioPackageError(
-            "provisioning-runtime-failed",
-            f"Docker command failed ({completed.returncode}): {detail}",
-        )
-    return completed
+    return run_captured_command(
+        command,
+        timeout=timeout,
+        check=check,
+        failure_prefix="Docker command failed",
+        error=_provisioning_error,
+    )
 
 
 def _json_output(completed: subprocess.CompletedProcess[str], *, label: str) -> Any:
-    try:
-        return json.loads(completed.stdout)
-    except json.JSONDecodeError as error:
-        raise ScenarioPackageError(
-            "provisioning-runtime-failed", f"invalid {label}"
-        ) from error
+    return decode_json_stdout(completed, label=label, error=_provisioning_error)
 
 
 def load_target_config(path: Path, *, visibility: str) -> DockerTarget:
@@ -225,19 +255,24 @@ def _inspect_store(target: DockerTarget) -> dict[str, str]:
     }
 
 
-@contextmanager
-def acquire_store_lease(
-    target: DockerTarget, *, visibility: str
-) -> Iterator[StoreLease]:
+def _lease_paths(target: DockerTarget) -> tuple[dict[str, str], Path, Path, Path]:
     store = _inspect_store(target)
     root = (
         Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
         / "model-benchmark"
         / "provisioning-locks"
     )
-    root.mkdir(parents=True, exist_ok=True)
     key = hashlib.sha256(store["store_identity"].encode()).hexdigest()
-    with (root / f"{key}.lock").open("a+b") as handle:
+    return store, root, root / f"{key}.lock", root / f"{key}.visibility"
+
+
+@contextmanager
+def acquire_store_lease(
+    target: DockerTarget, *, visibility: str
+) -> Iterator[StoreLease]:
+    store, root, lock_path, binding = _lease_paths(target)
+    root.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
             if _inspect_store(target) != store:
@@ -245,7 +280,6 @@ def acquire_store_lease(
                     "provisioning-target-mismatch",
                     "Docker target changed while acquiring the provisioning lock",
                 )
-            binding = root / f"{key}.visibility"
             if binding.exists():
                 try:
                     bound_visibility = binding.read_text(encoding="utf-8").strip()
@@ -269,15 +303,7 @@ def acquire_store_lease(
 def acquire_store_read_lease(
     target: DockerTarget, *, visibility: str
 ) -> Iterator[StoreLease]:
-    store = _inspect_store(target)
-    root = (
-        Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-        / "model-benchmark"
-        / "provisioning-locks"
-    )
-    key = hashlib.sha256(store["store_identity"].encode()).hexdigest()
-    lock_path = root / f"{key}.lock"
-    binding = root / f"{key}.visibility"
+    store, _, lock_path, binding = _lease_paths(target)
     if not lock_path.is_file() or not binding.is_file():
         raise ScenarioPackageError(
             "preflight-store-mismatch",
@@ -474,12 +500,9 @@ def remove_project_images(lease: StoreLease, projects: set[str]) -> None:
                     )
 
 
-def project_runtime_images(
-    lease: StoreLease,
-    *,
-    project: str,
-    package: Path,
-) -> list[dict[str, object]]:
+def _project_images(
+    lease: StoreLease, project: str
+) -> Iterator[tuple[dict[str, object], object]]:
     completed = _docker(
         [
             "image",
@@ -491,7 +514,6 @@ def project_runtime_images(
         ],
         context=lease.target.context,
     )
-    by_role: dict[str, dict[str, object]] = {}
     for image_id in sorted(set(completed.stdout.splitlines())):
         if not image_id:
             continue
@@ -499,13 +521,24 @@ def project_runtime_images(
         if image is None:
             continue
         labels = image.pop("labels")
-        role = (
+        service = (
             labels.get("com.docker.compose.service")
             if isinstance(labels, dict)
             else None
         )
-        if role in {"main", "capture"}:
-            by_role["agent" if role == "main" else "capture"] = image
+        yield image, service
+
+
+def project_runtime_images(
+    lease: StoreLease,
+    *,
+    project: str,
+    package: Path,
+) -> list[dict[str, object]]:
+    by_role: dict[str, dict[str, object]] = {}
+    for image, service in _project_images(lease, project):
+        if service in {"main", "capture"}:
+            by_role["agent" if service == "main" else "capture"] = image
     if set(by_role) != {"agent", "capture"}:
         raise ScenarioPackageError(
             "provisioning-runtime-failed",
@@ -528,30 +561,9 @@ def project_single_runtime_image(
     project: str,
     package: Path,
 ) -> dict[str, object]:
-    completed = _docker(
-        [
-            "image",
-            "ls",
-            "--no-trunc",
-            "--quiet",
-            "--filter",
-            f"label=com.docker.compose.project={project}",
-        ],
-        context=lease.target.context,
-    )
-    images: list[dict[str, object]] = []
-    for image_id in sorted(set(completed.stdout.splitlines())):
-        if not image_id:
-            continue
-        image = _image_record(lease.target, image_id)
-        if image is None:
-            continue
-        labels = image.pop("labels")
-        if (
-            isinstance(labels, dict)
-            and labels.get("com.docker.compose.service") == "main"
-        ):
-            images.append(image)
+    images = [
+        image for image, service in _project_images(lease, project) if service == "main"
+    ]
     if len(images) != 1:
         raise ScenarioPackageError(
             "provisioning-runtime-failed",

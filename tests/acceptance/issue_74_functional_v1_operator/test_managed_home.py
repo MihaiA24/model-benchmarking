@@ -7,11 +7,11 @@ import pytest
 from model_benchmark.declarations.canonical import canonical_json_bytes
 from model_benchmark.declarations.functional_v1 import FunctionalV1Manifest
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
+from model_benchmark.runtime.execution import NativeFunctionalV1Runtime
 from model_benchmark.runtime.functional_v1 import (
     CELL_SCHEDULE,
     FunctionalV1Home,
     FunctionalV1HomeError,
-    OperatorContractRuntime,
 )
 
 
@@ -149,7 +149,7 @@ def test_sealed_run_is_immutable_complete_and_path_independent(
     assert sealed.value["unscheduled_cells"] == []
     assert str(home.root).encode() not in canonical_json_bytes(dict(sealed.value))
     assert home.sealed_run(workspace.run_id) == sealed
-    inspected = OperatorContractRuntime(home).inspect(workspace.run_id)
+    inspected = NativeFunctionalV1Runtime(home).inspect(workspace.run_id)
     assert inspected.exit_code == 0
     assert inspected.human.startswith(
         "SCENARIO | CONDITION | DISPOSITION | TASK | ACCEPT | REGRESS | "

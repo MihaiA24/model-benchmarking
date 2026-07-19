@@ -791,30 +791,6 @@ class RunWorkspace:
         return SealedRunRecord(identity=identity, value=value)
 
 
-class OperatorContractRuntime:
-    """Functional V1 native provisioning, preflight, and execution coordinator."""
-
-    def __init__(self, home: FunctionalV1Home) -> None:
-        from model_benchmark.runtime.execution import NativeFunctionalV1Runtime
-
-        self._native = NativeFunctionalV1Runtime(home)
-
-    def provision(self, manifest: FunctionalV1Manifest) -> CommandResult:
-        return self._native.provision(manifest)
-
-    def preflight(self, manifest: FunctionalV1Manifest) -> CommandResult:
-        return self._native.preflight(manifest)
-
-    def run(self, manifest: FunctionalV1Manifest) -> CommandResult:
-        return self._native.run(manifest)
-
-    def resume(self, run_id: str) -> CommandResult:
-        return self._native.resume(run_id)
-
-    def inspect(self, run_id: str) -> CommandResult:
-        return self._native.inspect(run_id)
-
-
 def _score_text(value: object) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -893,4 +869,6 @@ def _inspect_result(record: SealedRunRecord) -> CommandResult:
 
 
 def default_runtime(home: FunctionalV1Home) -> FunctionalV1Runtime:
-    return OperatorContractRuntime(home)
+    from model_benchmark.runtime.execution import NativeFunctionalV1Runtime
+
+    return NativeFunctionalV1Runtime(home)

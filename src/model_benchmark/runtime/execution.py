@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 from urllib.parse import urlsplit
 
 import yaml
@@ -59,7 +59,11 @@ from model_benchmark.runtime.functional_v1 import (
     _inspect_result,
     _load_canonical_object,
 )
-from model_benchmark.runtime.provisioning import preflight as preflight_scenario_package
+from model_benchmark.runtime.provisioning import (
+    decode_json_stdout,
+    preflight as preflight_scenario_package,
+    run_captured_command,
+)
 from model_benchmark.runtime.scenario_qualification import provision_scenario_package
 
 
@@ -124,19 +128,6 @@ class CellExecution:
     details: Mapping[str, object]
 
 
-class CellExecutor(Protocol):
-    def run_cell(
-        self,
-        cell: Mapping[str, object],
-        *,
-        run_id: str,
-        raw_root: Path,
-        cancel: threading.Event,
-    ) -> CellExecution: ...
-
-    def terminate_all(self) -> None: ...
-
-
 @dataclass(frozen=True)
 class PreflightProjection:
     report: Mapping[str, object]
@@ -171,6 +162,10 @@ def _check_pricing_window(manifest: FunctionalV1Manifest) -> None:
         )
 
 
+def _execution_error(message: str) -> ExecutionError:
+    return ExecutionError("execution-command-failed", message)
+
+
 def _command(
     arguments: Sequence[str],
     *,
@@ -178,27 +173,14 @@ def _command(
     environment: Mapping[str, str] | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    child_environment = dict(os.environ if environment is None else environment)
-    try:
-        completed = subprocess.run(
-            list(arguments),
-            env=child_environment,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ExecutionError("execution-command-failed", str(error)) from error
-    if check and completed.returncode != 0:
-        detail = (completed.stderr.strip() or completed.stdout.strip())[-2000:]
-        raise ExecutionError(
-            "execution-command-failed",
-            f"command failed ({completed.returncode}): {detail}",
-        )
-    return completed
+    return run_captured_command(
+        arguments,
+        timeout=timeout,
+        environment=environment,
+        check=check,
+        failure_prefix="command failed",
+        error=_execution_error,
+    )
 
 
 def _docker(
@@ -217,14 +199,11 @@ def _docker(
 
 
 def _json_stdout(completed: subprocess.CompletedProcess[str], label: str) -> Any:
-    try:
-        return json.loads(completed.stdout)
-    except json.JSONDecodeError as error:
-        raise ExecutionError("invalid-infrastructure", f"invalid {label}") from error
-
-
-def _typed_file_digest(path: Path) -> str:
-    return str(TypedDigest.from_bytes(DigestKind.ARTIFACT, path.read_bytes()))
+    return decode_json_stdout(
+        completed,
+        label=label,
+        error=lambda message: ExecutionError("invalid-infrastructure", message),
+    )
 
 
 def _tree_digest(root: Path) -> str:
@@ -1102,7 +1081,7 @@ def _probe_condition_mounts(
 class FunctionalV1Coordinator:
     """Fixed-order, fixed-width one-attempt scheduler."""
 
-    def __init__(self, workspace: RunWorkspace, executor: CellExecutor) -> None:
+    def __init__(self, workspace: RunWorkspace, executor: HarborCellExecutor) -> None:
         self.workspace = workspace
         self.executor = executor
 
@@ -2421,7 +2400,7 @@ class NativeFunctionalV1Runtime:
     def _execute_schedule(
         self,
         workspace: RunWorkspace,
-        executor: CellExecutor,
+        executor: HarborCellExecutor,
         schedule: Sequence[Mapping[str, object]],
     ) -> CommandResult:
         run_id = workspace.run_id

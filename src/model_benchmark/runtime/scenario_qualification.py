@@ -1035,7 +1035,7 @@ def _run_rejection_phase(
     ) as temporary:
         diagnostic = Path(temporary) / "package"
         shutil.copytree(package, diagnostic, symlinks=True)
-        _make_tree_writable(diagnostic)
+        _apply_tree_modes(diagnostic, read_only=False)
         (diagnostic / "scenario.lock.json").unlink(missing_ok=True)
         solution_path = diagnostic / "solution/solve.sh"
         solution_path.write_text(solution, encoding="utf-8")
@@ -1227,28 +1227,17 @@ _PHASE_RESULT_SCHEMA = "model-benchmark/qualification-phase-result/v1"
 _PHASE_AGGREGATE_SCHEMA = "model-benchmark/qualification-phase-aggregate/v1"
 
 
-def _make_tree_writable(root: Path) -> None:
-    for candidate in sorted(root.rglob("*")):
+def _apply_tree_modes(root: Path, *, read_only: bool) -> None:
+    full, plain = (0o555, 0o444) if read_only else (0o700, 0o600)
+    for candidate in sorted(root.rglob("*"), reverse=read_only):
         if candidate.is_symlink():
             continue
         if candidate.is_dir():
-            candidate.chmod(0o700)
+            candidate.chmod(full)
         elif candidate.is_file():
             executable = candidate.stat().st_mode & 0o111
-            candidate.chmod(0o700 if executable else 0o600)
-    root.chmod(0o700)
-
-
-def _make_tree_read_only(root: Path) -> None:
-    for candidate in sorted(root.rglob("*"), reverse=True):
-        if candidate.is_symlink():
-            continue
-        if candidate.is_dir():
-            candidate.chmod(0o555)
-        elif candidate.is_file():
-            executable = candidate.stat().st_mode & 0o111
-            candidate.chmod(0o555 if executable else 0o444)
-    root.chmod(0o555)
+            candidate.chmod(full if executable else plain)
+    root.chmod(full)
 
 
 def _worker_identity(private_key: Ed25519PrivateKey) -> str:
@@ -1843,7 +1832,7 @@ def measure_scenario_package(
             "invalid-infrastructure",
             "preflight package projection changed before qualification",
         )
-    _make_tree_read_only(execution_package)
+    _apply_tree_modes(execution_package, read_only=True)
 
     declared = manifest["verification"]["qualification"]
     domain_score_by_group = {
