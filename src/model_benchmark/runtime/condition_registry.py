@@ -16,7 +16,7 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Mapping
 
-from model_benchmark.runtime import hermes, omp, opencode, raw_api
+from model_benchmark.runtime import hermes, omp, opencode, raw_api_locks
 from model_benchmark.runtime.conditions import ConditionDefinition
 
 
@@ -76,9 +76,9 @@ CONDITIONS: Mapping[str, ConditionDefinition] = MappingProxyType(
         "raw-api": ConditionDefinition(
             name="raw-api",
             kind="baseline",
-            lock_path=raw_api.raw_api_condition_lock_path,
-            load_lock=raw_api.load_raw_api_condition_lock,
-            launch_shim_path=raw_api.raw_api_launch_shim_path,
+            lock_path=raw_api_locks.raw_api_condition_lock_path,
+            load_lock=raw_api_locks.load_raw_api_condition_lock,
+            launch_shim_path=raw_api_locks.raw_api_launch_shim_path,
             entrypoint_script=_DEFAULT_ENTRYPOINT_SCRIPT,
             requires_scenario_target=True,
         ),

@@ -130,6 +130,39 @@ def test_auth_replacement_and_streaming_preserve_bytes_and_observe_native_retrie
     assert b"private prompt bytes" not in evidence
 
 
+def test_ua_less_client_requests_gain_the_proxy_user_agent(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    # Cloudflare tarpits UA-less upstream requests (issue #99): the proxy
+    # must fill an honest User-Agent for stdlib clients that send none.
+    recording_provider.enqueue_json({"choices": [], "model": _MODEL})
+
+    with _proxy(recording_provider, tmp_path) as proxy:
+        assert _post(proxy, _request_body())[0] == 200
+
+    (request,) = recording_provider.requests
+    assert request.headers["user-agent"] == "model-benchmark-credential-proxy/1"
+
+
+def test_client_user_agents_pass_through_unmodified(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    recording_provider.enqueue_json({"choices": [], "model": _MODEL})
+
+    with _proxy(recording_provider, tmp_path) as proxy:
+        status, _ = _post(
+            proxy,
+            _request_body(),
+            headers={"User-Agent": "harness-client/7"},
+        )
+
+    assert status == 200
+    (request,) = recording_provider.requests
+    assert request.headers["user-agent"] == "harness-client/7"
+
+
 def test_route_model_and_auth_controls_fail_closed_before_provider(
     recording_provider: Any,
     tmp_path: Path,

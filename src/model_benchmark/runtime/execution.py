@@ -394,9 +394,17 @@ def _write_build_context(
             dockerfile = f"""FROM {base_image}\nUSER root\nCOPY model_benchmark/ /opt/model-benchmark-runtime/model_benchmark/\nENV PYTHONPATH=/opt/model-benchmark-runtime\nLABEL org.model-benchmark.image-content={content_digest}\n{instruction} [{json.dumps(entrypoint.split()[0])},{",".join(json.dumps(item) for item in entrypoint.split()[1:])}]\n"""
         else:
             entrypoint = "#!/bin/sh\nset -eu\n"
+            # $ROOT/lib64/ld-linux-x86-64.so.2 is an ABSOLUTE symlink on
+            # Debian bookworm (-> /lib/x86_64-linux-gnu/...): inside the
+            # scenario container it escapes the read-only image mount and
+            # execs the scenario image's own loader. Issue #99: on the
+            # temurin/noble Spring main that mixed a glibc 2.39 loader with
+            # the mounted 2.36 libraries and aborted with stack smashing
+            # before the first provider request. Point at the real ELF
+            # inside the mount so the runtime never leaves it.
             entrypoint += (
                 "ROOT=/opt/model-benchmark-condition\n"
-                "LOADER=$ROOT/lib64/ld-linux-x86-64.so.2\n"
+                "LOADER=$ROOT/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2\n"
                 "LIBRARY_PATH=$ROOT/lib/x86_64-linux-gnu:$ROOT/usr/lib/x86_64-linux-gnu:$ROOT/usr/local/lib\n"
             )
             entrypoint += str(CONDITION_REGISTRY[str(condition)].entrypoint_script)

@@ -621,6 +621,13 @@ class CredentialProxy:
                 }
                 headers["Authorization"] = f"Bearer {state.config.real_api_key}"
                 headers["Content-Length"] = str(len(body))
+                # Cloudflare's WAF tarpits requests with a missing or
+                # python-default User-Agent (403 error 1010, issue #99);
+                # harness clients send their own UA, which passes through
+                # untouched above. Only fill the gap for UA-less clients
+                # (e.g. the stdlib raw-api materializer).
+                if not any(name.lower() == "user-agent" for name in headers):
+                    headers["User-Agent"] = "model-benchmark-credential-proxy/1"
                 try:
                     connection.request("POST", self.path, body=body, headers=headers)
                     response = connection.getresponse()
@@ -776,16 +783,26 @@ class CredentialProxy:
         return Handler
 
 
+# TTFB budget for one upstream request. Non-streaming completions (the Raw
+# API condition) hold the response until the full generation exists: a
+# realistic single-file generation measured 76s to first byte (issue #99),
+# so 30s silently killed legitimate provider work. Bounded well under the
+# 1800s trial wall clock.
+_UPSTREAM_TIMEOUT_SECONDS = 600
+
+
 def _connection(parsed: SplitResult) -> http.client.HTTPConnection:
     port = parsed.port
     if parsed.scheme == "https":
         return http.client.HTTPSConnection(
             parsed.hostname,
             port or 443,
-            timeout=30,
+            timeout=_UPSTREAM_TIMEOUT_SECONDS,
             context=ssl.create_default_context(),
         )
-    return http.client.HTTPConnection(parsed.hostname, port or 80, timeout=30)
+    return http.client.HTTPConnection(
+        parsed.hostname, port or 80, timeout=_UPSTREAM_TIMEOUT_SECONDS
+    )
 
 
 def credential_fingerprint_forbidden(_credential: str) -> None:

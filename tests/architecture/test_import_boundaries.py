@@ -167,12 +167,8 @@ def _package_init_files(path: Path) -> list[Path]:
     return inits
 
 
-def test_credential_proxy_service_import_closure_is_stdlib_only() -> None:
-    # The sealed credential-proxy image is a bare Python base plus the copied
-    # model_benchmark tree: no third-party distribution exists inside it, so
-    # any non-stdlib import in the service's closure crashes the container
-    # before it can serve /healthz.
-    pending = [SOURCE_ROOT / "runtime/credential_proxy_service.py"]
+def _stdlib_only_closure_violations(entry: Path) -> list[str]:
+    pending = [entry]
     seen: set[Path] = set()
     violations: list[str] = []
     while pending:
@@ -190,4 +186,26 @@ def test_credential_proxy_service_import_closure_is_stdlib_only() -> None:
                 continue
             if top not in sys.stdlib_module_names:
                 violations.append(f"{path.relative_to(ROOT)}: {imported}")
-    assert violations == []
+    return violations
+
+
+def test_credential_proxy_service_import_closure_is_stdlib_only() -> None:
+    # The sealed credential-proxy image is a bare Python base plus the copied
+    # model_benchmark tree: no third-party distribution exists inside it, so
+    # any non-stdlib import in the service's closure crashes the container
+    # before it can serve /healthz.
+    assert _stdlib_only_closure_violations(
+        SOURCE_ROOT / "runtime/credential_proxy_service.py"
+    ) == []
+
+
+def test_condition_image_import_closure_is_stdlib_only() -> None:
+    # The condition entrypoint runs the copied model_benchmark tree with the
+    # mounted python's bare stdlib (PYTHONPATH=/opt/model-benchmark-runtime,
+    # no third-party distributions). Any heavier import in the closure of
+    # condition_image kills every default-entrypoint condition inside the
+    # cell before its first provider request — invisible to host-venv test
+    # runs, where the dependency exists (issue #99).
+    assert _stdlib_only_closure_violations(
+        SOURCE_ROOT / "runtime/condition_image.py"
+    ) == []

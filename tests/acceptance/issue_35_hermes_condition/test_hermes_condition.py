@@ -802,7 +802,9 @@ def test_mounted_launch_pins_the_hermes_environment_contract(
         "custom:model-benchmark-proxy"
     )
     arguments = captured["arguments"]
-    assert arguments[0] == str(mount / "lib64/ld-linux-x86-64.so.2")
+    # Real in-mount ELF, not the lib64 symlink (issue #99: absolute glibc
+    # symlinks escape the image mount into the scenario container).
+    assert arguments[0] == str(mount / "usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2")
     assert arguments[1] == "--library-path"
     assert str(mount / "usr/bin/python3") in arguments
     assert str(hermes_root / ".venv/bin/hermes") in arguments

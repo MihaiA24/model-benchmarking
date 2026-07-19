@@ -22,7 +22,7 @@ from model_benchmark.declarations.canonical import (
     load_canonical_json,
 )
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
-from model_benchmark.runtime import condition_registry, hermes, raw_api
+from model_benchmark.runtime import condition_registry, hermes, raw_api_locks
 from model_benchmark.runtime.conditions import (
     HARNESS_CONDITIONS,
     ConditionAdapterError,
@@ -150,7 +150,9 @@ def test_raw_api_field_level_lock_mutation_changes_pinned_identity(
     lock[field] = _mutated(lock[field])
     mutated_path = tmp_path / "raw-api-mutated.condition.json"
     mutated_path.write_bytes(canonical_json_bytes(lock))
-    monkeypatch.setattr(raw_api, "raw_api_condition_lock_path", lambda: mutated_path)
+    monkeypatch.setattr(
+        raw_api_locks, "raw_api_condition_lock_path", lambda: mutated_path
+    )
     _, _, identity = definition.load_lock()
     assert identity.kind is DigestKind.FUNCTIONAL_V1_CONDITION
     assert identity != pinned_identity

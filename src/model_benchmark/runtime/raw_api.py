@@ -5,66 +5,36 @@ import json
 import os
 import stat
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any
 from urllib.parse import urlsplit
 
-from model_benchmark.declarations.canonical import (
-    CanonicalizationError,
-    canonical_json_bytes,
-    load_canonical_json,
-)
-from model_benchmark.declarations.identities import DigestKind, TypedDigest
-from model_benchmark.declarations.scenario_locks import project_resource_root
-from model_benchmark.runtime.conditions import (
-    ConditionAdapterError,
-    FinalRepositoryHandoff,
-)
+# This module is imported inside the sealed condition image, where only the
+# standard library and the copied model_benchmark tree exist. Anything with a
+# third-party closure (e.g. scenario_locks -> yaml) belongs in
+# raw_api_locks.py; tests/architecture pins this boundary.
+from model_benchmark.declarations.canonical import canonical_json_bytes
+from model_benchmark.runtime.conditions import FinalRepositoryHandoff
 
 
 _MAX_PROVIDER_ENVELOPE_OVERHEAD = 1024 * 1024
-
-
-def raw_api_condition_lock_path() -> Path:
-    path = (
-        project_resource_root("profiles", "published_profiles")
-        / "functional-v1"
-        / "raw-api-v1.condition.json"
-    )
-    if not path.is_file():
-        raise ConditionAdapterError(
-            "condition-lock-unavailable", "Raw API condition lock is unavailable"
-        )
-    return path
-
-
-def raw_api_launch_shim_path() -> Path:
-    path = Path(__file__).with_name("raw_api_launch.py")
-    if not path.is_file():
-        raise ConditionAdapterError(
-            "launch-shim-unavailable", "Raw API launch shim is unavailable"
-        )
-    return path
-
-
-def load_raw_api_condition_lock() -> tuple[bytes, Mapping[str, object], TypedDigest]:
-    try:
-        data = raw_api_condition_lock_path().read_bytes()
-        value = load_canonical_json(data)
-    except (OSError, CanonicalizationError) as error:
-        raise ConditionAdapterError("invalid-condition-lock", str(error)) from error
-    if not isinstance(value, dict):
-        raise ConditionAdapterError(
-            "invalid-condition-lock", "Raw API condition lock is not an object"
-        )
-    identity = TypedDigest.from_bytes(DigestKind.FUNCTIONAL_V1_CONDITION, data)
-    return data, MappingProxyType(value), identity
+# Worst-case ratio of SSE stream bytes to the content characters they carry
+# (each delta chunk wraps a few characters in ~200 bytes of JSON framing).
+_MAX_STREAM_EXPANSION = 64
 
 
 class RawApiError(ValueError):
     """The Raw API condition declaration is unsafe or internally inconsistent."""
+
+
+# The sealed Credential Proxy is reachable on loopback (conformance fixtures,
+# sealed-process qualification) or as the pinned compose service name that
+# execution.py wires into every live cell's MODEL_BENCHMARK_PROXY_BASE_URL.
+# Issue #99: live cells use the in-mesh route; loopback-only rejection made
+# every Raw API cell exit 78 before its one provider request.
+_ALLOWED_PROXY_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "credential-proxy"})
 
 
 @dataclass(frozen=True)
@@ -81,13 +51,13 @@ class RawApiRequest:
         parsed = urlsplit(self.proxy_base_url)
         if (
             parsed.scheme != "http"
-            or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}
+            or parsed.hostname not in _ALLOWED_PROXY_HOSTS
             or parsed.username is not None
             or parsed.password is not None
             or parsed.query
             or parsed.fragment
         ):
-            raise RawApiError("Raw API must use the loopback Credential Proxy route")
+            raise RawApiError("Raw API must use the sealed Credential Proxy route")
         if not self.proxy_token or not self.model:
             raise RawApiError("Raw API proxy token and model must be non-empty")
         try:
@@ -181,39 +151,88 @@ def _request_completion(request: RawApiRequest) -> tuple[int, bytes]:
                 },
             ],
             "model": request.model,
-            "stream": False,
+            # Streamed like every other condition (issue #99): a
+            # non-streaming completion is silent until the whole generation
+            # exists, and the cell's transparent egress relay drops
+            # HTTP connections whose response stays silent past ~15s.
+            # Still exactly one request; the deltas are assembled locally.
+            "stream": True,
         }
     )
-    connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=30)
+    connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=630)
+    if not _connect_with_retry(connection):
+        return 502, b""
     try:
         connection.request(
             "POST",
             f"{path_prefix}/chat/completions",
             body=body,
             headers={
+                # http.client adds only Host and Content-Length; the
+                # provider's WAF tarpits requests that don't look like a
+                # normal API client (issue #99: missing UA/Accept). Send the
+                # full, honest header shape of a streaming API client.
+                "Accept": "text/event-stream, application/json",
+                "Accept-Encoding": "identity",
                 "Authorization": f"Bearer {request.proxy_token}",
                 "Content-Type": "application/json",
+                "User-Agent": "model-benchmark-raw-api/1",
             },
         )
         response = connection.getresponse()
-        limit = request.max_content_bytes + _MAX_PROVIDER_ENVELOPE_OVERHEAD
-        response_body = response.read(limit + 1)
         status = response.status
+        # SSE wraps every few content characters in its own JSON chunk, so
+        # the stream is far larger than the assembled content it carries.
+        limit = (
+            request.max_content_bytes * _MAX_STREAM_EXPANSION
+            + _MAX_PROVIDER_ENVELOPE_OVERHEAD
+        )
+        response_body = bytearray()
+        while True:
+            chunk = response.read(65536)
+            if not chunk:
+                break
+            response_body += chunk
+            if len(response_body) > limit:
+                response.close()
+                return 413, b""
         response.close()
     except (OSError, http.client.HTTPException):
         return 502, b""
     finally:
         connection.close()
-    if len(response_body) > limit:
-        return 413, b""
-    return status, response_body
+    return status, bytes(response_body)
+
+
+# The Trial Cell's proxy route can lag behind the main container under
+# concurrent compose setup/teardown (issue #99: the raw-api cell always
+# starts while sibling cells tear down, and its single stdlib client has
+# no reconnect stack, unlike the harness runtimes). Retrying the local
+# TCP connect carries zero provider interaction, so the one-request
+# invariant is untouched.
+_CONNECT_RETRY_SECONDS = 60.0
+_CONNECT_RETRY_DELAY_SECONDS = 2.0
+
+
+def _connect_with_retry(connection: http.client.HTTPConnection) -> bool:
+    deadline = time.monotonic() + _CONNECT_RETRY_SECONDS
+    while True:
+        try:
+            connection.connect()
+            return True
+        except OSError:
+            connection.close()
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(_CONNECT_RETRY_DELAY_SECONDS)
 
 
 def _decode_provider_response(data: bytes) -> dict[str, object]:
-    value = json.loads(
-        data.decode("utf-8", errors="strict"),
-        object_pairs_hook=_unique_object,
-    )
+    text = data.decode("utf-8", errors="strict")
+    if text.lstrip().startswith("data:"):
+        value: object = _assemble_sse_envelope(text)
+    else:
+        value = json.loads(text, object_pairs_hook=_unique_object)
     if not isinstance(value, dict):
         raise RawApiError("invalid-provider-envelope")
     choices = value.get("choices")
@@ -236,6 +255,71 @@ def _decode_provider_response(data: bytes) -> dict[str, object]:
     if not isinstance(replacement["path"], str) or not isinstance(replacement["content"], str):
         raise RawApiError("invalid-materialization-envelope")
     return replacement
+
+
+def _assemble_sse_envelope(text: str) -> dict[str, object]:
+    """Fold an OpenAI-compatible SSE stream into one response envelope."""
+    role: str | None = None
+    refusal_parts: list[str] = []
+    content_parts: list[str] = []
+    saw_done = False
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if not line.startswith("data:"):
+            raise RawApiError("invalid-provider-envelope")
+        payload = line[len("data:"):].strip()
+        if payload == "[DONE]":
+            saw_done = True
+            continue
+        if saw_done:
+            raise RawApiError("invalid-provider-envelope")
+        chunk = json.loads(payload, object_pairs_hook=_unique_object)
+        if not isinstance(chunk, dict):
+            raise RawApiError("invalid-provider-envelope")
+        choices = chunk.get("choices")
+        if not isinstance(choices, list) or len(choices) > 1:
+            raise RawApiError("invalid-provider-envelope")
+        if not choices:
+            # Usage-only trailer chunks carry no choices.
+            continue
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            raise RawApiError("invalid-provider-envelope")
+        delta = choice.get("delta")
+        if delta is None:
+            continue
+        if not isinstance(delta, dict):
+            raise RawApiError("invalid-provider-envelope")
+        delta_role = delta.get("role")
+        if delta_role is not None:
+            if not isinstance(delta_role, str):
+                raise RawApiError("invalid-provider-envelope")
+            role = delta_role
+        delta_refusal = delta.get("refusal")
+        if delta_refusal is not None:
+            if not isinstance(delta_refusal, str):
+                raise RawApiError("invalid-provider-envelope")
+            refusal_parts.append(delta_refusal)
+        delta_content = delta.get("content")
+        if delta_content is not None:
+            if not isinstance(delta_content, str):
+                raise RawApiError("invalid-provider-envelope")
+            content_parts.append(delta_content)
+    if not saw_done:
+        raise RawApiError("invalid-provider-envelope")
+    return {
+        "choices": [
+            {
+                "message": {
+                    "content": "".join(content_parts),
+                    "refusal": "".join(refusal_parts) or None,
+                    "role": role or "assistant",
+                },
+            }
+        ],
+    }
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

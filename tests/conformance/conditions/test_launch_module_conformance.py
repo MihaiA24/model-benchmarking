@@ -11,11 +11,20 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
+
+import pytest
 
 from model_benchmark.declarations.canonical import load_canonical_json
+from model_benchmark.runtime.raw_api import (
+    RawApiError,
+    RawApiMaterializer,
+    RawApiRequest,
+)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _MODULE_SOURCE_PATH = "model_benchmark/runtime/raw_api_launch.py"
@@ -112,7 +121,7 @@ def test_launch_module_materializes_and_seals_delivery_evidence(
     body = request["body"]
     assert isinstance(body, dict)
     assert body["model"] == _MODEL
-    assert body["stream"] is False
+    assert body["stream"] is True
 
 
 def test_launch_module_reports_provider_failure_without_materializing(
@@ -167,3 +176,73 @@ def test_committed_condition_lock_pins_current_launch_module() -> None:
     artifact = lock["artifact"]
     assert isinstance(artifact, dict)
     assert artifact["digest"] == _module_identity()
+
+
+def test_materializer_accepts_the_sealed_in_mesh_proxy_route(
+    provider: tuple[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The live cell wiring (issue #99): http://credential-proxy:8080/<path>.
+
+    The loopback fixtures never exercised the in-mesh hostname, so the
+    loopback-only gate silently killed every live Raw API cell before its
+    one provider request. Route the pinned hostname at the scripted
+    provider and prove the full materialization path runs on it.
+    """
+    base_url, script = provider
+    script.enqueue_envelope(path=_TARGET, content="print('after')\n")
+    repository = _repository(tmp_path)
+    port = urlsplit(base_url).port
+    original_getaddrinfo = socket.getaddrinfo
+
+    def _in_mesh_getaddrinfo(host: object, *arguments: object, **keywords: object):
+        resolved = "127.0.0.1" if host == "credential-proxy" else host
+        return original_getaddrinfo(resolved, *arguments, **keywords)
+
+    monkeypatch.setattr(socket, "getaddrinfo", _in_mesh_getaddrinfo)
+
+    result = RawApiMaterializer().materialize(
+        RawApiRequest(
+            proxy_base_url=f"http://credential-proxy:{port}/zen/go/v1",
+            proxy_token=_TOKEN,
+            model=_MODEL,
+            developer_brief=_BRIEF,
+            repository=repository,
+            target_path=_TARGET,
+            max_content_bytes=1 << 20,
+        )
+    )
+
+    assert result.outcome == "ready-for-capture"
+    assert result.request_count == 1
+    assert result.materialized_path == _TARGET
+    assert (repository / _TARGET).read_text(encoding="utf-8") == "print('after')\n"
+    (request,) = script.requests
+    assert request["path"] == "/zen/go/v1/chat/completions"
+
+
+@pytest.mark.parametrize(
+    "proxy_base_url",
+    [
+        "https://credential-proxy:8080/zen/go/v1",
+        "http://provider.example.com/v1",
+        "http://user@credential-proxy:8080/v1",
+        "http://credential-proxy:8080/v1?redirect=1",
+        "http://credential-proxy:8080/v1#fragment",
+    ],
+)
+def test_request_validation_still_rejects_non_proxy_routes(
+    proxy_base_url: str, tmp_path: Path
+) -> None:
+    repository = _repository(tmp_path)
+    with pytest.raises(RawApiError):
+        RawApiRequest(
+            proxy_base_url=proxy_base_url,
+            proxy_token=_TOKEN,
+            model=_MODEL,
+            developer_brief=_BRIEF,
+            repository=repository,
+            target_path=_TARGET,
+            max_content_bytes=1 << 20,
+        )
