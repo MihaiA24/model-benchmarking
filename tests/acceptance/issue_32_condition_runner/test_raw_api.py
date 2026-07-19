@@ -101,6 +101,9 @@ def test_raw_api_makes_one_request_and_atomically_changes_only_locked_file(
         "role": "user",
     }
     assert provider_request.headers["authorization"] == f"Bearer {_REAL_KEY}"
+    # The materializer's own UA must survive the proxy unmodified: UA-less
+    # upstream traffic is tarpitted by the provider's WAF (issue #99).
+    assert provider_request.headers["user-agent"] == "model-benchmark-raw-api/1"
 
 
 @pytest.mark.parametrize(

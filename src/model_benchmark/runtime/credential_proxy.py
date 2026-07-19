@@ -621,6 +621,13 @@ class CredentialProxy:
                 }
                 headers["Authorization"] = f"Bearer {state.config.real_api_key}"
                 headers["Content-Length"] = str(len(body))
+                # Cloudflare's WAF tarpits requests with a missing or
+                # python-default User-Agent (403 error 1010, issue #99);
+                # harness clients send their own UA, which passes through
+                # untouched above. Only fill the gap for UA-less clients
+                # (e.g. the stdlib raw-api materializer).
+                if not any(name.lower() == "user-agent" for name in headers):
+                    headers["User-Agent"] = "model-benchmark-credential-proxy/1"
                 try:
                     connection.request("POST", self.path, body=body, headers=headers)
                     response = connection.getresponse()

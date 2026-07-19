@@ -159,6 +159,9 @@ def _request_completion(request: RawApiRequest) -> tuple[int, bytes]:
             headers={
                 "Authorization": f"Bearer {request.proxy_token}",
                 "Content-Type": "application/json",
+                # http.client sends no User-Agent by default; the provider's
+                # WAF tarpits UA-less requests (issue #99). Identify honestly.
+                "User-Agent": "model-benchmark-raw-api/1",
             },
         )
         response = connection.getresponse()
