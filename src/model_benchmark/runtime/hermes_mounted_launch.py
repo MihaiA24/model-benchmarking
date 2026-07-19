@@ -66,7 +66,10 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     mounted_root = Path("/opt/model-benchmark-condition")
     mounted_hermes = mounted_root / "opt/hermes"
-    loader = mounted_root / "lib64/ld-linux-x86-64.so.2"
+    # The real ELF, not the lib64 symlink: on absolute-symlink glibc layouts
+    # the symlink escapes the read-only image mount into the scenario image
+    # (issue #99).
+    loader = mounted_root / "usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
     library_path = ":".join(
         str(path)
         for path in (

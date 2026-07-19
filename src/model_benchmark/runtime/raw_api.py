@@ -67,6 +67,14 @@ class RawApiError(ValueError):
     """The Raw API condition declaration is unsafe or internally inconsistent."""
 
 
+# The sealed Credential Proxy is reachable on loopback (conformance fixtures,
+# sealed-process qualification) or as the pinned compose service name that
+# execution.py wires into every live cell's MODEL_BENCHMARK_PROXY_BASE_URL.
+# Issue #99: live cells use the in-mesh route; loopback-only rejection made
+# every Raw API cell exit 78 before its one provider request.
+_ALLOWED_PROXY_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "credential-proxy"})
+
+
 @dataclass(frozen=True)
 class RawApiRequest:
     proxy_base_url: str
@@ -81,13 +89,13 @@ class RawApiRequest:
         parsed = urlsplit(self.proxy_base_url)
         if (
             parsed.scheme != "http"
-            or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}
+            or parsed.hostname not in _ALLOWED_PROXY_HOSTS
             or parsed.username is not None
             or parsed.password is not None
             or parsed.query
             or parsed.fragment
         ):
-            raise RawApiError("Raw API must use the loopback Credential Proxy route")
+            raise RawApiError("Raw API must use the sealed Credential Proxy route")
         if not self.proxy_token or not self.model:
             raise RawApiError("Raw API proxy token and model must be non-empty")
         try:
