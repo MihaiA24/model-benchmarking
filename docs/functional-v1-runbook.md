@@ -139,8 +139,8 @@ qualification/tests — deliberately not reachable from the CLI.)
 A cheaper-than-full-run signal: `preflight` exercises provisioning integrity, resource
 enforcement, and proxy isolation for all four conditions without any provider spend.
 
-The root `run_*.py` / `poc_harness.py` scripts are the pre-V1 exploratory PoC (legacy,
-Windows-oriented); they are not part of the sealed V1 protocol.
+The pre-V1 exploratory PoC scripts (root `run_*.py` / `poc_harness.py`) were removed
+from the tree and live in git history; they were never part of the sealed V1 protocol.
 
 ## 5. Repeats, resume, and inspection
 
