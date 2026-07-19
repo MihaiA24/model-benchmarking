@@ -150,7 +150,10 @@ def _request_completion(request: RawApiRequest) -> tuple[int, bytes]:
             "stream": False,
         }
     )
-    connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=30)
+    # One non-streaming request holds the response until the whole
+    # completion is generated — 76s TTFB measured for a realistic file
+    # (issue #99); 30s starved it. Must stay >= the proxy's upstream budget.
+    connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=630)
     try:
         connection.request(
             "POST",

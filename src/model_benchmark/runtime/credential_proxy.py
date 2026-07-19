@@ -783,16 +783,26 @@ class CredentialProxy:
         return Handler
 
 
+# TTFB budget for one upstream request. Non-streaming completions (the Raw
+# API condition) hold the response until the full generation exists: a
+# realistic single-file generation measured 76s to first byte (issue #99),
+# so 30s silently killed legitimate provider work. Bounded well under the
+# 1800s trial wall clock.
+_UPSTREAM_TIMEOUT_SECONDS = 600
+
+
 def _connection(parsed: SplitResult) -> http.client.HTTPConnection:
     port = parsed.port
     if parsed.scheme == "https":
         return http.client.HTTPSConnection(
             parsed.hostname,
             port or 443,
-            timeout=30,
+            timeout=_UPSTREAM_TIMEOUT_SECONDS,
             context=ssl.create_default_context(),
         )
-    return http.client.HTTPConnection(parsed.hostname, port or 80, timeout=30)
+    return http.client.HTTPConnection(
+        parsed.hostname, port or 80, timeout=_UPSTREAM_TIMEOUT_SECONDS
+    )
 
 
 def credential_fingerprint_forbidden(_credential: str) -> None:
