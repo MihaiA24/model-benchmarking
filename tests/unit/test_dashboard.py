@@ -149,6 +149,23 @@ def test_cross_version_comparison_appears_only_with_two_versions(
     assert 'href="#comparison"' in page
 
 
+def test_presentation_template_elements_render(tmp_path: Path) -> None:
+    page = build_dashboard(_two_runs(tmp_path), "Results")
+
+    # Fixed brand nav with breadcrumb separators and an overview hero.
+    assert "<nav>" in page and '<span class="sep">›</span>' in page
+    assert 'class="hero"' in page and 'href="#overview"' in page
+    assert '<div class="tag">Diagnostic · no claims</div>' in page
+    # Hero stat strip totals: 2 runs x 12 cells, 24 requests, 24000 tokens.
+    assert ">sealed runs<" in page and ">24000<" in page
+    # Sealed runs wear green state chips; dispositions are class-colored.
+    assert 'class="chip chip-green">complete/valid' in page
+    assert 'class="ok">valid_completed' in page
+    # The banner is a warn callout; viewport meta present for mobile.
+    assert 'class="callout warn"' in page
+    assert 'name="viewport"' in page
+
+
 def test_hostile_record_fields_are_escaped(tmp_path: Path) -> None:
     record = _record("0198-a", manifest="functional-v1-manifest:sha256:" + "a" * 64)
     record["cells"][0]["reason_code"] = "<script>alert(1)</script>"  # type: ignore[index]
