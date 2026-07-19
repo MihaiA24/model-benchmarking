@@ -1,1 +1,1 @@
-7757f39a71749a10859542a35ca4ab71e590c81ea53c4d837ed5ba2b91cbe38d  artifacts/acceptance/issue-40/verification.json
+d556d3a7d048adef7938b58966f84810b3da241b5f8f687245aa603de2c89c0a  artifacts/acceptance/issue-40/verification.json
