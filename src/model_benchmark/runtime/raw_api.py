@@ -16,7 +16,11 @@ from urllib.parse import urlsplit
 # third-party closure (e.g. scenario_locks -> yaml) belongs in
 # raw_api_locks.py; tests/architecture pins this boundary.
 from model_benchmark.declarations.canonical import canonical_json_bytes
-from model_benchmark.runtime.conditions import FinalRepositoryHandoff
+from model_benchmark.runtime.conditions import (
+    ConditionRunnerError,
+    FinalRepositoryHandoff,
+    _safe_relative_path,
+)
 
 
 _MAX_PROVIDER_ENVELOPE_OVERHEAD = 1024 * 1024
@@ -332,20 +336,10 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _safe_target(value: str) -> PurePosixPath:
-    path = PurePosixPath(value)
-    if (
-        not value
-        or path.is_absolute()
-        or ".." in path.parts
-        or "." in path.parts
-        or "" in path.parts
-        or path.as_posix() != value
-        or "\\" in value
-        or ":" in value
-        or "\x00" in value
-    ):
-        raise RawApiError("invalid-target-path")
-    return path
+    try:
+        return _safe_relative_path(value, label="target path")
+    except ConditionRunnerError:
+        raise RawApiError("invalid-target-path") from None
 
 
 def _snapshot(root: Path) -> dict[str, bytes]:

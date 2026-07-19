@@ -1,21 +1,14 @@
 from __future__ import annotations
 
-import hashlib
-import os
-import stat
+# ``urllib`` stays imported here because the acceptance suite patches
+# ``urllib.request.urlopen`` through this module's namespace.
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from types import MappingProxyType
 from typing import Mapping
-from urllib.parse import urlsplit
 
-from model_benchmark.declarations.canonical import (
-    CanonicalizationError,
-    canonical_json_bytes,
-    load_canonical_json,
-)
-from model_benchmark.declarations.identities import DigestKind, TypedDigest
+from model_benchmark.declarations.canonical import canonical_json_bytes
+from model_benchmark.declarations.identities import TypedDigest
 from model_benchmark.declarations.scenario_locks import (
     project_resource_root,
     standard_profile_path,
@@ -25,9 +18,18 @@ from model_benchmark.runtime.conditions import (
     ConditionProcessResult,
     ConditionQualification,
     SealedConditionProcess,
-    provider_events,
+    cache_relative_path,
+    check_provisioning_manifest,
+    download_verified,
+    ensure_launch_shim,
+    evaluate_harness_qualification,
+    harness_environment,
+    load_condition_lock,
     publish_bytes,
-    read_regular_file,
+    validate_condition_lock,
+    validate_sealed_launch_inputs,
+    verify_cached_file,
+    verify_lock_declaration,
 )
 from model_benchmark.runtime.credential_proxy import TRIAL_PROXY_TOKEN_ENV
 
@@ -49,7 +51,10 @@ OMP_ENVIRONMENT_NAMES = (
     "MODEL_BENCHMARK_PROXY_BASE_URL",
     TRIAL_PROXY_TOKEN_ENV,
 )
-_QUALIFIED = "qualified"
+_NATIVE_ARTIFACT_PATHS = (
+    "home/.model-benchmark/omp-delivery.json",
+    "home/.model-benchmark/omp-rpc.jsonl",
+)
 
 
 @dataclass(frozen=True)
@@ -121,70 +126,58 @@ def _locked_configuration() -> dict[str, object]:
 
 
 def load_omp_condition_lock() -> tuple[bytes, Mapping[str, object], TypedDigest]:
-    try:
-        data = omp_condition_lock_path().read_bytes()
-        value = load_canonical_json(data)
-    except (OSError, CanonicalizationError) as error:
-        raise ConditionAdapterError("invalid-condition-lock", str(error)) from error
-    if not isinstance(value, dict):
-        raise ConditionAdapterError("invalid-condition-lock", "OMP condition lock is not an object")
-    _verify_lock_dependencies(value)
-    identity = TypedDigest.from_bytes(DigestKind.FUNCTIONAL_V1_CONDITION, data)
-    return data, MappingProxyType(value), identity
+    return load_condition_lock(
+        omp_condition_lock_path, label="OMP", verify=_verify_lock_dependencies
+    )
 
 
 def validate_omp_condition_lock(data: bytes) -> TypedDigest:
-    expected, _, identity = load_omp_condition_lock()
-    if data != expected:
-        raise ConditionAdapterError(
-            "condition-unqualified",
-            "OMP condition lock differs from the qualified v16.4.0 lock",
-        )
-    return identity
+    return validate_condition_lock(
+        load_omp_condition_lock,
+        data,
+        mismatch_message="OMP condition lock differs from the qualified v16.4.0 lock",
+    )
 
 
 def _verify_lock_dependencies(lock: dict[str, object]) -> None:
-    artifact = lock.get("artifact")
-    adapter = lock.get("adapter")
-    if not isinstance(artifact, dict) or not isinstance(adapter, dict):
-        raise ConditionAdapterError("invalid-condition-lock", "OMP lock structure is invalid")
-    expected_profile = TypedDigest.from_bytes(
-        DigestKind.EXECUTION_PROFILE,
-        standard_profile_path().read_bytes(),
+    verify_lock_declaration(
+        lock,
+        condition="omp",
+        artifact_identity=OMP_ARTIFACT_IDENTITY,
+        configuration=_locked_configuration(),
+        environment_names=OMP_ENVIRONMENT_NAMES,
+        shim_identity=OMP_SHIM_IDENTITY,
+        profile_data=standard_profile_path().read_bytes(),
+        shim_data=omp_launch_shim_path().read_bytes(),
+        structure_message="OMP lock structure is invalid",
+        mismatch_message="OMP v16.4.0 artifact, profile, or adapter declaration does not match",
     )
-    expected_shim = TypedDigest.from_bytes(
-        DigestKind.ARTIFACT,
-        omp_launch_shim_path().read_bytes(),
-    )
-    if (
-        lock.get("schema_version") != 1
-        or lock.get("condition") != "omp"
-        or lock.get("execution_profile") != str(expected_profile)
-        or artifact
-        != {
-            "digest": OMP_ARTIFACT_IDENTITY,
-            "kind": "native-executable",
-            "platform": "linux/amd64",
-        }
-        or adapter.get("argv")
-        != [
-            "/opt/model-benchmark-condition/entrypoint",
-            "--condition",
-            "omp",
-            "--artifact-identity",
-            "{artifact_identity}",
-        ]
-        or adapter.get("configuration") != _locked_configuration()
-        or adapter.get("environment_names") != list(OMP_ENVIRONMENT_NAMES)
-        or adapter.get("non_interactive") is not True
-        or adapter.get("self_update") is not False
-        or adapter.get("working_directory") != "/workspace"
-        or str(expected_shim) != OMP_SHIM_IDENTITY
-    ):
-        raise ConditionAdapterError(
-            "invalid-condition-lock",
-            "OMP v16.4.0 artifact, profile, or adapter declaration does not match",
-        )
+
+
+def _provisioning_manifest(
+    *, condition_identity: str, shim_bytes: int
+) -> dict[str, object]:
+    return {
+        "artifact": {
+            "bytes": OMP_ARTIFACT_BYTES,
+            "identity": OMP_ARTIFACT_IDENTITY,
+            "path": cache_relative_path(
+                "artifacts", OMP_ARTIFACT_IDENTITY, "omp"
+            ).as_posix(),
+            "source": OMP_ARTIFACT_URL,
+            "version": OMP_VERSION,
+        },
+        "condition_identity": condition_identity,
+        "launch_shim": {
+            "bytes": shim_bytes,
+            "identity": OMP_SHIM_IDENTITY,
+            "path": cache_relative_path(
+                "adapters", OMP_SHIM_IDENTITY, "omp-launch"
+            ).as_posix(),
+        },
+        "network": "provision-only",
+        "schema_version": 1,
+    }
 
 
 def provision_omp(cache_root: Path, condition_lock: bytes) -> OmpProvisioning:
@@ -194,88 +187,63 @@ def provision_omp(cache_root: Path, condition_lock: bytes) -> OmpProvisioning:
     if manifest_path.exists() or manifest_path.is_symlink():
         return preflight_omp(cache_root, condition_lock)
 
-    artifact_relative = (
-        Path("artifacts") / OMP_ARTIFACT_IDENTITY.rsplit(":", 1)[1] / "omp"
+    artifact_path = cache_root / cache_relative_path(
+        "artifacts", OMP_ARTIFACT_IDENTITY, "omp"
     )
-    shim_relative = Path("adapters") / OMP_SHIM_IDENTITY.rsplit(":", 1)[1] / "omp-launch"
-    artifact_path = cache_root / artifact_relative
-    shim_path = cache_root / shim_relative
+    shim_path = cache_root / cache_relative_path(
+        "adapters", OMP_SHIM_IDENTITY, "omp-launch"
+    )
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     artifact_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     shim_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if artifact_path.exists() or artifact_path.is_symlink():
         _verify_executable(artifact_path, OMP_ARTIFACT_IDENTITY, OMP_ARTIFACT_BYTES)
     else:
-        _download_artifact(artifact_path)
+        download_verified(
+            artifact_path,
+            url=OMP_ARTIFACT_URL,
+            identity=OMP_ARTIFACT_IDENTITY,
+            expected_bytes=OMP_ARTIFACT_BYTES,
+            mode=0o555,
+            condition="OMP",
+            label="executable",
+            executable=True,
+            mismatch_message="downloaded OMP v16.4.0 artifact does not match its sealed identity",
+        )
     shim_data = omp_launch_shim_path().read_bytes()
-    if shim_path.exists() or shim_path.is_symlink():
-        _verify_executable(shim_path, OMP_SHIM_IDENTITY, len(shim_data))
-    else:
-        publish_bytes(shim_path, shim_data, mode=0o555, condition="OMP")
-        _verify_executable(shim_path, OMP_SHIM_IDENTITY, len(shim_data))
-
-    manifest = {
-        "artifact": {
-            "bytes": OMP_ARTIFACT_BYTES,
-            "identity": OMP_ARTIFACT_IDENTITY,
-            "path": artifact_relative.as_posix(),
-            "source": OMP_ARTIFACT_URL,
-            "version": OMP_VERSION,
-        },
-        "condition_identity": str(condition_identity),
-        "launch_shim": {
-            "bytes": len(shim_data),
-            "identity": OMP_SHIM_IDENTITY,
-            "path": shim_relative.as_posix(),
-        },
-        "network": "provision-only",
-        "schema_version": 1,
-    }
-    publish_bytes(manifest_path, canonical_json_bytes(manifest), mode=0o400, condition="OMP")
+    ensure_launch_shim(
+        shim_path, shim_data, identity=OMP_SHIM_IDENTITY, condition="OMP", label="executable"
+    )
+    publish_bytes(
+        manifest_path,
+        canonical_json_bytes(
+            _provisioning_manifest(
+                condition_identity=str(condition_identity), shim_bytes=len(shim_data)
+            )
+        ),
+        mode=0o400,
+        condition="OMP",
+    )
     return preflight_omp(cache_root, condition_lock)
 
 
 def preflight_omp(cache_root: Path, condition_lock: bytes) -> OmpProvisioning:
     condition_identity = validate_omp_condition_lock(condition_lock)
-    root = cache_root / "omp" / condition_identity.value
-    manifest_path = root / "provisioning.json"
-    try:
-        manifest_data = read_regular_file(manifest_path)
-        manifest = load_canonical_json(manifest_data)
-    except (OSError, CanonicalizationError) as error:
-        raise ConditionAdapterError(
-            "condition-unqualified",
-            f"OMP provisioning manifest is unavailable or invalid: {error}",
-        ) from error
-    artifact_relative = (
-        Path("artifacts") / OMP_ARTIFACT_IDENTITY.rsplit(":", 1)[1] / "omp"
-    )
-    shim_relative = Path("adapters") / OMP_SHIM_IDENTITY.rsplit(":", 1)[1] / "omp-launch"
+    manifest_path = cache_root / "omp" / condition_identity.value / "provisioning.json"
     shim_data = omp_launch_shim_path().read_bytes()
-    expected = {
-        "artifact": {
-            "bytes": OMP_ARTIFACT_BYTES,
-            "identity": OMP_ARTIFACT_IDENTITY,
-            "path": artifact_relative.as_posix(),
-            "source": OMP_ARTIFACT_URL,
-            "version": OMP_VERSION,
-        },
-        "condition_identity": str(condition_identity),
-        "launch_shim": {
-            "bytes": len(shim_data),
-            "identity": OMP_SHIM_IDENTITY,
-            "path": shim_relative.as_posix(),
-        },
-        "network": "provision-only",
-        "schema_version": 1,
-    }
-    if manifest != expected:
-        raise ConditionAdapterError(
-            "condition-unqualified",
-            "OMP provisioning manifest does not match the sealed condition",
-        )
-    artifact_path = cache_root / artifact_relative
-    launch_shim_path = cache_root / shim_relative
+    check_provisioning_manifest(
+        manifest_path,
+        _provisioning_manifest(
+            condition_identity=str(condition_identity), shim_bytes=len(shim_data)
+        ),
+        condition="OMP",
+    )
+    artifact_path = cache_root / cache_relative_path(
+        "artifacts", OMP_ARTIFACT_IDENTITY, "omp"
+    )
+    launch_shim_path = cache_root / cache_relative_path(
+        "adapters", OMP_SHIM_IDENTITY, "omp-launch"
+    )
     _verify_executable(artifact_path, OMP_ARTIFACT_IDENTITY, OMP_ARTIFACT_BYTES)
     _verify_executable(launch_shim_path, OMP_SHIM_IDENTITY, len(shim_data))
     return OmpProvisioning(
@@ -332,24 +300,12 @@ def sealed_omp_process(
         provisioning.launch_shim_identity,
         len(omp_launch_shim_path().read_bytes()),
     )
-    parsed = urlsplit(proxy_base_url)
-    if (
-        parsed.scheme != "http"
-        or parsed.hostname is None
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-        or proxy_base_url.endswith("/")
-    ):
-        raise ConditionAdapterError(
-            "condition-unqualified",
-            "OMP must receive one canonical internal HTTP Credential Proxy route",
-        )
-    if not provider_model or any(ord(character) < 32 for character in provider_model):
-        raise ConditionAdapterError("condition-unqualified", "OMP provider model is invalid")
-    if not trial_proxy_token or any(character in trial_proxy_token for character in "\r\n\x00"):
-        raise ConditionAdapterError("condition-unqualified", "OMP proxy token is invalid")
+    validate_sealed_launch_inputs(
+        condition="OMP",
+        proxy_base_url=proxy_base_url,
+        provider_model=provider_model,
+        trial_proxy_token=trial_proxy_token,
+    )
     return SealedConditionProcess(
         condition="omp",
         artifact_path=provisioning.launch_shim_path,
@@ -360,15 +316,12 @@ def sealed_omp_process(
             "--artifact-identity",
             provisioning.artifact_identity,
         ),
-        environment={
-            "MODEL_BENCHMARK_PROVIDER_MODEL": provider_model,
-            "MODEL_BENCHMARK_PROXY_BASE_URL": proxy_base_url,
-            TRIAL_PROXY_TOKEN_ENV: trial_proxy_token,
-        },
-        native_artifact_paths=(
-            "home/.model-benchmark/omp-delivery.json",
-            "home/.model-benchmark/omp-rpc.jsonl",
+        environment=harness_environment(
+            provider_model=provider_model,
+            proxy_base_url=proxy_base_url,
+            trial_proxy_token=trial_proxy_token,
         ),
+        native_artifact_paths=_NATIVE_ARTIFACT_PATHS,
     )
 
 
@@ -381,107 +334,20 @@ def evaluate_omp_qualification(
     workspace_verified: bool,
     unexpected_network_requests: int,
 ) -> ConditionQualification:
-    evidence = {
-        "artifact_digests": dict(result.artifact_digests),
-        "brief_sha256": observed_brief_sha256,
-        "exit_code": result.exit_code,
-        "expected_brief_sha256": expected_brief_sha256,
-        "process_tree_terminated": result.process_tree_terminated,
-        "provider_response_count": 0,
-        "signal": result.signal,
-        "unexpected_network_requests": unexpected_network_requests,
-        "workspace_verified": workspace_verified,
-    }
-    reason_code: str | None = None
-    if not result.infrastructure_valid:
-        reason_code = result.reason_code
-    elif result.exit_code != 0 or result.signal is not None:
-        reason_code = "omp-rpc-unsupported"
-    elif not result.process_tree_terminated:
-        reason_code = "omp-process-tree-incomplete"
-    elif not {
-        "home/.model-benchmark/omp-delivery.json",
-        "home/.model-benchmark/omp-rpc.jsonl",
-    }.issubset(result.artifact_digests):
-        reason_code = "omp-native-artifact-missing"
-    elif expected_brief_sha256 != observed_brief_sha256:
-        reason_code = "omp-developer-brief-mismatch"
-    elif not workspace_verified:
-        reason_code = "omp-workspace-mismatch"
-    elif unexpected_network_requests != 0:
-        reason_code = "omp-unexpected-network"
-
-    events = provider_events(proxy_evidence_path)
-    evidence["provider_response_count"] = len(events)
-    if reason_code is None and not events:
-        reason_code = "omp-provider-evidence-missing"
-    if reason_code is None and any(
-        event.get("reason_code") is not None
-        or not isinstance(event.get("provider_model"), str)
-        or not isinstance(event.get("provider_tokens"), int)
-        or isinstance(event.get("provider_tokens"), bool)
-        or event.get("provider_cost_usd") is None
-        for event in events
-    ):
-        reason_code = "omp-provider-contract-violation"
-
-    return ConditionQualification(
-        qualified=reason_code is None,
-        reason_code=_QUALIFIED if reason_code is None else reason_code,
-        evidence=evidence,
+    return evaluate_harness_qualification(
+        result,
+        proxy_evidence_path,
+        prefix="omp",
+        run_failure_reason="omp-rpc-unsupported",
+        required_artifacts=frozenset(_NATIVE_ARTIFACT_PATHS),
+        expected_brief_sha256=expected_brief_sha256,
+        observed_brief_sha256=observed_brief_sha256,
+        workspace_verified=workspace_verified,
+        unexpected_network_requests=unexpected_network_requests,
     )
 
 
-def _download_artifact(destination: Path) -> None:
-    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
-    digest = hashlib.sha256()
-    size = 0
-    try:
-        with urllib.request.urlopen(OMP_ARTIFACT_URL, timeout=120) as response:
-            with temporary.open("xb") as output:
-                while chunk := response.read(1024 * 1024):
-                    output.write(chunk)
-                    digest.update(chunk)
-                    size += len(chunk)
-                output.flush()
-                os.fsync(output.fileno())
-        identity = f"artifact:sha256:{digest.hexdigest()}"
-        if identity != OMP_ARTIFACT_IDENTITY or size != OMP_ARTIFACT_BYTES:
-            raise ConditionAdapterError(
-                "artifact-verification-failed",
-                "downloaded OMP v16.4.0 artifact does not match its sealed identity",
-            )
-        temporary.chmod(0o555)
-        os.link(temporary, destination)
-    except FileExistsError:
-        _verify_executable(destination, OMP_ARTIFACT_IDENTITY, OMP_ARTIFACT_BYTES)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
 def _verify_executable(path: Path, identity: str, expected_size: int) -> None:
-    try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        try:
-            metadata = os.fstat(descriptor)
-            if (
-                not stat.S_ISREG(metadata.st_mode)
-                or metadata.st_size != expected_size
-                or metadata.st_mode & 0o111 == 0
-            ):
-                raise OSError("artifact metadata mismatch")
-            digest = hashlib.sha256()
-            while chunk := os.read(descriptor, 1024 * 1024):
-                digest.update(chunk)
-        finally:
-            os.close(descriptor)
-    except OSError as error:
-        raise ConditionAdapterError(
-            "condition-unqualified",
-            f"OMP cached executable is unavailable: {error}",
-        ) from error
-    if f"artifact:sha256:{digest.hexdigest()}" != identity:
-        raise ConditionAdapterError(
-            "condition-unqualified",
-            "OMP cached executable identity mismatch",
-        )
+    verify_cached_file(
+        path, identity, expected_size, condition="OMP", label="executable"
+    )

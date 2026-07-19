@@ -803,11 +803,3 @@ def _connection(parsed: SplitResult) -> http.client.HTTPConnection:
     return http.client.HTTPConnection(
         parsed.hostname, port or 80, timeout=_UPSTREAM_TIMEOUT_SECONDS
     )
-
-
-def credential_fingerprint_forbidden(_credential: str) -> None:
-    """Make reusable credential hashes an explicit unsupported operation."""
-
-    raise CredentialProxyError(
-        "provider credentials must never be fingerprinted or persisted"
-    )

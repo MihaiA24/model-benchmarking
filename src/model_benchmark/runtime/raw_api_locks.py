@@ -12,16 +12,14 @@ container closure; this module is the host-only home for anything heavier.
 from __future__ import annotations
 
 from pathlib import Path
-from types import MappingProxyType
 from typing import Mapping
 
-from model_benchmark.declarations.canonical import (
-    CanonicalizationError,
-    load_canonical_json,
-)
-from model_benchmark.declarations.identities import DigestKind, TypedDigest
+from model_benchmark.declarations.identities import TypedDigest
 from model_benchmark.declarations.scenario_locks import project_resource_root
-from model_benchmark.runtime.conditions import ConditionAdapterError
+from model_benchmark.runtime.conditions import (
+    ConditionAdapterError,
+    load_condition_lock,
+)
 
 
 def raw_api_condition_lock_path() -> Path:
@@ -47,14 +45,4 @@ def raw_api_launch_shim_path() -> Path:
 
 
 def load_raw_api_condition_lock() -> tuple[bytes, Mapping[str, object], TypedDigest]:
-    try:
-        data = raw_api_condition_lock_path().read_bytes()
-        value = load_canonical_json(data)
-    except (OSError, CanonicalizationError) as error:
-        raise ConditionAdapterError("invalid-condition-lock", str(error)) from error
-    if not isinstance(value, dict):
-        raise ConditionAdapterError(
-            "invalid-condition-lock", "Raw API condition lock is not an object"
-        )
-    identity = TypedDigest.from_bytes(DigestKind.FUNCTIONAL_V1_CONDITION, data)
-    return data, MappingProxyType(value), identity
+    return load_condition_lock(raw_api_condition_lock_path, label="Raw API")

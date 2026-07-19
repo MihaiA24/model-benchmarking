@@ -30,10 +30,6 @@ class VerificationCase:
 _CHECKSUM_LINE = re.compile(r"^([0-9a-f]{64})  (.+)$")
 
 
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
 def _remove_outputs(paths: tuple[Path, Path]) -> None:
     for path in paths:
         path.unlink(missing_ok=True)
@@ -108,9 +104,8 @@ def write_verification_artifacts(
         verification_bytes = canonical_json_bytes(payload)
         registry.validate_bytes(verification_bytes)
         _atomic_verified_write(verification_path, verification_bytes)
-        checksum_bytes = (
-            f"{_sha256(verification_bytes)}  {relative_verification}\n"
-        ).encode("utf-8")
+        checksum = hashlib.sha256(verification_bytes).hexdigest()
+        checksum_bytes = f"{checksum}  {relative_verification}\n".encode("utf-8")
         _atomic_verified_write(manifest_path, checksum_bytes)
         registry.validate_path(verification_path)
         verify_checksum_manifest(project_root, manifest_path)
@@ -151,7 +146,7 @@ def verify_checksum_manifest(project_root: Path, manifest: Path) -> None:
             raise VerificationArtifactError("unsafe or duplicate checksum path")
         seen.add(relative)
         try:
-            actual = _sha256(resolved.read_bytes())
+            actual = hashlib.sha256(resolved.read_bytes()).hexdigest()
         except OSError as error:
             raise VerificationArtifactError(f"cannot read checksummed path: {relative}") from error
         if actual != expected:
