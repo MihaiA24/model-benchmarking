@@ -165,3 +165,73 @@ def test_provider_refusal_and_failure_are_terminal_without_retry(
     assert failure.outcome == "valid_harness_outcome"
     assert failure.reason_code == "provider-failure"
     assert len(recording_provider.requests) == 2
+
+
+def test_connect_retries_absorb_a_late_proxy_route_without_extra_requests(
+    recording_provider: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The cell's proxy route can lag behind the main container (issue #99:
+    # concurrent compose churn). The local TCP connect retries within a
+    # bounded window; the provider still sees exactly one request.
+    import http.client
+
+    from model_benchmark.runtime import raw_api
+
+    monkeypatch.setattr(raw_api, "_CONNECT_RETRY_DELAY_SECONDS", 0.05)
+    replacement = {"content": "print('after')\n", "path": _TARGET}
+    recording_provider.enqueue_json(_provider_envelope(json.dumps(replacement)))
+    repository = _repository(tmp_path)
+
+    with _proxy(recording_provider, tmp_path) as proxy:
+        real_connect = http.client.HTTPConnection.connect
+        refusals = {"remaining": 3}
+
+        def _flaky_connect(self: http.client.HTTPConnection) -> None:
+            if refusals["remaining"] > 0:
+                refusals["remaining"] -= 1
+                raise ConnectionRefusedError("route not ready")
+            real_connect(self)
+
+        monkeypatch.setattr(http.client.HTTPConnection, "connect", _flaky_connect)
+        result = RawApiMaterializer().materialize(_request(proxy, repository))
+
+    assert refusals["remaining"] == 0
+    assert result.outcome == "ready-for-capture"
+    assert result.reason_code == "materialized"
+    assert result.request_count == 1
+    assert len(recording_provider.requests) == 1
+    assert (repository / _TARGET).read_text(encoding="utf-8") == "print('after')\n"
+
+
+def test_connect_retry_window_is_bounded_and_carries_no_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import socket
+
+    from model_benchmark.runtime import raw_api
+
+    monkeypatch.setattr(raw_api, "_CONNECT_RETRY_SECONDS", 0.2)
+    monkeypatch.setattr(raw_api, "_CONNECT_RETRY_DELAY_SECONDS", 0.05)
+    # A bound-but-not-listening socket refuses every connect deterministically.
+    with socket.socket() as blocked:
+        blocked.bind(("127.0.0.1", 0))
+        port = blocked.getsockname()[1]
+        repository = _repository(tmp_path)
+        result = RawApiMaterializer().materialize(
+            RawApiRequest(
+                proxy_base_url=f"http://127.0.0.1:{port}",
+                proxy_token=_TRIAL_TOKEN,
+                model=_MODEL,
+                developer_brief=b"brief\n",
+                repository=repository,
+                target_path=_TARGET,
+                max_content_bytes=128,
+            )
+        )
+
+    assert result.outcome == "valid_harness_outcome"
+    assert result.reason_code == "provider-failure"
+    assert (repository / _TARGET).read_text(encoding="utf-8") == "before\n"

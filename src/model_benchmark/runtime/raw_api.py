@@ -5,6 +5,7 @@ import json
 import os
 import stat
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -154,6 +155,8 @@ def _request_completion(request: RawApiRequest) -> tuple[int, bytes]:
     # completion is generated — 76s TTFB measured for a realistic file
     # (issue #99); 30s starved it. Must stay >= the proxy's upstream budget.
     connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=630)
+    if not _connect_with_retry(connection):
+        return 502, b""
     try:
         connection.request(
             "POST",
@@ -183,6 +186,29 @@ def _request_completion(request: RawApiRequest) -> tuple[int, bytes]:
     if len(response_body) > limit:
         return 413, b""
     return status, response_body
+
+
+# The Trial Cell's proxy route can lag behind the main container under
+# concurrent compose setup/teardown (issue #99: the raw-api cell always
+# starts while sibling cells tear down, and its single stdlib client has
+# no reconnect stack, unlike the harness runtimes). Retrying the local
+# TCP connect carries zero provider interaction, so the one-request
+# invariant is untouched.
+_CONNECT_RETRY_SECONDS = 60.0
+_CONNECT_RETRY_DELAY_SECONDS = 2.0
+
+
+def _connect_with_retry(connection: http.client.HTTPConnection) -> bool:
+    deadline = time.monotonic() + _CONNECT_RETRY_SECONDS
+    while True:
+        try:
+            connection.connect()
+            return True
+        except OSError:
+            connection.close()
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(_CONNECT_RETRY_DELAY_SECONDS)
 
 
 def _decode_provider_response(data: bytes) -> dict[str, object]:
