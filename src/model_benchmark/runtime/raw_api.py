@@ -20,6 +20,9 @@ from model_benchmark.runtime.conditions import FinalRepositoryHandoff
 
 
 _MAX_PROVIDER_ENVELOPE_OVERHEAD = 1024 * 1024
+# Worst-case ratio of SSE stream bytes to the content characters they carry
+# (each delta chunk wraps a few characters in ~200 bytes of JSON framing).
+_MAX_STREAM_EXPANSION = 64
 
 
 class RawApiError(ValueError):
@@ -148,12 +151,14 @@ def _request_completion(request: RawApiRequest) -> tuple[int, bytes]:
                 },
             ],
             "model": request.model,
-            "stream": False,
+            # Streamed like every other condition (issue #99): a
+            # non-streaming completion is silent until the whole generation
+            # exists, and the cell's transparent egress relay drops
+            # HTTP connections whose response stays silent past ~15s.
+            # Still exactly one request; the deltas are assembled locally.
+            "stream": True,
         }
     )
-    # One non-streaming request holds the response until the whole
-    # completion is generated — 76s TTFB measured for a realistic file
-    # (issue #99); 30s starved it. Must stay >= the proxy's upstream budget.
     connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=630)
     if not _connect_with_retry(connection):
         return 502, b""
@@ -166,8 +171,8 @@ def _request_completion(request: RawApiRequest) -> tuple[int, bytes]:
                 # http.client adds only Host and Content-Length; the
                 # provider's WAF tarpits requests that don't look like a
                 # normal API client (issue #99: missing UA/Accept). Send the
-                # full, honest header shape of a JSON API client.
-                "Accept": "application/json",
+                # full, honest header shape of a streaming API client.
+                "Accept": "text/event-stream, application/json",
                 "Accept-Encoding": "identity",
                 "Authorization": f"Bearer {request.proxy_token}",
                 "Content-Type": "application/json",
@@ -175,17 +180,28 @@ def _request_completion(request: RawApiRequest) -> tuple[int, bytes]:
             },
         )
         response = connection.getresponse()
-        limit = request.max_content_bytes + _MAX_PROVIDER_ENVELOPE_OVERHEAD
-        response_body = response.read(limit + 1)
         status = response.status
+        # SSE wraps every few content characters in its own JSON chunk, so
+        # the stream is far larger than the assembled content it carries.
+        limit = (
+            request.max_content_bytes * _MAX_STREAM_EXPANSION
+            + _MAX_PROVIDER_ENVELOPE_OVERHEAD
+        )
+        response_body = bytearray()
+        while True:
+            chunk = response.read(65536)
+            if not chunk:
+                break
+            response_body += chunk
+            if len(response_body) > limit:
+                response.close()
+                return 413, b""
         response.close()
     except (OSError, http.client.HTTPException):
         return 502, b""
     finally:
         connection.close()
-    if len(response_body) > limit:
-        return 413, b""
-    return status, response_body
+    return status, bytes(response_body)
 
 
 # The Trial Cell's proxy route can lag behind the main container under
@@ -212,10 +228,11 @@ def _connect_with_retry(connection: http.client.HTTPConnection) -> bool:
 
 
 def _decode_provider_response(data: bytes) -> dict[str, object]:
-    value = json.loads(
-        data.decode("utf-8", errors="strict"),
-        object_pairs_hook=_unique_object,
-    )
+    text = data.decode("utf-8", errors="strict")
+    if text.lstrip().startswith("data:"):
+        value: object = _assemble_sse_envelope(text)
+    else:
+        value = json.loads(text, object_pairs_hook=_unique_object)
     if not isinstance(value, dict):
         raise RawApiError("invalid-provider-envelope")
     choices = value.get("choices")
@@ -238,6 +255,71 @@ def _decode_provider_response(data: bytes) -> dict[str, object]:
     if not isinstance(replacement["path"], str) or not isinstance(replacement["content"], str):
         raise RawApiError("invalid-materialization-envelope")
     return replacement
+
+
+def _assemble_sse_envelope(text: str) -> dict[str, object]:
+    """Fold an OpenAI-compatible SSE stream into one response envelope."""
+    role: str | None = None
+    refusal_parts: list[str] = []
+    content_parts: list[str] = []
+    saw_done = False
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if not line.startswith("data:"):
+            raise RawApiError("invalid-provider-envelope")
+        payload = line[len("data:"):].strip()
+        if payload == "[DONE]":
+            saw_done = True
+            continue
+        if saw_done:
+            raise RawApiError("invalid-provider-envelope")
+        chunk = json.loads(payload, object_pairs_hook=_unique_object)
+        if not isinstance(chunk, dict):
+            raise RawApiError("invalid-provider-envelope")
+        choices = chunk.get("choices")
+        if not isinstance(choices, list) or len(choices) > 1:
+            raise RawApiError("invalid-provider-envelope")
+        if not choices:
+            # Usage-only trailer chunks carry no choices.
+            continue
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            raise RawApiError("invalid-provider-envelope")
+        delta = choice.get("delta")
+        if delta is None:
+            continue
+        if not isinstance(delta, dict):
+            raise RawApiError("invalid-provider-envelope")
+        delta_role = delta.get("role")
+        if delta_role is not None:
+            if not isinstance(delta_role, str):
+                raise RawApiError("invalid-provider-envelope")
+            role = delta_role
+        delta_refusal = delta.get("refusal")
+        if delta_refusal is not None:
+            if not isinstance(delta_refusal, str):
+                raise RawApiError("invalid-provider-envelope")
+            refusal_parts.append(delta_refusal)
+        delta_content = delta.get("content")
+        if delta_content is not None:
+            if not isinstance(delta_content, str):
+                raise RawApiError("invalid-provider-envelope")
+            content_parts.append(delta_content)
+    if not saw_done:
+        raise RawApiError("invalid-provider-envelope")
+    return {
+        "choices": [
+            {
+                "message": {
+                    "content": "".join(content_parts),
+                    "refusal": "".join(refusal_parts) or None,
+                    "role": role or "assistant",
+                },
+            }
+        ],
+    }
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

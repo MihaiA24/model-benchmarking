@@ -17,17 +17,20 @@ class ProviderScript:
     requests: list[dict[str, object]] = field(default_factory=list)
 
     def enqueue_envelope(self, *, path: str, content: str) -> None:
-        message = {
-            "content": json.dumps({"content": content, "path": path}),
-            "refusal": None,
-            "role": "assistant",
-        }
-        body = json.dumps(
-            {
-                "choices": [{"finish_reason": "stop", "index": 0, "message": message}],
-                "usage": {"cost_usd": "0.10", "total_tokens": 23},
-            }
-        ).encode("utf-8")
+        # The launch module streams its one request (issue #99): replay the
+        # OpenAI-compatible SSE shape and let it assemble the deltas.
+        payload = json.dumps({"content": content, "path": path})
+        events: list[dict[str, object]] = [
+            {"choices": [{"delta": {"role": "assistant"}, "index": 0}]}
+        ]
+        events.extend(
+            {"choices": [{"delta": {"content": payload[start : start + 7]}, "index": 0}]}
+            for start in range(0, len(payload), 7)
+        )
+        events.append({"choices": [], "usage": {"cost_usd": "0.10", "total_tokens": 23}})
+        body = b"".join(
+            b"data: " + json.dumps(event).encode("utf-8") + b"\n\n" for event in events
+        ) + b"data: [DONE]\n\n"
         self.responses.append((200, body))
 
     def enqueue_failure(self, status: int) -> None:

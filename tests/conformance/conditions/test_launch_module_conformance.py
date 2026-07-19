@@ -121,7 +121,7 @@ def test_launch_module_materializes_and_seals_delivery_evidence(
     body = request["body"]
     assert isinstance(body, dict)
     assert body["model"] == _MODEL
-    assert body["stream"] is False
+    assert body["stream"] is True
 
 
 def test_launch_module_reports_provider_failure_without_materializing(

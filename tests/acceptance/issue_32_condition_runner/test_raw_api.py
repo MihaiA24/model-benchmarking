@@ -49,6 +49,46 @@ def _provider_envelope(content: str | None, *, refusal: str | None = None) -> di
     }
 
 
+def _sse_stream(
+    content: str | None,
+    *,
+    refusal: str | None = None,
+    chunk_size: int = 7,
+    done: bool = True,
+) -> bytes:
+    # The materializer streams its one request (issue #99): replay the
+    # OpenAI-compatible SSE shape the provider emits for it.
+    events: list[dict[str, object]] = [
+        {"choices": [{"delta": {"role": "assistant"}, "index": 0}], "model": _MODEL}
+    ]
+    if refusal is not None:
+        events.append(
+            {"choices": [{"delta": {"refusal": refusal}, "index": 0}], "model": _MODEL}
+        )
+    if content is not None:
+        for start in range(0, len(content), chunk_size):
+            events.append(
+                {
+                    "choices": [
+                        {"delta": {"content": content[start : start + chunk_size]}, "index": 0}
+                    ],
+                    "model": _MODEL,
+                }
+            )
+    events.append({"choices": [], "model": _MODEL, "usage": {"cost_usd": "0.10", "total_tokens": 23}})
+    body = b"".join(
+        b"data: " + json.dumps(event, separators=(",", ":")).encode() + b"\n\n"
+        for event in events
+    )
+    if done:
+        body += b"data: [DONE]\n\n"
+    return body
+
+
+def _enqueue_stream(provider: Any, content: str | None, *, refusal: str | None = None) -> None:
+    provider.enqueue_bytes(_sse_stream(content, refusal=refusal), content_type="text/event-stream")
+
+
 def _request(proxy: CredentialProxy, repository: Path, *, max_bytes: int = 128) -> RawApiRequest:
     return RawApiRequest(
         proxy_base_url=proxy.base_url,
@@ -74,7 +114,7 @@ def test_raw_api_makes_one_request_and_atomically_changes_only_locked_file(
     tmp_path: Path,
 ) -> None:
     replacement = {"content": "print('after')\n", "path": _TARGET}
-    recording_provider.enqueue_json(_provider_envelope(json.dumps(replacement)))
+    _enqueue_stream(recording_provider, json.dumps(replacement))
     repository = _repository(tmp_path)
 
     with _proxy(recording_provider, tmp_path) as proxy:
@@ -100,6 +140,7 @@ def test_raw_api_makes_one_request_and_atomically_changes_only_locked_file(
         "content": "Replace the locked target with the requested implementation.\n",
         "role": "user",
     }
+    assert request_value["stream"] is True
     assert provider_request.headers["authorization"] == f"Bearer {_REAL_KEY}"
     # The materializer's own UA must survive the proxy unmodified: UA-less
     # upstream traffic is tarpitted by the provider's WAF (issue #99).
@@ -124,7 +165,7 @@ def test_invalid_raw_api_envelope_is_terminal_without_retry(
     reason_code: str,
     max_bytes: int,
 ) -> None:
-    recording_provider.enqueue_json(_provider_envelope(content))
+    _enqueue_stream(recording_provider, content)
     repository = _repository(tmp_path)
 
     with _proxy(recording_provider, tmp_path) as proxy:
@@ -145,7 +186,7 @@ def test_provider_refusal_and_failure_are_terminal_without_retry(
     recording_provider: Any,
     tmp_path: Path,
 ) -> None:
-    recording_provider.enqueue_json(_provider_envelope(None, refusal="cannot comply"))
+    _enqueue_stream(recording_provider, None, refusal="cannot comply")
     repository = _repository(tmp_path)
 
     with _proxy(recording_provider, tmp_path) as proxy:
@@ -167,6 +208,42 @@ def test_provider_refusal_and_failure_are_terminal_without_retry(
     assert len(recording_provider.requests) == 2
 
 
+def test_non_streamed_json_response_still_materializes(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    # An upstream that ignores stream=true and answers with one JSON body
+    # must keep working: the decoder falls back on the non-SSE shape.
+    replacement = {"content": "print('after')\n", "path": _TARGET}
+    recording_provider.enqueue_json(_provider_envelope(json.dumps(replacement)))
+    repository = _repository(tmp_path)
+
+    with _proxy(recording_provider, tmp_path) as proxy:
+        result = RawApiMaterializer().materialize(_request(proxy, repository))
+
+    assert result.outcome == "ready-for-capture"
+    assert (repository / _TARGET).read_text(encoding="utf-8") == "print('after')\n"
+
+
+def test_truncated_stream_without_done_is_invalid_provider_json(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    replacement = {"content": "print('after')\n", "path": _TARGET}
+    recording_provider.enqueue_bytes(
+        _sse_stream(json.dumps(replacement), done=False),
+        content_type="text/event-stream",
+    )
+    repository = _repository(tmp_path)
+
+    with _proxy(recording_provider, tmp_path) as proxy:
+        result = RawApiMaterializer().materialize(_request(proxy, repository))
+
+    assert result.outcome == "valid_harness_outcome"
+    assert result.reason_code == "invalid-provider-envelope"
+    assert (repository / _TARGET).read_text(encoding="utf-8") == "before\n"
+
+
 def test_connect_retries_absorb_a_late_proxy_route_without_extra_requests(
     recording_provider: Any,
     tmp_path: Path,
@@ -181,7 +258,7 @@ def test_connect_retries_absorb_a_late_proxy_route_without_extra_requests(
 
     monkeypatch.setattr(raw_api, "_CONNECT_RETRY_DELAY_SECONDS", 0.05)
     replacement = {"content": "print('after')\n", "path": _TARGET}
-    recording_provider.enqueue_json(_provider_envelope(json.dumps(replacement)))
+    _enqueue_stream(recording_provider, json.dumps(replacement))
     repository = _repository(tmp_path)
 
     with _proxy(recording_provider, tmp_path) as proxy:
