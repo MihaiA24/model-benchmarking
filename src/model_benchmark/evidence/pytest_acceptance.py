@@ -437,11 +437,7 @@ def _tree_digest(paths: list[Path], project_root: Path) -> TypedDigest:
     return TypedDigest(kind=DigestKind.SOURCE_TREE, value=digest.hexdigest())
 
 
-def _verification_inputs(state: _AcceptanceState) -> list[VerificationInput]:
-    lock_path = state.project_root / "uv.lock"
-    pyproject_path = state.project_root / "pyproject.toml"
-    if not lock_path.is_file():
-        raise RuntimeError("acceptance proof requires uv.lock")
+def _acceptance_source_paths(state: _AcceptanceState) -> list[Path]:
     paths = [
         state.project_root / "src",
         state.project_root / "tests/conftest.py",
@@ -454,7 +450,47 @@ def _verification_inputs(state: _AcceptanceState) -> list[VerificationInput]:
         candidate = state.project_root / production_root
         if candidate.exists():
             paths.append(candidate)
-    paths.extend(state.input_paths)
+    return paths + state.input_paths
+
+
+def _assert_clean_source_tree(state: _AcceptanceState) -> None:
+    git = shutil.which("git")
+    if git is None:
+        raise RuntimeError("acceptance publication requires git")
+    project_root = state.project_root.resolve()
+    paths = sorted(
+        {
+            path.resolve().relative_to(project_root).as_posix()
+            for path in _acceptance_source_paths(state)
+        }
+    )
+    completed = subprocess.run(
+        [
+            git,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+            "--",
+            *paths,
+        ],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or f"git status exited {completed.returncode}"
+        raise RuntimeError(f"acceptance source tree cleanliness check failed: {detail}")
+    if dirty := completed.stdout.strip():
+        raise RuntimeError(f"acceptance source tree is dirty:\n{dirty}")
+
+def _verification_inputs(state: _AcceptanceState) -> list[VerificationInput]:
+    lock_path = state.project_root / "uv.lock"
+    pyproject_path = state.project_root / "pyproject.toml"
+    if not lock_path.is_file():
+        raise RuntimeError("acceptance proof requires uv.lock")
+    paths = _acceptance_source_paths(state)
     schema_registry = SchemaRegistry(_schema_root())
     inputs = [
         VerificationInput(
@@ -507,6 +543,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         return
 
     try:
+        _assert_clean_source_tree(state)
         write_verification_artifacts(
             project_root=state.project_root,
             schema_root=_schema_root(),
