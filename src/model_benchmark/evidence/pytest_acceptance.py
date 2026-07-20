@@ -75,7 +75,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="append",
         default=[],
         metavar="PROJECT_RELATIVE_PATH",
-        help="include an additional file or directory in acceptance source identity",
+        help="include an additional file or directory in the Acceptance Source Tree",
     )
 
 
@@ -145,8 +145,8 @@ def _acceptance_state(config: pytest.Config) -> _AcceptanceState | None:
     states = _recognized_issue_states(project_root, list(config.args))
     if len(states) != 1 or not states[0].issue_path.is_dir():
         raise pytest.UsageError(
-            "acceptance proof path must be a single tests/acceptance/issue_N[_slug]"
-            " directory"
+            "Acceptance Verification Artifact path must be a single "
+            "tests/acceptance/issue_N[_slug] directory"
         )
     _assert_unambiguous_issue_directory(states[0])
     return states[0]
@@ -256,14 +256,16 @@ def pytest_configure(config: pytest.Config) -> None:
             exact_target = len(config.args) == 1 and "::" not in config.args[0]
             if not exact_target or Path(config.args[0]).resolve() != state.issue_path:
                 raise pytest.UsageError(
-                    "acceptance proof must target exactly one issue directory"
+                    "Acceptance Verification Artifact must target exactly one issue directory"
                 )
             if config.getoption("maxfail") != 1:
-                raise pytest.UsageError("acceptance proof requires --maxfail=1")
+                raise pytest.UsageError(
+                    "Acceptance Verification Artifact requires --maxfail=1"
+                )
             for option in _SELECTION_OPTIONS:
                 if config.getoption(option, default=None):
                     raise pytest.UsageError(
-                        f"acceptance proof forbids selection option: {option}"
+                        f"Acceptance Verification Artifact forbids selection option: {option}"
                     )
             for value in config.getoption("acceptance_input") or []:
                 relative = Path(value)
@@ -405,29 +407,35 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]):
         state.results[item.nodeid] = report.outcome
 
 
+def _is_tree_digest_excluded(path: Path) -> bool:
+    return "__pycache__" in path.parts
+
+
 def _tree_digest(paths: list[Path], project_root: Path) -> TypedDigest:
     digest = hashlib.sha256()
     files: list[Path] = []
     resolved_project_root = project_root.resolve()
     for root in paths:
+        if _is_tree_digest_excluded(root):
+            continue
         if root.is_symlink():
-            raise RuntimeError(f"acceptance input cannot be a symlink: {root}")
+            raise RuntimeError(f"Acceptance Source Tree input cannot be a symlink: {root}")
         if root.is_file():
             files.append(root)
         elif root.is_dir():
             for path in root.rglob("*"):
-                if "__pycache__" in path.parts:
+                if _is_tree_digest_excluded(path):
                     continue
                 if path.is_symlink():
                     raise RuntimeError(
-                        f"acceptance input cannot contain symlinks: {path}"
+                        f"Acceptance Source Tree input cannot contain symlinks: {path}"
                     )
                 if path.is_file():
                     files.append(path)
     for path in sorted(set(files)):
         resolved = path.resolve()
         if not resolved.is_relative_to(resolved_project_root):
-            raise RuntimeError(f"acceptance input escapes project root: {path}")
+            raise RuntimeError(f"Acceptance Source Tree input escapes project root: {path}")
         relative = path.relative_to(project_root).as_posix().encode("utf-8")
         data = resolved.read_bytes()
         digest.update(len(relative).to_bytes(4, "big"))
@@ -456,7 +464,7 @@ def _acceptance_source_paths(state: _AcceptanceState) -> list[Path]:
 def _assert_clean_source_tree(state: _AcceptanceState) -> None:
     git = shutil.which("git")
     if git is None:
-        raise RuntimeError("acceptance publication requires git")
+        raise RuntimeError("Acceptance Verification Artifact publication requires git")
     project_root = state.project_root.resolve()
     paths = sorted(
         {
@@ -467,6 +475,7 @@ def _assert_clean_source_tree(state: _AcceptanceState) -> None:
     completed = subprocess.run(
         [
             git,
+            "--literal-pathspecs",
             "status",
             "--porcelain=v1",
             "--untracked-files=all",
@@ -481,15 +490,46 @@ def _assert_clean_source_tree(state: _AcceptanceState) -> None:
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or f"git status exited {completed.returncode}"
-        raise RuntimeError(f"acceptance source tree cleanliness check failed: {detail}")
+        raise RuntimeError(f"Acceptance Source Tree cleanliness check failed: {detail}")
     if dirty := completed.stdout.strip():
-        raise RuntimeError(f"acceptance source tree is dirty:\n{dirty}")
+        raise RuntimeError(f"Acceptance Source Tree is dirty:\n{dirty}")
+    ignored = subprocess.run(
+        [
+            git,
+            "--literal-pathspecs",
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+            "--",
+            *paths,
+        ],
+        cwd=project_root,
+        capture_output=True,
+        check=False,
+    )
+    if ignored.returncode != 0:
+        detail = ignored.stderr.decode(errors="replace").strip() or (
+            f"git ls-files exited {ignored.returncode}"
+        )
+        raise RuntimeError(f"Acceptance Source Tree cleanliness check failed: {detail}")
+    ignored_paths = []
+    for encoded_path in ignored.stdout.split(b"\0"):
+        if not encoded_path:
+            continue
+        path = os.fsdecode(encoded_path)
+        if not _is_tree_digest_excluded(Path(path)):
+            ignored_paths.append(path)
+    if ignored_paths:
+        dirty = "\n".join(f"!! {path}" for path in ignored_paths)
+        raise RuntimeError(f"Acceptance Source Tree is dirty:\n{dirty}")
 
 def _verification_inputs(state: _AcceptanceState) -> list[VerificationInput]:
     lock_path = state.project_root / "uv.lock"
     pyproject_path = state.project_root / "pyproject.toml"
     if not lock_path.is_file():
-        raise RuntimeError("acceptance proof requires uv.lock")
+        raise RuntimeError("Acceptance Verification Artifact requires uv.lock")
     paths = _acceptance_source_paths(state)
     schema_registry = SchemaRegistry(_schema_root())
     inputs = [
@@ -561,5 +601,5 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         reporter = session.config.pluginmanager.get_plugin("terminalreporter")
         if reporter is not None:
             reporter.write_line(
-                f"acceptance artifact publication failed: {error}", red=True
+                f"Acceptance Verification Artifact publication failed: {error}", red=True
             )

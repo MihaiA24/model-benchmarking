@@ -1,8 +1,8 @@
 """Shared test doubles for every suite.
 
-This file is part of every acceptance proof's sealed source closure
+This file is part of every Acceptance Source Tree
 (see ``model_benchmark.evidence.pytest_acceptance``), so helpers here
-stay inside each proof's inventory — unlike helper modules under
+stay inside each Acceptance Verification Artifact's inventory — unlike helper
 ``tests/acceptance/``, which would sit outside the sealed digests.
 
 ``RecordingProvider`` is the single OpenAI-compatible provider double:

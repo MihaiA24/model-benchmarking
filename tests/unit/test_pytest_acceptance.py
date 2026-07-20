@@ -30,7 +30,9 @@ def _project(
     (project / "uv.lock").write_text("version = 1\n", encoding="utf-8")
     (project / "tests/conftest.py").write_text("", encoding="utf-8")
     (issue / "test_case.py").write_text(test_source, encoding="utf-8")
-    (project / ".gitignore").write_text("__pycache__/\n.pytest_cache/\n", encoding="utf-8")
+    (project / ".gitignore").write_text(
+        "__pycache__/\n.pytest_cache/\n.DS_Store\n", encoding="utf-8"
+    )
     subprocess.run(["git", "init", "-q"], cwd=project, check=True)
     subprocess.run(["git", "add", "."], cwd=project, check=True)
     subprocess.run(
@@ -109,10 +111,59 @@ def test_dirty_source_tree_refuses_publication(tmp_path: Path) -> None:
 
     output = completed.stdout + completed.stderr
     assert completed.returncode != 0
-    assert "acceptance source tree is dirty" in output
+    assert "Acceptance Source Tree is dirty" in output
     assert "src/untracked.py" in output
     assert not (artifact_root / "verification.json").exists()
     assert not (artifact_root / "sha256sums.txt").exists()
+
+
+def test_ignored_hashed_file_refuses_publication(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    artifact_root = project / "artifacts/acceptance/issue-99"
+    assert _run(project).returncode == 0
+    (project / "src/.DS_Store").write_bytes(b"ignored pollution\n")
+
+    completed = _run(project)
+
+    output = completed.stdout + completed.stderr
+    assert completed.returncode != 0
+    assert "Acceptance Source Tree is dirty" in output
+    assert "Acceptance Verification Artifact publication failed" in output
+    assert "src/.DS_Store" in output
+    assert not (artifact_root / "verification.json").exists()
+    assert not (artifact_root / "sha256sums.txt").exists()
+
+
+def test_pathspec_like_ignored_input_refuses_publication(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    artifact_root = project / "artifacts/acceptance/issue-99"
+    assert _run(project).returncode == 0
+    input_root = project / ":(exclude)extra"
+    input_root.mkdir()
+    (input_root / ".DS_Store").write_bytes(b"ignored pollution\n")
+
+    completed = _run(project, "--acceptance-input=:(exclude)extra")
+
+    output = completed.stdout + completed.stderr
+    assert completed.returncode != 0
+    assert "Acceptance Source Tree is dirty" in output
+    assert ":(exclude)extra/.DS_Store" in output
+    assert not (artifact_root / "verification.json").exists()
+    assert not (artifact_root / "sha256sums.txt").exists()
+
+
+def test_ignored_pycache_file_allows_publication(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    cache_file = project / "src/package/__pycache__/module.cpython-313.pyc"
+    cache_file.parent.mkdir(parents=True)
+    cache_file.write_bytes(b"ignored cache\n")
+
+    completed = _run(project)
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    artifact_root = project / "artifacts/acceptance/issue-99"
+    assert (artifact_root / "verification.json").is_file()
+    assert (artifact_root / "sha256sums.txt").is_file()
 
 
 @pytest.mark.parametrize(

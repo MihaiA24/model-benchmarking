@@ -12,7 +12,7 @@ from model_benchmark.declarations.schemas import SchemaRegistry, SchemaValidatio
 
 
 class VerificationArtifactError(RuntimeError):
-    """Canonical verification artifacts could not be safely published."""
+    """An Acceptance Verification Artifact could not be safely published."""
 
 
 @dataclass(frozen=True)
@@ -60,7 +60,7 @@ def write_verification_artifacts(
     inputs: list[VerificationInput],
     cases: list[VerificationCase],
 ) -> tuple[Path, Path]:
-    """Write and immediately verify canonical issue acceptance artifacts."""
+    """Write and immediately verify an issue's Acceptance Verification Artifact."""
     artifact_root = project_root / f"artifacts/acceptance/issue-{issue}"
     verification_path = artifact_root / "verification.json"
     manifest_path = artifact_root / "sha256sums.txt"

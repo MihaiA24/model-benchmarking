@@ -13,6 +13,28 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def _commit(project: Path, message: str, *paths: str) -> None:
+    subprocess.run(["git", "add", *(paths or (".",))], cwd=project, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Acceptance Test",
+            "-c",
+            "user.email=acceptance@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-qm",
+            message,
+        ],
+        cwd=project,
+        check=True,
+    )
+
+
 def _project(tmp_path: Path) -> Path:
     project = tmp_path / "nested"
     issue = project / "tests/acceptance/issue_99"
@@ -31,6 +53,8 @@ def _project(tmp_path: Path) -> Path:
         "def test_omitted():\n    assert True\n",
         encoding="utf-8",
     )
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    _commit(project, "baseline")
     return project
 
 
@@ -163,6 +187,12 @@ def test_shared_fixture_changes_are_sealed_into_source_identity(tmp_path: Path) 
         "fixture-v2\n",
         encoding="utf-8",
     )
+    dirty = _run(project)
+    assert dirty.returncode != 0
+    assert "Acceptance Source Tree is dirty" in dirty.stdout + dirty.stderr
+    _assert_no_authoritative_outputs(project)
+
+    _commit(project, "change shared fixture", "tests/fixtures/shared.txt")
     second = _run(project)
     assert second.returncode == 0, second.stdout + second.stderr
     second_document = _verification_document(project)
@@ -182,6 +212,7 @@ def test_explicit_inputs_are_path_safe_and_sealed(tmp_path: Path) -> None:
     shared.mkdir()
     fixture = shared / "value.txt"
     fixture.write_text("v1\n", encoding="utf-8")
+    _commit(project, "add explicit input", "shared-assets/value.txt")
 
     first = _run(project, "--acceptance-input=shared-assets")
     assert first.returncode == 0, first.stdout + first.stderr
@@ -190,6 +221,7 @@ def test_explicit_inputs_are_path_safe_and_sealed(tmp_path: Path) -> None:
         for item in _verification_document(project)["input_identities"]
     }["acceptance-source-tree"]
     fixture.write_text("v2\n", encoding="utf-8")
+    _commit(project, "change explicit input", "shared-assets/value.txt")
     second = _run(project, "--acceptance-input=shared-assets")
     assert second.returncode == 0, second.stdout + second.stderr
     second_digest = {
