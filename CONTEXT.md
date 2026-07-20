@@ -134,6 +134,18 @@ _Avoid_: Mutable portfolio, benchmark result
 A Suite-owned sealed record proving that one Scenario Package is authorable, reproducible, solvable, verifier-consistent, leak-reviewed, and eligible for a Suite roster independently of any experiment-varying Harness, Provider Route, model, Worker Profile, or Production Experiment Manifest.
 _Avoid_: Qualification Bundle, Trial result
 
+**Acceptance Verification Artifact**:
+A checksum-bound issue-scoped record of a completed acceptance suite, binding its command, case outcomes, and reproducibility inputs. It is not a Proof Envelope or Fresh Proof Generation.
+_Avoid_: Acceptance proof, acceptance artifact, Proof Envelope
+
+**Acceptance Source Tree**:
+The exact repository path closure whose normalized committed contents form the reproducibility identity of an Acceptance Verification Artifact. Publication is invalid when any non-committed file would contribute; changes outside the closure do not alter identity.
+_Avoid_: Entire repository, working tree, source checkout
+
+**Acceptance Artifact Freshness**:
+The condition in which every recomputable input identity in an Acceptance Verification Artifact matches the candidate checkout. It proves source reproducibility, not reproduction of recorded launcher, Python, or Docker observations.
+_Avoid_: Fresh Proof Generation, recent artifact, full-environment reproduction
+
 **Fresh Authoritative Gate**:
 A policy-declared complete ordered verification gate executed against one exact candidate source identity by an eligible Worker. Only its current Fresh Proof Generation may authorize fixed-head proof consumption.
 _Avoid_: Development slice, cached integration, acceptance test

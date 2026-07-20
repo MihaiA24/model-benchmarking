@@ -24,6 +24,26 @@ def _project(tmp_path: Path, source: str = "def test_case():\n    assert True\n"
     (project / "uv.lock").write_text("version = 1\n", encoding="utf-8")
     (project / "tests/conftest.py").write_text("", encoding="utf-8")
     (issue / "test_case.py").write_text(source, encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    subprocess.run(["git", "add", "."], cwd=project, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Acceptance Test",
+            "-c",
+            "user.email=acceptance@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-qm",
+            "baseline",
+        ],
+        cwd=project,
+        check=True,
+    )
     return project
 
 
@@ -85,6 +105,31 @@ def test_exact_issue_path_reproduces_artifacts_and_non_exact_path_fails(
     conftest.write_text(
         conftest.read_text(encoding="utf-8") + "# changed harness activation\n",
         encoding="utf-8",
+    )
+    dirty = _run(project)
+    assert dirty.returncode != 0
+    assert "Acceptance Source Tree is dirty" in dirty.stdout + dirty.stderr
+    assert not (artifact_root / "verification.json").exists()
+    assert not (artifact_root / "sha256sums.txt").exists()
+
+    subprocess.run(["git", "add", "tests/conftest.py"], cwd=project, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Acceptance Test",
+            "-c",
+            "user.email=acceptance@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-qm",
+            "change source",
+        ],
+        cwd=project,
+        check=True,
     )
     changed = _run(project)
     assert changed.returncode == 0, changed.stdout + changed.stderr
@@ -175,7 +220,11 @@ def test_require_docker_accepts_a_responding_daemon_probe_and_never_skips(
     docker.write_text("#!/bin/sh\nprintf '\"29.4.0\"\\n'\n", encoding="utf-8")
     docker.chmod(0o755)
 
-    completed = _run(project, "--require-docker", env={"PATH": str(binary_root)})
+    completed = _run(
+        project,
+        "--require-docker",
+        env={"PATH": f"{binary_root}{os.pathsep}{os.environ['PATH']}"},
+    )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "skipped" not in completed.stdout.lower()

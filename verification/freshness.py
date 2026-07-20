@@ -1,17 +1,17 @@
-"""Fail-closed freshness consumption of sealed acceptance proofs.
+"""Fail-closed Acceptance Artifact Freshness checks.
 
 The acceptance plugin (``model_benchmark.evidence.pytest_acceptance``)
-seals each proof under ``artifacts/acceptance/issue-N/`` with the digests
-of its source closure. Nothing in the development gate re-executes
-acceptance suites, so a runtime change that skips the reseal ritual
-leaves stale proofs behind silently. This module recomputes every
-deterministically recomputable input against the working tree and fails
-closed on any drift, without running a single test.
+publishes each Acceptance Verification Artifact under
+``artifacts/acceptance/issue-N/`` with the digests of its Acceptance Source
+Tree. Nothing in the development gate re-executes acceptance suites, so a
+runtime change that skips the reseal ritual leaves stale Acceptance
+Verification Artifacts behind silently. This module recomputes each recomputable
+input against the working tree and fails closed on drift without running tests.
 
 It deliberately reuses the plugin's own closure builder instead of
 duplicating the path list: the checker must never disagree with the
-producer about what a proof covers, and the plugin lives inside the
-sealed runtime tree, so widening its public surface for a tooling-only
+producer about what an Acceptance Verification Artifact covers. The plugin
+lives inside the sealed runtime tree, so widening its public surface for a
 consumer would force a condition-lock reseal.
 """
 
@@ -77,7 +77,7 @@ def acceptance_directories(project_root: Path) -> dict[int, Path]:
             )
         directories[issue] = candidate
     if not directories:
-        raise FreshnessError(f"no acceptance proof directories under {root}")
+        raise FreshnessError(f"no acceptance suite directories under {root}")
     return directories
 
 
@@ -101,7 +101,7 @@ def check_acceptance_proofs(
     project_root: Path,
     input_paths_by_issue: Mapping[int, Sequence[str]] | None = None,
 ) -> list[ProofFreshness]:
-    """Report per-suite proof freshness; recomputable drift is fail-closed.
+    """Report per-suite Acceptance Artifact Freshness; drift is fail-closed.
 
     ``input_paths_by_issue`` mirrors each suite's ``--acceptance-input``
     launch arguments (project-relative paths); suites absent from the

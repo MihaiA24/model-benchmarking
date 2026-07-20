@@ -1,6 +1,6 @@
-"""Ordered runner for the authoritative acceptance proof suite.
+"""Ordered runner for the authoritative Acceptance Verification Artifact suite.
 
-Each stage is one issue proof: a single ``tests/acceptance/issue_N_<slug>``
+Each stage produces one Acceptance Verification Artifact: a single
 directory executed as its own pytest session so the acceptance plugin
 (``model_benchmark.evidence.pytest_acceptance``) can publish
 ``artifacts/acceptance/issue-N/{verification.json,sha256sums.txt}``.
@@ -57,7 +57,7 @@ STAGES: tuple[Stage, ...] = (
         issue=28,
         slug="foundation_harness",
         group="foundation",
-        proves="Canonical JSON, identities, strict schemas, operator CLI, and the acceptance proof harness itself",
+        proves="Canonical JSON, identities, strict schemas, operator CLI, and the Acceptance Verification Artifact harness itself",
     ),
     Stage(
         issue=29,
@@ -112,7 +112,7 @@ STAGES: tuple[Stage, ...] = (
         issue=51,
         slug="proof_hardening",
         group="verification",
-        proves="Proof harness rejects partial selection, configuration failures, and stale outputs",
+        proves="Acceptance Verification Artifact harness rejects partial selection, configuration failures, and stale outputs",
         docker=True,
         extra=("--require-docker", "--acceptance-input=tests/architecture"),
     ),
@@ -296,7 +296,7 @@ def print_summary(results: list[StageResult]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Run the ordered acceptance proof suite."
+        description="Run the ordered Acceptance Verification Artifact suite."
     )
     parser.add_argument(
         "--list", action="store_true", help="print the run plan and exit"
