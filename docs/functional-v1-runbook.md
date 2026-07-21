@@ -7,7 +7,7 @@ the worker must provide. The CLI surface is exactly four commands:
 model-benchmark [--home DIR] [--json] {provision|preflight|run|inspect}
 ```
 
-Every command reads one strict manifest (`functional-v1-issue-75.yaml` is the committed,
+Every command reads one strict manifest (`functional-v1-manifest.yaml` is the committed,
 runnable example). All state lives under `--home` (default `.model-benchmark`).
 
 ## 1. Setup requirements
@@ -63,22 +63,31 @@ git clone <repo> && cd model-benchmarking && uv sync --frozen
 ## 2. The standard run — all harnesses, all scenarios
 
 The twelve-cell matrix (3 Scenario Packages × OMP, OpenCode, Hermes, Raw API) is the
-only operator-executable unit. One invocation each, in order:
+only operator-executable unit.
+
+The one-command wrapper validates the committed inputs, starts the dedicated worker,
+provisions, restores the worker uplink even if preflight fails, and executes the run:
+
+```sh
+scripts/run-functional-v1
+```
+
+The equivalent manual sequence is:
 
 ```sh
 # 1. Network-enabled provisioning (idempotent, content-addressed; `reused: true` on repeat)
 uv run --frozen --env-file .env model-benchmark --home .model-benchmark --json \
-  provision functional-v1-issue-75.yaml
+  provision functional-v1-manifest.yaml
 
 # 2. Network-disabled preflight: drop the daemon's uplink for the whole window
 sudo ip link set mb-host0 down
 uv run --frozen --env-file .env model-benchmark --home .model-benchmark --json \
-  preflight functional-v1-issue-75.yaml            # expect "outcome": "passed"
+  preflight functional-v1-manifest.yaml            # expect "outcome": "passed"
 sudo ip link set mb-host0 up
 
 # 3. The run (provider-enabled). Prints the Run ID; seals a Run Record on completion.
 uv run --frozen --env-file .env model-benchmark --home .model-benchmark --json \
-  run functional-v1-issue-75.yaml                  # expect "outcome": "sealed", "validity": "valid"
+  run functional-v1-manifest.yaml                  # expect "outcome": "sealed", "validity": "valid"
 
 # 4. Read-only verification (repeatable, byte-identical)
 uv run --frozen model-benchmark --home .model-benchmark --json inspect <RUN_ID>
