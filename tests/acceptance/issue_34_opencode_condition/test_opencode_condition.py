@@ -42,7 +42,9 @@ from model_benchmark.runtime.opencode import (
 
 _REAL_KEY = "provider-secret-value"
 _MODEL = "locked/model"
-_BRIEF = b"Implement the exact locked behavior.\n"
+_BRIEF = (
+    b"Implement the exact locked behavior. Run `python task.py --output generated.csv`.\n"
+)
 
 
 def test_condition_lock_seals_exact_stock_opencode_profile(
@@ -78,7 +80,12 @@ def test_condition_lock_seals_exact_stock_opencode_profile(
         "OPENCODE_CONFIG": "fresh-home/.model-benchmark/opencode.json",
         "OPENCODE_DISABLE_AUTOUPDATE": "true",
         "OPENCODE_DISABLE_PROJECT_CONFIG": "true",
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
+    assert (
+        configuration["workspace_cleanup"]
+        == "new-brief-declared-output-files"
+    )
     assert configuration["opencode_json"] == {
         "autoupdate": False,
         "mcp": {},
@@ -225,12 +232,15 @@ if os.environ.get("OPENCODE_DISABLE_AUTOUPDATE") != "true":
     raise SystemExit(93)
 if os.environ.get("OPENCODE_DISABLE_PROJECT_CONFIG") != "true":
     raise SystemExit(94)
+if os.environ.get("PYTHONDONTWRITEBYTECODE") != "1":
+    raise SystemExit(98)
 config_path = Path(os.environ["OPENCODE_CONFIG"])
 if config_path != home / ".model-benchmark/opencode.json":
     raise SystemExit(95)
 config = json.loads(config_path.read_text(encoding="utf-8"))
 provider = config["provider"]["model-benchmark-proxy"]
 brief = sys.stdin.buffer.read()
+(Path.cwd() / "generated.csv").write_text("derived output", encoding="utf-8")
 if (Path.cwd() / "unsupported").exists():
     raise SystemExit(96)
 parsed = urlsplit(provider["options"]["baseURL"])
@@ -467,11 +477,13 @@ def test_fresh_run_trials_preserve_stock_autonomy_and_complete_evidence(
         assert delivery["brief_sha256"] == (
             "sha256:" + hashlib.sha256(_BRIEF).hexdigest()
         )
+        assert delivery["cleaned_generated_paths"] == ["generated.csv"]
         assert delivery["model"] == _MODEL
         assert delivery["provider"] == "model-benchmark-proxy"
         assert delivery["proxy_base_url"].startswith("http://127.0.0.1:")
         assert delivery["transport"] == "run-stdin-json-events"
         assert delivery["workspace"] == str(trial_root / "repository")
+        assert not (trial_root / "repository/generated.csv").exists()
         assert snapshot.request_count == 2
         assert snapshot.provider_tokens == 34
         assert snapshot.provider_cost_usd == "0.20"

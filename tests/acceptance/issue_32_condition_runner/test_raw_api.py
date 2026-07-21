@@ -225,7 +225,40 @@ def test_non_streamed_json_response_still_materializes(
     assert (repository / _TARGET).read_text(encoding="utf-8") == "print('after')\n"
 
 
-def test_truncated_stream_without_done_is_invalid_provider_json(
+def test_sse_metadata_and_finish_reason_are_valid_without_done(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    replacement = {"content": "print('after')\n", "path": _TARGET}
+    events = (
+        {"choices": [{"delta": {"role": "assistant"}, "index": 0}]},
+        {
+            "choices": [
+                {"delta": {"content": json.dumps(replacement)}, "index": 0}
+            ]
+        },
+        {
+            "choices": [
+                {"delta": {}, "finish_reason": "stop", "index": 0}
+            ]
+        },
+    )
+    body = b": keepalive\n\nevent: message\n" + b"".join(
+        b"data: " + json.dumps(event, separators=(",", ":")).encode() + b"\n\n"
+        for event in events
+    )
+    recording_provider.enqueue_bytes(body, content_type="text/event-stream")
+    repository = _repository(tmp_path)
+
+    with _proxy(recording_provider, tmp_path) as proxy:
+        result = RawApiMaterializer().materialize(_request(proxy, repository))
+
+    assert result.outcome == "ready-for-capture"
+    assert result.diagnostic_code is None
+    assert (repository / _TARGET).read_text(encoding="utf-8") == "print('after')\n"
+
+
+def test_truncated_stream_without_terminal_marker_is_diagnosed(
     recording_provider: Any,
     tmp_path: Path,
 ) -> None:
@@ -241,6 +274,7 @@ def test_truncated_stream_without_done_is_invalid_provider_json(
 
     assert result.outcome == "valid_harness_outcome"
     assert result.reason_code == "invalid-provider-envelope"
+    assert result.diagnostic_code == "sse-missing-terminator"
     assert (repository / _TARGET).read_text(encoding="utf-8") == "before\n"
 
 

@@ -107,6 +107,7 @@ def test_launch_module_materializes_and_seals_delivery_evidence(
     assert _delivery(home) == {
         "artifact_identity": _module_identity(),
         "brief_sha256": f"sha256:{hashlib.sha256(_BRIEF).hexdigest()}",
+        "diagnostic_code": None,
         "outcome": "ready-for-capture",
         "provider_model": _MODEL,
         "proxy_base_url": base_url,

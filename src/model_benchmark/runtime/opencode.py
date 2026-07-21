@@ -49,7 +49,7 @@ OPENCODE_ARTIFACT_IDENTITY = (
 )
 OPENCODE_ARTIFACT_BYTES = 188_979_328
 OPENCODE_SHIM_IDENTITY = (
-    "artifact:sha256:c6a931f179f7b0d43742cb07e784ba6723790e6ea1a27eb022a8b2e3184301c7"
+    "artifact:sha256:34d39830c2ce3c4062d6a0c5f5311fa2d20c082db5ad117ace716ddc69faced2"
 )
 OPENCODE_ENVIRONMENT_NAMES = (
     "MODEL_BENCHMARK_PROVIDER_MODEL",
@@ -132,6 +132,7 @@ def _locked_configuration() -> dict[str, object]:
             "OPENCODE_CONFIG": "fresh-home/.model-benchmark/opencode.json",
             "OPENCODE_DISABLE_AUTOUPDATE": "true",
             "OPENCODE_DISABLE_PROJECT_CONFIG": "true",
+            "PYTHONDONTWRITEBYTECODE": "1",
         },
         "instruction_transport": "run-stdin-json-events",
         "launch_shim": {
@@ -148,6 +149,7 @@ def _locked_configuration() -> dict[str, object]:
         "runtime_installation": False,
         "session_persistence": False,
         "shutdown": "process-exit-then-process-group-teardown",
+        "workspace_cleanup": "new-brief-declared-output-files",
     }
 
 

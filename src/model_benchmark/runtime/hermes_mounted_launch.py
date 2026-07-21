@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import runpy
 import subprocess
 import sys
 from pathlib import Path
@@ -12,6 +13,7 @@ from pathlib import Path
 _UNQUALIFIED_EXIT = 78
 _PROVIDER_ID = "model-benchmark-proxy"
 _PROVIDER_ARGUMENT = f"custom:{_PROVIDER_ID}"
+_TOOL_PATH_ENV = "MODEL_BENCHMARK_HERMES_TOOL_PATH"
 
 
 def _digest(path: Path) -> str:
@@ -60,10 +62,44 @@ def _valid_usage(path: Path, model: str) -> bool:
     )
 
 
+def _run_hermes_entrypoint(arguments: list[str]) -> int:
+    original_argv = sys.argv
+    try:
+        sys.argv = arguments
+        try:
+            runpy.run_path(arguments[0], run_name="__main__")
+        except SystemExit as error:
+            if error.code is None:
+                return 0
+            return error.code if isinstance(error.code, int) else 1
+        return 0
+    finally:
+        sys.argv = original_argv
+
+
+def _bootstrap_hermes(arguments: list[str]) -> int:
+    """Run Hermes in its mounted Python while isolating native child tools."""
+    tool_path = os.environ.get(_TOOL_PATH_ENV)
+    if not arguments or not tool_path:
+        return _UNQUALIFIED_EXIT
+    original_environment = dict(os.environ)
+    try:
+        os.environ["PATH"] = tool_path
+        for name in (_TOOL_PATH_ENV, "LD_LIBRARY_PATH", "PYTHONHOME", "PYTHONPATH"):
+            os.environ.pop(name, None)
+        return _run_hermes_entrypoint(arguments)
+    finally:
+        os.environ.clear()
+        os.environ.update(original_environment)
+
+
 def main(argv: list[str] | None = None) -> int:
+    raw_arguments = sys.argv[1:] if argv is None else argv
+    if raw_arguments[:1] == ["--bootstrap"]:
+        return _bootstrap_hermes(raw_arguments[1:])
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--artifact-identity", required=True)
-    arguments = parser.parse_args(argv)
+    arguments = parser.parse_args(raw_arguments)
     mounted_root = Path("/opt/model-benchmark-condition")
     mounted_hermes = mounted_root / "opt/hermes"
     # The real ELF, not the lib64 symlink: on absolute-symlink glibc layouts
@@ -132,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
             "HERMES_INFERENCE_PROVIDER": _PROVIDER_ARGUMENT,
             "HERMES_TUI_DIR": str(mounted_hermes / "ui-tui"),
             "HERMES_WEB_DIST": str(mounted_hermes / "hermes_cli/web_dist"),
+            _TOOL_PATH_ENV: os.environ.get("PATH", os.defpath),
             "LD_LIBRARY_PATH": library_path,
             "PATH": f"{mounted_hermes / 'bin'}:{mounted_hermes / '.venv/bin'}:{os.environ.get('PATH', '')}",
             "PLAYWRIGHT_BROWSERS_PATH": str(mounted_hermes / ".playwright"),
@@ -150,6 +187,9 @@ def main(argv: list[str] | None = None) -> int:
                 "--library-path",
                 library_path,
                 str(python),
+                "-m",
+                "model_benchmark.runtime.hermes_mounted_launch",
+                "--bootstrap",
                 str(real),
                 "--ignore-rules",
                 "-z",

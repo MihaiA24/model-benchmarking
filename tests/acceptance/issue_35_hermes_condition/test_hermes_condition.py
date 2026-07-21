@@ -808,6 +808,12 @@ def test_mounted_launch_pins_the_hermes_environment_contract(
     assert arguments[1] == "--library-path"
     assert str(mount / "usr/bin/python3") in arguments
     assert str(hermes_root / ".venv/bin/hermes") in arguments
+    python_index = arguments.index(str(mount / "usr/bin/python3"))
+    assert arguments[python_index + 1 : python_index + 4] == [
+        "-m",
+        "model_benchmark.runtime.hermes_mounted_launch",
+        "--bootstrap",
+    ]
     assert "--ignore-rules" in arguments
     assert arguments[arguments.index("-z") + 1] == "do the task"
     assert arguments[arguments.index("--model") + 1] == "locked/model"
@@ -825,6 +831,48 @@ def test_mounted_launch_pins_the_hermes_environment_contract(
     )
     assert delivery["transport"] == "oneshot-argument-with-native-tools"
     assert delivery["runtime_installation"] is False
+
+
+def test_hermes_bootstrap_sanitizes_native_tool_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observation = tmp_path / "environment.json"
+    entrypoint = tmp_path / "hermes-entrypoint.py"
+    entrypoint.write_text(
+        """import json
+import os
+import sys
+from pathlib import Path
+
+Path(sys.argv[1]).write_text(json.dumps({
+    "argv": sys.argv,
+    "environment": {
+        name: os.environ.get(name)
+        for name in ("LD_LIBRARY_PATH", "PATH", "PYTHONHOME", "PYTHONPATH")
+    },
+}), encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/mounted/lib")
+    monkeypatch.setenv("PATH", "/mounted/bin")
+    monkeypatch.setenv("PYTHONHOME", "/mounted/usr")
+    monkeypatch.setenv("PYTHONPATH", "/mounted/site-packages")
+    monkeypatch.setenv("MODEL_BENCHMARK_HERMES_TOOL_PATH", "/usr/bin:/bin")
+
+    assert mounted_launch._bootstrap_hermes(
+        [str(entrypoint), str(observation), "task"]
+    ) == 0
+
+    recorded = json.loads(observation.read_text(encoding="utf-8"))
+    assert recorded["argv"] == [str(entrypoint), str(observation), "task"]
+    assert recorded["environment"] == {
+        "LD_LIBRARY_PATH": None,
+        "PATH": "/usr/bin:/bin",
+        "PYTHONHOME": None,
+        "PYTHONPATH": None,
+    }
 
 
 def test_mounted_launch_rejects_an_invalid_usage_report(

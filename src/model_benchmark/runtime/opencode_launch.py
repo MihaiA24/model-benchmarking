@@ -5,13 +5,17 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 _UNQUALIFIED_EXIT = 78
 _PROVIDER_ID = "model-benchmark-proxy"
+_OUTPUT_ARGUMENT = re.compile(
+    r"--output(?:=|\s+)([A-Za-z0-9][A-Za-z0-9._/-]*)"
+)
 
 
 def _artifact_digest(path: Path) -> str:
@@ -76,6 +80,48 @@ def _valid_transcript(data: bytes) -> bool:
     return completed
 
 
+def _declared_output_paths(brief: bytes, workspace: Path) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    text = brief.decode("utf-8", errors="strict")
+    for match in _OUTPUT_ARGUMENT.finditer(text):
+        relative = PurePosixPath(match.group(1))
+        if relative.is_absolute() or ".." in relative.parts or "." in relative.parts:
+            continue
+        destination = workspace.joinpath(*relative.parts)
+        if destination not in paths:
+            paths.append(destination)
+    return tuple(paths)
+
+
+def _has_symlink_parent(workspace: Path, path: Path) -> bool:
+    current = workspace
+    for part in path.relative_to(workspace).parts[:-1]:
+        current /= part
+        if current.is_symlink():
+            return True
+    return False
+
+
+def _clean_generated_outputs(
+    workspace: Path,
+    candidates: tuple[Path, ...],
+    preexisting: tuple[bool, ...],
+) -> tuple[str, ...]:
+    cleaned: list[str] = []
+    for path, existed in zip(candidates, preexisting, strict=True):
+        if (
+            existed
+            or not path.exists()
+            or path.is_symlink()
+            or not path.is_file()
+            or _has_symlink_parent(workspace, path)
+        ):
+            continue
+        path.unlink()
+        cleaned.append(path.relative_to(workspace).as_posix())
+    return tuple(cleaned)
+
+
 def _run_opencode(
     opencode: Path,
     brief: bytes,
@@ -83,14 +129,20 @@ def _run_opencode(
     *,
     config_path: Path,
     model: str,
-) -> int:
+) -> tuple[int, tuple[str, ...]]:
     environment = dict(os.environ)
     environment.update(
         {
             "OPENCODE_CONFIG": str(config_path),
             "OPENCODE_DISABLE_AUTOUPDATE": "true",
             "OPENCODE_DISABLE_PROJECT_CONFIG": "true",
+            "PYTHONDONTWRITEBYTECODE": "1",
         }
+    )
+    workspace = Path.cwd()
+    output_paths = _declared_output_paths(brief, workspace)
+    preexisting_outputs = tuple(
+        path.exists() or path.is_symlink() for path in output_paths
     )
     completed = subprocess.run(
         [
@@ -101,12 +153,15 @@ def _run_opencode(
             "--model",
             f"{_PROVIDER_ID}/{model}",
         ],
-        cwd=Path.cwd(),
+        cwd=workspace,
         env=environment,
         input=brief,
         stdout=subprocess.PIPE,
         stderr=None,
         check=False,
+    )
+    cleaned_outputs = _clean_generated_outputs(
+        workspace, output_paths, preexisting_outputs
     )
     transcript.write_bytes(completed.stdout)
     transcript.chmod(0o600)
@@ -119,8 +174,8 @@ def _run_opencode(
         or auth_path.exists()
         or auth_path.is_symlink()
     ):
-        return _UNQUALIFIED_EXIT
-    return 0
+        return _UNQUALIFIED_EXIT, cleaned_outputs
+    return 0, cleaned_outputs
 
 
 def _write_delivery_evidence(
@@ -129,10 +184,12 @@ def _write_delivery_evidence(
     base_url: str,
     brief: bytes,
     model: str,
+    cleaned_outputs: tuple[str, ...],
 ) -> None:
     value = {
         "auth_persistence": False,
         "brief_sha256": f"sha256:{hashlib.sha256(brief).hexdigest()}",
+        "cleaned_generated_paths": list(cleaned_outputs),
         "model": model,
         "provider": _PROVIDER_ID,
         "proxy_base_url": base_url,
@@ -174,17 +231,18 @@ def main(argv: list[str] | None = None) -> int:
             return _UNQUALIFIED_EXIT
         evidence = home / ".model-benchmark"
         config_path = _write_config(home, base_url=base_url, model=model)
-        _write_delivery_evidence(
-            evidence / "opencode-delivery.json",
-            base_url=base_url,
-            brief=brief,
-            model=model,
-        )
-        exit_code = _run_opencode(
+        exit_code, cleaned_outputs = _run_opencode(
             arguments.opencode,
             brief,
             evidence / "opencode-events.jsonl",
             config_path=config_path,
+            model=model,
+        )
+        _write_delivery_evidence(
+            evidence / "opencode-delivery.json",
+            base_url=base_url,
+            brief=brief,
+            cleaned_outputs=cleaned_outputs,
             model=model,
         )
         if _artifact_digest(arguments.opencode) != expected_identity:
