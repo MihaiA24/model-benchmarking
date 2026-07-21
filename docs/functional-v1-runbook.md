@@ -162,7 +162,55 @@ Windows-oriented); they are not part of the sealed V1 protocol.
 - After completion nothing Run-owned remains: no containers, networks, volumes, or
   `/tmp` scratch. `docker ps --all` / `docker network ls` should show only defaults.
 
-## 6. After changing runtime code
+## 6. Generate results and dashboards
+
+Reporting is read-only: it consumes sealed `run-record.json` files and needs no Docker,
+provider credential, or network access. The generated JSON and Markdown are paired
+diagnostic readouts; the HTML is a static, zero-JavaScript dashboard. All retain the
+`authority: none` / no-claims boundary of the source records.
+
+Generate reports for every sealed run under `.model-benchmark/runs/`:
+
+```sh
+scripts/generate-functional-v1-results
+```
+
+The default output directory is `.model-benchmark/reports/`. It contains
+`dashboard.html` plus one `readout-<manifest-sha256>.json` and
+`readout-<manifest-sha256>.md` pair per manifest identity. Records from different
+manifests become separate dashboard versions and separate readouts; records sharing a
+manifest are analyzed together as paired repetitions. The script prints every written
+path.
+Each invocation replaces prior generated dashboard/readout files in that directory while
+preserving unrelated files.
+
+To report only selected runs or choose another destination, pass their sealed records:
+
+```sh
+scripts/generate-functional-v1-results \
+  .model-benchmark/runs/<RUN_ID_1>/run-record.json \
+  .model-benchmark/runs/<RUN_ID_2>/run-record.json \
+  --output /tmp/functional-v1-results \
+  --title 'Functional V1 — July campaign'
+xdg-open /tmp/functional-v1-results/dashboard.html
+```
+
+Optional display labels never alter sealed identities. Map an identity prefix of at
+least eight hexadecimal characters to a label, then pass `--names`:
+
+```json
+{"57e2ba7a": "deepseek-v4-flash — July campaign"}
+```
+
+```sh
+scripts/generate-functional-v1-results --names manifest-names.json
+```
+
+Generation fails closed if any selected record is incomplete, invalid, malformed, or
+inconsistent with the other records in its manifest group. Given the same records,
+title, and names map, output bytes are deterministic.
+
+## 7. After changing runtime code
 
 Condition-image identities embed the runtime tree (`src/model_benchmark/**`); any change
 there stales the four condition locks and every manifest that pins them:
@@ -191,13 +239,13 @@ Update each `conditions.<name>.digest` in the manifest with the printed
 sealed images). The dev gate (`uv run python scripts/verify.py run-development
 --base origin/master --head HEAD`) must stay green.
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
 | `unsupported-native-platform` before any Docker call | not native Linux/amd64 |
 | provision/preflight can't reach the daemon | reboot cleared the transient units — `sudo bash scripts/functional-v1-worker start` |
-| `condition-image-pin-mismatch` / `reference-digest-mismatch` | runtime tree changed — section 6 |
+| `condition-image-pin-mismatch` / `reference-digest-mismatch` | runtime tree changed — section 7 |
 | `invalid-pricing-record` / `pricing-record-mismatch` | pricing fields edited without resealing — section 3 |
 | `pricing-record-expired` at `run` start | the sealed record's `effective_until_utc` has passed — re-retrieve and reseal per section 3; `inspect` and sealed-run `run --resume` are unaffected |
 | preflight isolation probe fails on proxy name | proxy container died at start — check its env is complete; the proxy import closure must stay stdlib-only (guarded by `tests/architecture`) |
