@@ -24,6 +24,7 @@ _SCENARIOS = (
     "python-sales-by-genre",
     "spring-petvalidator-whitespace",
     "angular-reading-time",
+    "react-author-filter",
 )
 
 
@@ -138,8 +139,8 @@ def test_charts_render_as_inline_svg_per_version(tmp_path: Path) -> None:
     assert "Task-success rate by condition" in page
     assert "Paired task-success differences" in page
     assert "<script" not in page
-    # omp pooled 2/2 on python out of 6 blocks -> labeled 2/6 (33%).
-    assert "2/6 (33%)" in page
+    # omp pooled 2/2 on python out of 8 blocks -> labeled 2/8 (25%).
+    assert "2/8 (25%)" in page
     assert 'class="legend"' in page
 
 
@@ -167,8 +168,8 @@ def test_presentation_template_elements_render(tmp_path: Path) -> None:
     assert "<nav>" in page and '<span class="sep">›</span>' in page
     assert 'class="hero"' in page and 'href="#overview"' in page
     assert '<div class="tag">Diagnostic · no claims</div>' in page
-    # Hero stat strip totals: 2 runs x 12 cells, 24 requests, 24000 tokens.
-    assert ">sealed runs<" in page and ">24000<" in page
+    # Hero stat strip totals: 2 runs × 16 cells, 96 requests, 32000 tokens.
+    assert ">sealed runs<" in page and ">32000<" in page
     # Sealed runs wear green state chips; dispositions are class-colored.
     assert 'class="chip chip-green">complete/valid' in page
     assert 'class="ok">valid_completed' in page

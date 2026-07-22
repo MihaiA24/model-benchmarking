@@ -1,134 +1,360 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import path from 'node:path';
-import vm from 'node:vm';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const repositoryRoot = fs.realpathSync('/tmp/submitted-repository');
-const moduleCache = new Map();
+const OPERATION = 'evaluate-functional-v1-react-author-filter';
+const REQUEST_PATH = '/evaluator-request/request.json';
+const RESULT_PATH = '/evaluator-result/result.json';
+const specs = [];
 
-function withinRepository(candidate) {
-  return candidate === repositoryRoot || candidate.startsWith(`${repositoryRoot}${path.sep}`);
+function addCase(id, group, state, action, expectedOutcome, sameStateReference = false) {
+  specs.push({ id, group, state, action, expectedOutcome, sameStateReference });
 }
 
-function resolveImport(specifier, referencingIdentifier) {
-  if (!specifier.startsWith('.')) {
-    throw new Error(`external module import is not permitted: ${specifier}`);
-  }
-  const referencingPath = fileURLToPath(referencingIdentifier);
-  let candidate = path.resolve(path.dirname(referencingPath), specifier);
-  if (path.extname(candidate) === '') candidate += '.js';
-  candidate = fs.realpathSync(candidate);
-  if (!withinRepository(candidate)) throw new Error('module import escaped the repository');
-  return candidate;
-}
+const filterArticles = [
+  { slug: 'first', author: { username: 'alice' } },
+  { slug: 'second', author: { username: 'bob' } },
+  { slug: 'third', author: { username: 'alice' } },
+  { slug: 'case-near-match', author: { username: 'Alice' } },
+  { slug: 'coercible-near-match', author: { username: 1 } },
+];
+const filterState = { articles: filterArticles, articlesCount: filterArticles.length };
+addCase(
+  'filter-matches',
+  'output',
+  filterState,
+  { type: 'FILTER_BY_AUTHOR', author: 'alice' },
+  { ...filterState, articles: [filterArticles[0], filterArticles[2]], filteredByAuthor: 'alice' },
+);
+addCase(
+  'filter-zero-match',
+  'output',
+  filterState,
+  { type: 'FILTER_BY_AUTHOR', author: 'nobody' },
+  { ...filterState, articles: [], filteredByAuthor: 'nobody' },
+);
+const preservedState = {
+  articles: [
+    { slug: 'one', author: { username: 'alice' } },
+    { slug: 'two', author: { username: 'bob' } },
+  ],
+  articlesCount: 2,
+  currentPage: 3,
+  filteredByAuthor: 'previous',
+  pager: { page: 3 },
+  tag: 'redux',
+  unrelated: { nested: ['preserve', 7] },
+};
+addCase(
+  'filter-preserves-state',
+  'state',
+  preservedState,
+  { type: 'FILTER_BY_AUTHOR', author: 'alice' },
+  {
+    ...preservedState,
+    articles: [preservedState.articles[0]],
+    filteredByAuthor: 'alice',
+  },
+);
 
-async function loadModule(candidate) {
-  const file = fs.realpathSync(candidate);
-  if (!withinRepository(file)) throw new Error('module path escaped the repository');
-  const cached = moduleCache.get(file);
-  if (cached) return cached;
-  const identifier = pathToFileURL(file).href;
-  const module = new vm.SourceTextModule(fs.readFileSync(file, 'utf8'), { identifier });
-  moduleCache.set(file, module);
-  await module.link((specifier, referencingModule) => (
-    loadModule(resolveImport(specifier, referencingModule.identifier))
-  ));
-  return module;
-}
-
-let reducer = null;
-let actionTypes = null;
-try {
-  const reducerModule = await loadModule(path.join(repositoryRoot, 'src/reducers/articleList.js'));
-  await reducerModule.evaluate();
-  reducer = reducerModule.namespace.default;
-  const constantsModule = await loadModule(path.join(repositoryRoot, 'src/constants/actionTypes.js'));
-  actionTypes = constantsModule.namespace;
-} catch {
-  reducer = null;
-  actionTypes = null;
-}
-
-function check(run) {
-  try {
-    assert.equal(typeof reducer, 'function');
-    run();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const outputPassed = check(() => {
-  const articles = [
-    { slug: 'first', author: { username: 'alice' } },
-    { slug: 'second', author: { username: 'bob' } },
-    { slug: 'third', author: { username: 'alice' } },
-    { slug: 'case-near-match', author: { username: 'Alice' } },
-    { slug: 'coercible-near-match', author: { username: new String('alice') } },
-  ];
-  const result = reducer(
-    { articles, articlesCount: articles.length },
-    { type: 'FILTER_BY_AUTHOR', author: 'alice' },
-  );
-  assert.deepEqual(result.articles.map(article => article.slug), ['first', 'third']);
-
-  const empty = reducer(
-    { articles, articlesCount: articles.length },
-    { type: 'FILTER_BY_AUTHOR', author: 'nobody' },
-  );
-  assert.deepEqual(empty.articles, []);
-});
-
-const statePassed = check(() => {
-  const pager = { page: 3 };
-  const unrelated = { nested: ['preserve', 7] };
-  const state = {
-    articles: [
-      { slug: 'one', author: { username: 'alice' } },
-      { slug: 'two', author: { username: 'bob' } },
-    ],
-    articlesCount: 2,
-    currentPage: 3,
-    filteredByAuthor: 'previous',
-    pager,
-    tag: 'redux',
-    unrelated,
-  };
-  const result = reducer(state, { type: 'FILTER_BY_AUTHOR', author: 'alice' });
-  assert.equal(result.filteredByAuthor, 'alice');
-  const { articles: _articles, filteredByAuthor: _filter, ...rest } = result;
-  const { articles: _originalArticles, filteredByAuthor: _originalFilter, ...expected } = state;
-  assert.deepEqual(rest, expected);
-});
-
-const regressionPassed = check(() => {
-  assert.ok(actionTypes);
-  const untouched = { articles: [], sentinel: { retained: true } };
-  assert.equal(reducer(untouched, { type: 'UNRELATED_ACTION' }), untouched);
-
-  const state = {
-    articles: [
-      { slug: 'target', favorited: false, favoritesCount: 4 },
-      { slug: 'other', favorited: false, favoritesCount: 2 },
-    ],
-    sentinel: 'keep',
-  };
-  const result = reducer(state, {
-    type: actionTypes.ARTICLE_FAVORITED,
+const favoriteState = {
+  articles: [
+    { slug: 'target', favorited: false, favoritesCount: 4 },
+    { slug: 'other', favorited: true, favoritesCount: 2 },
+  ],
+  sentinel: 'keep',
+};
+addCase(
+  'article-favorited',
+  'regression',
+  favoriteState,
+  {
+    type: 'ARTICLE_FAVORITED',
     payload: { article: { slug: 'target', favorited: true, favoritesCount: 5 } },
-  });
-  assert.deepEqual(result, {
+  },
+  {
+    ...favoriteState,
     articles: [
       { slug: 'target', favorited: true, favoritesCount: 5 },
-      { slug: 'other', favorited: false, favoritesCount: 2 },
+      favoriteState.articles[1],
     ],
-    sentinel: 'keep',
-  });
-});
+  },
+);
+const unfavoriteState = {
+  articles: [
+    { slug: 'target', favorited: true, favoritesCount: 5 },
+    { slug: 'other', favorited: false, favoritesCount: 2 },
+  ],
+  sentinel: 'keep',
+};
+addCase(
+  'article-unfavorited',
+  'regression',
+  unfavoriteState,
+  {
+    type: 'ARTICLE_UNFAVORITED',
+    payload: { article: { slug: 'target', favorited: false, favoritesCount: 4 } },
+  },
+  {
+    ...unfavoriteState,
+    articles: [
+      { slug: 'target', favorited: false, favoritesCount: 4 },
+      unfavoriteState.articles[1],
+    ],
+  },
+);
+const pageState = {
+  articles: [{ slug: 'old' }],
+  articlesCount: 1,
+  currentPage: 4,
+  sentinel: 'keep',
+};
+const pagePayload = { articles: [{ slug: 'new-page' }], articlesCount: 7 };
+addCase(
+  'set-page',
+  'regression',
+  pageState,
+  { type: 'SET_PAGE', payload: pagePayload, page: 2 },
+  { ...pageState, ...pagePayload, currentPage: 2 },
+);
+const tagState = {
+  articles: [{ slug: 'old' }],
+  articlesCount: 1,
+  currentPage: 4,
+  pager: { id: 'old-pager' },
+  sentinel: 'keep',
+  tab: 'global',
+  tag: 'old-tag',
+};
+const tagAction = {
+  type: 'APPLY_TAG_FILTER',
+  pager: { id: 'tag-pager' },
+  payload: { articles: [{ slug: 'tagged' }], articlesCount: 2 },
+  tag: 'react',
+};
+addCase(
+  'apply-tag-filter',
+  'regression',
+  tagState,
+  tagAction,
+  {
+    ...tagState,
+    pager: tagAction.pager,
+    articles: tagAction.payload.articles,
+    articlesCount: tagAction.payload.articlesCount,
+    tab: null,
+    tag: 'react',
+    currentPage: 0,
+  },
+);
+const homeState = {
+  articles: [{ slug: 'old' }],
+  articlesCount: 1,
+  currentPage: 4,
+  pager: { id: 'old-pager' },
+  sentinel: 'keep',
+  tab: 'old-tab',
+  tags: ['old'],
+};
+const homeAction = {
+  type: 'HOME_PAGE_LOADED',
+  pager: { id: 'home-pager' },
+  payload: [
+    { tags: ['react', 'redux'] },
+    { articles: [{ slug: 'home' }], articlesCount: 9 },
+  ],
+  tab: 'feed',
+};
+addCase(
+  'home-page-loaded',
+  'regression',
+  homeState,
+  homeAction,
+  {
+    ...homeState,
+    pager: homeAction.pager,
+    tags: homeAction.payload[0].tags,
+    articles: homeAction.payload[1].articles,
+    articlesCount: homeAction.payload[1].articlesCount,
+    currentPage: 0,
+    tab: 'feed',
+  },
+);
+addCase(
+  'home-page-unloaded',
+  'regression',
+  { articles: [{ slug: 'old' }], sentinel: 'discard' },
+  { type: 'HOME_PAGE_UNLOADED' },
+  {},
+);
+const tabState = {
+  articles: [{ slug: 'old' }],
+  articlesCount: 1,
+  currentPage: 4,
+  pager: { id: 'old-pager' },
+  sentinel: 'keep',
+  tab: 'old-tab',
+  tag: 'react',
+};
+const tabAction = {
+  type: 'CHANGE_TAB',
+  pager: { id: 'tab-pager' },
+  payload: { articles: [{ slug: 'tabbed' }], articlesCount: 3 },
+  tab: 'all',
+};
+addCase(
+  'change-tab',
+  'regression',
+  tabState,
+  tabAction,
+  {
+    ...tabState,
+    pager: tabAction.pager,
+    articles: tabAction.payload.articles,
+    articlesCount: tabAction.payload.articlesCount,
+    tab: 'all',
+    currentPage: 0,
+    tag: null,
+  },
+);
+const profileState = {
+  articles: [{ slug: 'old' }],
+  articlesCount: 1,
+  currentPage: 4,
+  pager: { id: 'old-pager' },
+  sentinel: 'keep',
+};
+const profileAction = {
+  type: 'PROFILE_PAGE_LOADED',
+  pager: { id: 'profile-pager' },
+  payload: [
+    { profile: { username: 'alice' } },
+    { articles: [{ slug: 'profile' }], articlesCount: 4 },
+  ],
+};
+addCase(
+  'profile-page-loaded',
+  'regression',
+  profileState,
+  profileAction,
+  {
+    ...profileState,
+    pager: profileAction.pager,
+    articles: profileAction.payload[1].articles,
+    articlesCount: profileAction.payload[1].articlesCount,
+    currentPage: 0,
+  },
+);
+const favoritesAction = {
+  type: 'PROFILE_FAVORITES_PAGE_LOADED',
+  pager: { id: 'favorites-pager' },
+  payload: [
+    { profile: { username: 'alice' } },
+    { articles: [{ slug: 'favorite' }], articlesCount: 5 },
+  ],
+};
+addCase(
+  'profile-favorites-page-loaded',
+  'regression',
+  profileState,
+  favoritesAction,
+  {
+    ...profileState,
+    pager: favoritesAction.pager,
+    articles: favoritesAction.payload[1].articles,
+    articlesCount: favoritesAction.payload[1].articlesCount,
+    currentPage: 0,
+  },
+);
+addCase(
+  'profile-page-unloaded',
+  'regression',
+  { articles: [{ slug: 'old' }], sentinel: 'discard' },
+  { type: 'PROFILE_PAGE_UNLOADED' },
+  {},
+);
+addCase(
+  'profile-favorites-page-unloaded',
+  'regression',
+  { articles: [{ slug: 'old' }], sentinel: 'discard' },
+  { type: 'PROFILE_FAVORITES_PAGE_UNLOADED' },
+  {},
+);
+const defaultState = { articles: [], sentinel: { retained: true } };
+addCase(
+  'default',
+  'regression',
+  defaultState,
+  { type: 'UNRELATED_ACTION' },
+  defaultState,
+  true,
+);
 
+const request = {
+  cases: specs.map(({ id, state, action }) => ({ id, state, action })),
+  operation: OPERATION,
+  schemaVersion: 1,
+};
+const requestTemporary = `${REQUEST_PATH}.tmp`;
+fs.writeFileSync(requestTemporary, `${JSON.stringify(request)}\n`, { flag: 'wx', mode: 0o600 });
+fs.renameSync(requestTemporary, REQUEST_PATH);
+
+for (let attempt = 0; attempt < 1200 && !fs.existsSync(RESULT_PATH); attempt += 1) {
+  await new Promise(resolve => setTimeout(resolve, 50));
+}
+const resultStat = fs.lstatSync(RESULT_PATH);
+assert.ok(resultStat.isFile() && !resultStat.isSymbolicLink());
+assert.ok(resultStat.size <= 1024 * 1024);
+const evaluation = JSON.parse(fs.readFileSync(RESULT_PATH, 'utf8'));
+assert.deepEqual(Object.keys(evaluation).sort(), [
+  'cases',
+  'evaluatorStatus',
+  'operation',
+  'schemaVersion',
+]);
+assert.equal(evaluation.schemaVersion, 1);
+assert.equal(evaluation.operation, OPERATION);
+assert.equal(evaluation.evaluatorStatus, 'complete');
+assert.ok(Array.isArray(evaluation.cases));
+assert.equal(evaluation.cases.length, specs.length);
+const responses = new Map();
+for (const response of evaluation.cases) {
+  assert.deepEqual(Object.keys(response).sort(), [
+    'errorCode',
+    'id',
+    'inputFrozen',
+    'inputUnchanged',
+    'outcome',
+    'sameStateReference',
+  ]);
+  assert.equal(typeof response.id, 'string');
+  assert.ok(!responses.has(response.id));
+  responses.set(response.id, response);
+}
+assert.deepEqual([...responses.keys()].sort(), specs.map(spec => spec.id).sort());
+
+const passedById = new Map();
+for (const spec of specs) {
+  const response = responses.get(spec.id);
+  let passed = false;
+  try {
+    assert.equal(response.errorCode, null);
+    assert.equal(response.inputFrozen, true);
+    assert.equal(response.inputUnchanged, true);
+    assert.equal(response.sameStateReference, spec.sameStateReference);
+    assert.deepEqual(response.outcome, spec.expectedOutcome);
+    passed = true;
+  } catch {
+    passed = false;
+  }
+  passedById.set(spec.id, passed);
+}
+const groupPassed = group => specs
+  .filter(spec => spec.group === group)
+  .every(spec => passedById.get(spec.id));
+const outputPassed = groupPassed('output');
+const statePassed = groupPassed('state');
+const regressionPassed = groupPassed('regression');
 const status = passed => (passed ? 'pass' : 'fail');
 const taskSuccess = outputPassed && statePassed && regressionPassed;
 const scores = {
@@ -141,9 +367,21 @@ const result = {
   acceptance_score: scores.acceptance_score,
   author_filter_state: scores.author_filter_state,
   checks: [
-    { evidence: ['author-filter-behavior-matrix'], id: 'author-filter-output', status: status(outputPassed) },
-    { evidence: ['state-preservation-matrix'], id: 'author-filter-state', status: status(statePassed) },
-    { evidence: ['existing-reducer-behavior'], id: 'reducer-regression', status: status(regressionPassed) },
+    {
+      evidence: ['author-filter-behavior-matrix', 'zero-match-filtered-author'],
+      id: 'author-filter-output',
+      status: status(outputPassed),
+    },
+    {
+      evidence: ['state-snapshot-deep-freeze', 'state-preservation-matrix'],
+      id: 'author-filter-state',
+      status: status(statePassed),
+    },
+    {
+      evidence: ['all-original-article-list-branches', 'os-isolated-evaluator'],
+      id: 'reducer-regression',
+      status: status(regressionPassed),
+    },
   ],
   domain_scores: { author_filter_state: scores.author_filter_state },
   regression_score: scores.regression_score,
@@ -158,3 +396,5 @@ const result = {
 fs.mkdirSync('/logs/verifier', { recursive: true });
 fs.writeFileSync('/logs/verifier/verifier-result.json', `${JSON.stringify(result)}\n`);
 fs.writeFileSync('/logs/verifier/reward.json', `${JSON.stringify(scores)}\n`);
+fs.writeFileSync('/evaluator-result/ack.tmp', 'ok\n', { flag: 'wx', mode: 0o600 });
+fs.renameSync('/evaluator-result/ack.tmp', '/evaluator-result/ack');

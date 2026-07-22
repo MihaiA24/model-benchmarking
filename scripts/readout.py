@@ -57,6 +57,7 @@ _SCENARIOS = (
     "python-sales-by-genre",
     "spring-petvalidator-whitespace",
     "angular-reading-time",
+    "react-author-filter",
 )
 _CONDITIONS = ("omp", "opencode", "hermes", "raw-api")
 _EXPECTED_CELLS = tuple(
@@ -108,7 +109,7 @@ def load_sealed_run_record(path: Path) -> dict[str, object]:
         raise ReadoutError(f"{path}: malformed sealed Run Record identities")
     cells = value.get("cells")
     if not isinstance(cells, list) or len(cells) != len(_EXPECTED_CELLS):
-        raise ReadoutError(f"{path}: Run Record does not contain the exact 12-cell schedule")
+        raise ReadoutError(f"{path}: Run Record does not contain the exact 16-cell schedule")
     for cell, (cell_id, scenario, condition) in zip(cells, _EXPECTED_CELLS, strict=True):
         if not isinstance(cell, dict):
             raise ReadoutError(f"{path}: malformed cell record")

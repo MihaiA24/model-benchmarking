@@ -14,6 +14,7 @@ _SCENARIOS = (
     "python-sales-by-genre",
     "spring-petvalidator-whitespace",
     "angular-reading-time",
+    "react-author-filter",
 )
 
 
@@ -148,7 +149,7 @@ def test_rejects_rehashed_incomplete_schedule_before_writing(tmp_path: Path) -> 
     completed = _run(str(record), "--output", str(output))
 
     assert completed.returncode == 2
-    assert "exact 12-cell schedule" in completed.stderr
+    assert "exact 16-cell schedule" in completed.stderr
     assert not output.exists()
 
 

@@ -348,7 +348,7 @@ def test_functional_v1_provisioning_records_sealed_store_images(
     with pytest.raises(_ConditionBoundaryReached):
         runtime._provision(manifest)
 
-    assert len(provisioned) == 3
+    assert len(provisioned) == 4
 
 
 class _PreflightBoundaryReached(RuntimeError):

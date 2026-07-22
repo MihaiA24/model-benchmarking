@@ -64,8 +64,10 @@ git clone <repo> && cd model-benchmarking && uv sync --frozen
 
 ## 2. The standard run — all harnesses, all scenarios
 
-The twelve-cell matrix (3 Scenario Packages × OMP, OpenCode, Hermes, Raw API) is the
-only operator-executable unit.
+The sixteen-cell matrix (4 Scenario Packages × OMP, OpenCode, Hermes, Raw API) is the
+only operator-executable unit. Functional V1 hard-cuts to this contract. Existing sealed
+12-cell Run Records remain immutable archival evidence, but the current operator rejects
+them; no compatibility layer, alias, or migration shim reinterprets them as current runs.
 
 The one-command wrapper validates the committed inputs, starts the dedicated worker,
 provisions, restores the worker uplink even if preflight fails, and executes the run:
@@ -105,6 +107,37 @@ Evidence: `.model-benchmark/runs/<RUN_ID>/` — `run-record.json` + `.identity`,
 `cells/<cell>/raw/proxy-evidence/proxy.jsonl` (per-response tokens, derived
 `provider_cost_usd`, provider-reported `provider_reported_cost_usd`, pricing identity).
 
+### Separate no-spend Dry-launch Qualification
+
+The Dry-launch Qualification is lifecycle evidence, not a Functional V1 Run Record. It
+never enters benchmark readouts or dashboards, and task success is irrelevant. Run it on
+the exact clean candidate or merge commit before any paid Campaign:
+
+```sh
+scripts/qualify-functional-v1-dry-launch
+```
+
+The wrapper live-validates all four supported manifests against the `opencode-go`
+catalog, provider route, model slugs, exact rates, and effective pricing windows. It starts
+the dedicated worker, provisions the DeepSeek manifest as the structural reference, drops
+`mb-host0` for preflight and the complete 16-cell execution window, and substitutes a
+deterministic loopback provider inside each Credential Proxy. The proxy has only the
+internal `proxy-only` network: no external-provider network, DNS, credential, or request is
+available. Every cell must start its Condition, observe at least one proxy request, exit,
+capture the trusted Submission, complete the Verifier, seal a Result Bundle, and clean up.
+
+After execution, the wrapper restores and verifies `mb-host0` before it seals and inspects:
+
+- `artifacts/qualification/functional-v1/dry-launch-qualification.json`;
+- `artifacts/qualification/functional-v1/dry-launch-qualification.identity`; and
+- `artifacts/qualification/functional-v1/dry-launch-qualification.sha256`.
+
+Success requires 16 terminal lifecycles, 16 verified bundles, zero external egress, zero
+external cost, no infrastructure/integrity invalidity, complete cleanup, and restored
+uplink. The command fails rather than overwrite prior evidence. Any source, lock, manifest,
+pricing, worker, or qualification change invalidates the record and requires a fresh output
+path. No provider key is read and no paid Trial is run.
+
 ## 3. One model / another provider route
 
 A manifest pins exactly one OpenAI-compatible route and one exact model; benchmarking N
@@ -143,7 +176,7 @@ provider-reported figure is recorded alongside as provenance.
 
 ## 4. One harness or one scenario — not operator-selectable
 
-The matrix is fixed by design: a valid Run Record always proves all twelve cells, so
+The matrix is fixed by design: a valid current Run Record always proves all sixteen cells, so
 records are comparable and a partial run can never masquerade as an acceptance. There is
 no CLI flag to run a single condition or scenario. (Single-condition schedules exist
 only as `INTERNAL_QUALIFICATION_STAGES` on the runtime API for maintainer

@@ -12,8 +12,8 @@ provider:
     effective_from_utc: "2026-07-22T00:00:00Z"
     effective_until_utc: "2026-09-01T00:00:00Z"
     source_url: https://models.dev/providers/opencode-go
-    retrieved_at_utc: "2026-07-22T20:39:29Z"
-    identity: pricing-record:sha256:73a1c8e126ba8e3c8b69867404609290e948c8965908179b52d81838eab4c8c1
+    retrieved_at_utc: "2026-07-22T23:01:53Z"
+    identity: pricing-record:sha256:839345de1c365754df4745dcffec03b98a3102723bfe4926273401478557afea
 
 limits:
   requests_per_trial: 64
@@ -38,17 +38,20 @@ scenarios:
   angular-reading-time:
     path: scenarios/calibration/angular-reading-time/scenario.lock.json
     digest: package-lock:sha256:0abf78113f0d695f88c58e5ca137206ca644d0235c960a0ec58f8e34e5638284
+  react-author-filter:
+    path: scenarios/calibration/react-author-filter/scenario.lock.json
+    digest: package-lock:sha256:80e3dbe5feae3af970ef6c090aeb19b8af2d6bc083bd7888c21183c19f4014c2
 
 conditions:
   omp:
     path: profiles/functional-v1/omp-v16.4.0.condition.json
-    digest: functional-v1-condition:sha256:dce8184104647439dd21e31d85b3360140c346d36a1d25ec4ebf65309bd88e28
+    digest: functional-v1-condition:sha256:218cb4fbfdb6d2fa36742c6416d84087f3ee5330b00383e5bcda2f9e9f312c20
   opencode:
     path: profiles/functional-v1/opencode-v1.17.18.condition.json
-    digest: functional-v1-condition:sha256:844d49b5e623b44212c4c3ad1fda133daa215f630b350549e09e7bc5449c8e4c
+    digest: functional-v1-condition:sha256:a8007a660d6294ef351feea650f91ba87dd75a0ebcc50e31d8b734039b6bd816
   hermes:
     path: profiles/functional-v1/hermes-v0.18.2.condition.json
-    digest: functional-v1-condition:sha256:cffbb5428fc6baf3a516bc7ef64206987fa5312d967333f83ec05ab0c2cb1f2f
+    digest: functional-v1-condition:sha256:4ad83b23c81324d5c0855a467faa2a05079d6faffe0d91fcb1fcbd644e4cbaa7
   raw-api:
     path: profiles/functional-v1/raw-api-v1.condition.json
-    digest: functional-v1-condition:sha256:c3916e04f236774434394cd7da972ec15d33fff9fc01fb4f5fa13f515f7eee45
+    digest: functional-v1-condition:sha256:5a91c699dd9b8de2e7cfb504fda08346011b4ef11ac0b9165043a20245543aa6

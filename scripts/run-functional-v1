@@ -22,7 +22,7 @@ Runs the committed Functional V1 configuration end to end:
   1. start the dedicated worker
   2. provision inputs
   3. run network-disabled preflight
-  4. execute and seal all 12 cells
+  4. execute and seal all 16 cells
 
 Optional environment overrides:
   MODEL_BENCHMARK_MANIFEST   manifest path
@@ -95,5 +95,5 @@ run_benchmark preflight
 restore_uplink
 trap - EXIT INT TERM
 
-printf '==> executing all 12 Functional V1 cells\n' >&2
+printf '==> executing all 16 Functional V1 cells\n' >&2
 run_benchmark run

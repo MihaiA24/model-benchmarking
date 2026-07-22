@@ -49,6 +49,10 @@ from model_benchmark.runtime.condition_registry import (
     CONDITIONS as CONDITION_REGISTRY,
     HARNESS_CONDITIONS,
 )
+from model_benchmark.runtime.dry_launch_provider import (
+    DRY_LAUNCH_API_KEY,
+    DRY_LAUNCH_ENV,
+)
 from model_benchmark.runtime.functional_v1 import (
     CELL_SCHEDULE,
     CommandResult,
@@ -101,7 +105,7 @@ def _stage_schedules() -> Mapping[str, tuple[Mapping[str, object], ...]]:
     stages["four-condition"] = tuple(
         cell for cell in CELL_SCHEDULE if cell["scenario"] == scenario
     )
-    stages["twelve-cell"] = tuple(CELL_SCHEDULE)
+    stages["sixteen-cell"] = tuple(CELL_SCHEDULE)
     return MappingProxyType(stages)
 
 
@@ -438,9 +442,7 @@ def _pull_exact_image(reference: str) -> None:
 def _dockerfile_base(dockerfile: Path) -> str:
     first = dockerfile.read_text(encoding="utf-8").splitlines()[0]
     if not first.startswith("FROM "):
-        raise ExecutionError(
-            "invalid-image-recipe", f"{dockerfile} has no pinned base"
-        )
+        raise ExecutionError("invalid-image-recipe", f"{dockerfile} has no pinned base")
     return first.removeprefix("FROM ").split()[0]
 
 
@@ -1071,7 +1073,12 @@ def _probe_condition_mounts(
         )
         artifact_root = f"{_CONDITION_MOUNT}/artifact"
         artifact_probe = _docker(
-            [*arguments, "sh", "-c", f"test ! -e {artifact_root} || ls {artifact_root}"],
+            [
+                *arguments,
+                "sh",
+                "-c",
+                f"test ! -e {artifact_root} || ls {artifact_root}",
+            ],
             timeout=60,
             check=False,
         )
@@ -1194,11 +1201,14 @@ class HarborCellExecutor:
         inventory: ProvisioningInventory,
         packages: Mapping[str, Path],
         workspace: RunWorkspace,
+        *,
+        dry_launch: bool = False,
     ) -> None:
         self.manifest = manifest
         self.inventory = inventory
         self.packages = packages
         self.workspace = workspace
+        self.dry_launch = dry_launch
         self._processes: set[subprocess.Popen[str]] = set()
         self._lock = threading.Lock()
 
@@ -1227,6 +1237,15 @@ class HarborCellExecutor:
                 "provisioning-inventory-mismatch", f"missing {collection}.{key}"
             )
         return value[key]
+
+    def _provider_evidence(self) -> dict[str, object]:
+        if not self.dry_launch:
+            return {}
+        return {
+            "external_egress": "disabled",
+            "external_provider_requests": 0,
+            "provider_substitution": "loopback-deterministic-v1",
+        }
 
     def _harbor_binary(self) -> str:
         seam = self._record("shared", "harbor-seam")
@@ -1330,6 +1349,12 @@ class HarborCellExecutor:
                 "proxy-only": {"internal": True, "labels": labels},
             },
         }
+        if getattr(self, "dry_launch", False):
+            proxy_service = value["services"]["credential-proxy"]
+            proxy_service.pop("dns")
+            proxy_service["networks"] = ["proxy-only"]
+            proxy_service["environment"][DRY_LAUNCH_ENV] = "1"
+            value["networks"].pop("provider-egress")
         path.write_text(yaml.safe_dump(value, sort_keys=True), encoding="utf-8")
 
     def _trial_result(self, trials: Path) -> tuple[Path, dict[str, object]]:
@@ -1655,7 +1680,11 @@ class HarborCellExecutor:
                 "invalid-condition-lock", "condition artifact is malformed"
             )
         token = secrets.token_urlsafe(32)
-        real_key = os.environ.get("MODEL_BENCHMARK_PROVIDER_API_KEY", "")
+        real_key = (
+            DRY_LAUNCH_API_KEY
+            if self.dry_launch
+            else os.environ.get("MODEL_BENCHMARK_PROVIDER_API_KEY", "")
+        )
         if not real_key:
             raise ExecutionError(
                 "provider-credential-missing", "provider credential is absent"
@@ -1759,6 +1788,8 @@ class HarborCellExecutor:
                     self.manifest.value["limits"]["stop_after_cost_usd_per_trial"]
                 ),
             }
+            if self.dry_launch:
+                environment[DRY_LAUNCH_ENV] = "1"
             process = subprocess.Popen(
                 arguments,
                 env=environment,
@@ -1856,6 +1887,7 @@ class HarborCellExecutor:
             _cleanup_owned(run_id, cell_id)
             details = {
                 **dict(outcome.details),
+                **self._provider_evidence(),
                 "cleanup_before": cleanup_before,
                 "cleanup_after": [],
                 "harbor_exit_code": process.returncode,
@@ -2073,9 +2105,7 @@ class NativeFunctionalV1Runtime:
 
             cache = root / "conditions-cache"
             condition_sources = {
-                name: definition.provision(
-                    cache, manifest.condition_lock_bytes[name]
-                )
+                name: definition.provision(cache, manifest.condition_lock_bytes[name])
                 for name, definition in CONDITION_REGISTRY.items()
                 if definition.provision is not None
             }
@@ -2467,11 +2497,7 @@ class NativeFunctionalV1Runtime:
             )
         _cleanup_owned(run_id)
         global_fault = next(
-            (
-                outcome
-                for outcome in outcomes
-                if outcome.disposition in _GLOBAL_FAULTS
-            ),
+            (outcome for outcome in outcomes if outcome.disposition in _GLOBAL_FAULTS),
             None,
         )
         if global_fault is not None:

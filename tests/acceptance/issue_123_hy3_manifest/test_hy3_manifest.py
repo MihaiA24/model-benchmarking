@@ -18,11 +18,11 @@ def test_published_hy3_manifest_loads_with_sealed_projection() -> None:
 
     assert str(manifest.identity) == (
         "functional-v1-manifest:sha256:"
-        "e362bece29add50d3246c2ff2a9a35d96deb54dbbe47112d2837b26b275aa4b8"
+        "bb2ce2f9ad81e527abf2321770726c229a8302ce326facfbd1ac331a452119ea"
     )
     assert str(manifest.resolved_identity) == (
         "resolved-v1-manifest:sha256:"
-        "0c47856344058ff4614a1a777d8bfeb59d14f824be624ae6edf5bf30de9a574b"
+        "d2f14be15a600339fa2caa9b5fb88c0295d2ea3d72bc1970997c7bb2a979413e"
     )
     assert manifest.identity_value["provider"] == {
         "base_url": "https://opencode.ai/zen/go/v1",
@@ -36,16 +36,16 @@ def test_published_hy3_manifest_loads_with_sealed_projection() -> None:
             "effective_from_utc": "2026-07-22T00:00:00Z",
             "effective_until_utc": "2026-09-01T00:00:00Z",
             "source_url": "https://models.dev/providers/opencode-go",
-            "retrieved_at_utc": "2026-07-22T20:39:29Z",
+            "retrieved_at_utc": "2026-07-22T23:01:53Z",
             "identity": (
                 "pricing-record:sha256:"
-                "73a1c8e126ba8e3c8b69867404609290e948c8965908179b52d81838eab4c8c1"
+                "839345de1c365754df4745dcffec03b98a3102723bfe4926273401478557afea"
             ),
         },
     }
     assert tuple(manifest.identity_value["scenarios"]) == SCENARIOS
     assert tuple(manifest.identity_value["conditions"]) == CONDITIONS
-    assert len(SCENARIOS) * len(CONDITIONS) == 12
+    assert len(SCENARIOS) * len(CONDITIONS) == 16
     assert manifest.identity_value["limits"] == {
         "requests_per_trial": 64,
         "provider_tokens_per_trial": 375_000,

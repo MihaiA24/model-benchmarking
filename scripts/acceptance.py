@@ -154,6 +154,7 @@ STAGES: tuple[Stage, ...] = (
         slug="react_author_filter",
         group="scenarios",
         proves="React author-filter package: immutable provenance, bounded submission, and isolated behavioral qualification",
+        docker=True,
     ),
 )
 

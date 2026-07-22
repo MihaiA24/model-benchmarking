@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly PROJECT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+readonly WORKER=$PROJECT_ROOT/scripts/functional-v1-worker
+readonly WORKER_SOCKET=/run/model-benchmark-docker/docker.sock
+readonly WORKER_UPLINK=mb-host0
+readonly HOME_PATH=${MODEL_BENCHMARK_QUALIFICATION_HOME:-$PROJECT_ROOT/.model-benchmark-dry-launch}
+readonly OUTPUT=${MODEL_BENCHMARK_QUALIFICATION_OUTPUT:-$PROJECT_ROOT/artifacts/qualification/functional-v1/dry-launch-qualification.json}
+readonly REFERENCE=$PROJECT_ROOT/functional-v1-manifest.yaml
+readonly MANIFESTS=(
+  "$PROJECT_ROOT/functional-v1-manifest.yaml"
+  "$PROJECT_ROOT/functional-v1-mimo-v2.5.yaml"
+  "$PROJECT_ROOT/functional-v1-minimax-m3.yaml"
+  "$PROJECT_ROOT/functional-v1-hy3.yaml"
+)
+
+uplink_disabled=0
+temporary=
+
+restore_uplink() {
+  if [[ $uplink_disabled -eq 1 ]]; then
+    sudo ip link set "$WORKER_UPLINK" up
+    uplink_disabled=0
+  fi
+}
+
+cleanup() {
+  restore_uplink
+  if [[ -n $temporary ]]; then
+    rm -rf -- "$temporary"
+  fi
+}
+trap cleanup EXIT INT TERM
+
+for command in sudo uv ip; do
+  command -v "$command" >/dev/null 2>&1 || {
+    printf 'error: required command not found: %s\n' "$command" >&2
+    exit 1
+  }
+done
+[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || {
+  printf 'error: dry launch requires native Linux/amd64\n' >&2
+  exit 1
+}
+[[ ! -e $OUTPUT && ! -e ${OUTPUT%.json}.identity && ! -e ${OUTPUT%.json}.sha256 ]] || {
+  printf 'error: qualification output already exists; freshness requires a new path\n' >&2
+  exit 1
+}
+
+temporary=$(mktemp -d)
+readonly CATALOG=$temporary/catalog-validation.json
+readonly DRAFT=$temporary/dry-launch-draft.json
+manifest_arguments=()
+for manifest in "${MANIFESTS[@]}"; do
+  manifest_arguments+=(--manifest "$manifest")
+done
+
+cd "$PROJECT_ROOT"
+printf '==> live-validating four manifests without provider requests\n' >&2
+uv run --offline --frozen python -m model_benchmark.runtime.dry_launch_qualification \
+  catalog "${manifest_arguments[@]}" --output "$CATALOG"
+
+printf '==> starting dedicated Functional V1 worker\n' >&2
+sudo bash "$WORKER" start
+export DOCKER_HOST="unix://$WORKER_SOCKET"
+
+printf '==> provisioning sealed DeepSeek structural reference\n' >&2
+uv run --offline --frozen model-benchmark --home "$HOME_PATH" --json \
+  provision "$REFERENCE"
+
+printf '==> preflighting with worker uplink disabled\n' >&2
+sudo ip link set "$WORKER_UPLINK" down
+uplink_disabled=1
+uv run --offline --frozen model-benchmark --home "$HOME_PATH" --json \
+  preflight "$REFERENCE"
+restore_uplink
+
+printf '==> executing isolated local-provider 16-cell lifecycle\n' >&2
+sudo ip link set "$WORKER_UPLINK" down
+uplink_disabled=1
+uv run --offline --frozen python -m model_benchmark.runtime.dry_launch_qualification \
+  execute "$REFERENCE" "${manifest_arguments[@]}" --home "$HOME_PATH" \
+  --catalog-validation "$CATALOG" --draft "$DRAFT" --worker-uplink "$WORKER_UPLINK"
+restore_uplink
+
+printf '==> sealing qualification after verified uplink restoration\n' >&2
+uv run --offline --frozen python -m model_benchmark.runtime.dry_launch_qualification \
+  seal --draft "$DRAFT" --output "$OUTPUT" --worker-uplink "$WORKER_UPLINK"
+uv run --offline --frozen python -m model_benchmark.runtime.dry_launch_qualification \
+  inspect "$OUTPUT"
+
+printf '==> no paid Trials were run\n' >&2

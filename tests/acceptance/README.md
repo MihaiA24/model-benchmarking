@@ -44,6 +44,7 @@ directories on disk in lockstep.
 | 13 | operator | `issue_74_functional_v1_operator` | Functional V1 operator: manifest, managed home, dispositions, CLI | |
 | 14 | operator | `issue_118_minimax_m3_manifest` | MiniMax M3 manifest route, pricing, fixed matrix, and canonical identities | Seals authored manifest input |
 | 15 | operator | `issue_123_hy3_manifest` | Hy3 manifest route, pricing, fixed matrix, and canonical identities | Seals authored manifest input |
+| 16 | scenarios | `issue_120_react_author_filter` | React package provenance, submission boundary, and isolated behavioral qualification | Seals qualified Scenario evidence |
 
 ## Proof contract
 

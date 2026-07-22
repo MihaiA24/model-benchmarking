@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import difflib
+import hashlib
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
-from model_benchmark.declarations.functional_v1 import FunctionalV1Manifest, SCENARIOS
+from model_benchmark.declarations.functional_v1 import CONDITIONS, FunctionalV1Manifest, SCENARIOS
 from model_benchmark.declarations.scenario_locks import schema_root_path
 from model_benchmark.declarations.schemas import SchemaRegistry
 
@@ -27,6 +31,217 @@ def run_scenario(*arguments: str) -> subprocess.CompletedProcess[str]:
         timeout=120,
         check=False,
     )
+
+
+REFERENCE_INSERTION = """    case 'FILTER_BY_AUTHOR':
+      return {
+        ...state,
+        articles: state.articles.filter(
+          article => article.author.username === action.author
+        ),
+        filteredByAuthor: action.author
+      };
+"""
+BRANCH_ACTIONS = (
+    ("article-favorited", "ARTICLE_FAVORITED"),
+    ("article-unfavorited", "ARTICLE_UNFAVORITED"),
+    ("set-page", "SET_PAGE"),
+    ("apply-tag-filter", "APPLY_TAG_FILTER"),
+    ("home-page-loaded", "HOME_PAGE_LOADED"),
+    ("home-page-unloaded", "HOME_PAGE_UNLOADED"),
+    ("change-tab", "CHANGE_TAB"),
+    ("profile-page-loaded", "PROFILE_PAGE_LOADED"),
+    ("profile-favorites-page-loaded", "PROFILE_FAVORITES_PAGE_LOADED"),
+    ("profile-page-unloaded", "PROFILE_PAGE_UNLOADED"),
+    ("profile-favorites-page-unloaded", "PROFILE_FAVORITES_PAGE_UNLOADED"),
+)
+
+
+def reference_source() -> tuple[str, str]:
+    baseline = (
+        PACKAGE / "environment/baseline/src/reducers/articleList.js"
+    ).read_text(encoding="utf-8")
+    needle = "    case SET_PAGE:\n"
+    assert baseline.count(needle) == 1
+    return baseline, baseline.replace(needle, REFERENCE_INSERTION + needle)
+
+
+def faulty_submissions() -> list[tuple[str, str, dict[str, int]]]:
+    _, reference = reference_source()
+    zero_match = reference.replace(
+        "        filteredByAuthor: action.author\n",
+        """        filteredByAuthor: state.articles.some(
+          article => article.author.username === action.author
+        ) ? action.author : state.filteredByAuthor
+""",
+        1,
+    )
+    mutating = reference.replace(
+        REFERENCE_INSERTION,
+        """    case 'FILTER_BY_AUTHOR':
+      state.articles = state.articles.filter(
+        article => article.author.username === action.author
+      );
+      state.filteredByAuthor = action.author;
+      return state;
+""",
+        1,
+    )
+    faults = [
+        (
+            "zero-match-marker",
+            zero_match,
+            {
+                "acceptance_score": 0,
+                "author_filter_state": 1,
+                "regression_score": 1,
+                "task_success": 0,
+            },
+        ),
+        (
+            "input-mutation",
+            mutating,
+            {
+                "acceptance_score": 0,
+                "author_filter_state": 0,
+                "regression_score": 1,
+                "task_success": 0,
+            },
+        ),
+    ]
+    reducer_start = "export default (state = {}, action) => {\n"
+    for identifier, action_type in BRANCH_ACTIONS:
+        faulty = reference.replace(
+            reducer_start,
+            reducer_start + f"  if (action.type === '{action_type}') return state;\n",
+            1,
+        )
+        faults.append(
+            (
+                identifier,
+                faulty,
+                {
+                    "acceptance_score": 1,
+                    "author_filter_state": 1,
+                    "regression_score": 0,
+                    "task_success": 0,
+                },
+            )
+        )
+    default_fault = reference.replace(
+        reducer_start,
+        reducer_start
+        + "  if (action.type === 'UNRELATED_ACTION') return { ...state };\n",
+        1,
+    )
+    faults.append(
+        (
+            "default",
+            default_fault,
+            {
+                "acceptance_score": 1,
+                "author_filter_state": 1,
+                "regression_score": 0,
+                "task_success": 0,
+            },
+        )
+    )
+    isolation_fault = "import fs from 'node:fs';\nfs.readFileSync('/tests/verify.mjs');\n" + reference
+    faults.append(
+        (
+            "verifier-file-read",
+            isolation_fault,
+            {
+                "acceptance_score": 0,
+                "author_filter_state": 0,
+                "regression_score": 0,
+                "task_success": 0,
+            },
+        )
+    )
+    return faults
+
+
+def run_isolated_verifier(
+    tmp_path: Path,
+    identifier: str,
+    submitted_source: str,
+) -> dict[str, int]:
+    baseline, _ = reference_source()
+    run_root = tmp_path / identifier
+    capture = run_root / "capture"
+    verifier_logs = run_root / "logs/verifier"
+    capture.mkdir(parents=True)
+    verifier_logs.mkdir(parents=True)
+    os.chmod(verifier_logs, 0o777)
+    patch = "".join(
+        difflib.unified_diff(
+            baseline.splitlines(keepends=True),
+            submitted_source.splitlines(keepends=True),
+            fromfile="a/src/reducers/articleList.js",
+            tofile="b/src/reducers/articleList.js",
+        )
+    )
+    (capture / "submission.patch").write_text(patch, encoding="utf-8")
+    override = run_root / "compose.override.yaml"
+    override.write_text(
+        yaml.safe_dump(
+            {
+                "services": {
+                    "main": {
+                        "command": ["/tests/test.sh"],
+                        "volumes": [
+                            f"{capture}:/capture:ro",
+                            f"{run_root / 'logs'}:/logs",
+                        ],
+                    }
+                }
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    compose = PACKAGE / "tests/docker-compose.yaml"
+    project = "react-verifier-" + hashlib.sha256(str(run_root).encode()).hexdigest()[:12]
+    base_command = [
+        "docker",
+        "compose",
+        "--progress",
+        "quiet",
+        "-p",
+        project,
+        "-f",
+        str(compose),
+        "-f",
+        str(override),
+    ]
+    try:
+        completed = subprocess.run(
+            [
+                *base_command,
+                "up",
+                "--build",
+                "--abort-on-container-exit",
+                "--exit-code-from",
+                "main",
+            ],
+            cwd=PACKAGE / "tests",
+            capture_output=True,
+            text=True,
+            timeout=240,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr or completed.stdout
+        return json.loads((verifier_logs / "reward.json").read_text(encoding="utf-8"))
+    finally:
+        subprocess.run(
+            [*base_command, "down", "-v", "--remove-orphans"],
+            cwd=PACKAGE / "tests",
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
 
 
 def test_react_package_is_public_bounded_and_reproducible(tmp_path: Path) -> None:
@@ -88,6 +303,192 @@ def test_react_package_is_public_bounded_and_reproducible(tmp_path: Path) -> Non
     assert (copied / "scenario.lock.json").read_bytes() == expected_lock
 
 
+def test_offline_dependency_closure_is_exact_and_content_addressed() -> None:
+    dependencies = PACKAGE / "environment/dependencies"
+    package = json.loads((dependencies / "package.json").read_text(encoding="utf-8"))
+    lock = json.loads((dependencies / "package-lock.json").read_text(encoding="utf-8"))
+    assert package["packageManager"] == "npm@10.9.2"
+    assert package["engines"] == {"node": "22.17.0"}
+    requested = package["dependencies"] | package["devDependencies"]
+    assert requested
+    assert all(not set(version) & set("^~*<>=| " ) for version in requested.values())
+    assert lock["lockfileVersion"] == 3
+    assert len(lock["packages"]) >= 1400
+    for name, version in requested.items():
+        assert lock["packages"][f"node_modules/{name}"]["version"] == version
+    unlocked = [
+        path
+        for path, entry in lock["packages"].items()
+        if path and not entry.get("link") and not entry.get("integrity")
+    ]
+    assert unlocked == []
+    archive = dependencies / "node_modules.tar.gz"
+    expected_digest, expected_name = (
+        dependencies / "node_modules.tar.gz.sha256"
+    ).read_text(encoding="utf-8").split()
+    with archive.open("rb") as stream:
+        assert hashlib.file_digest(stream, "sha256").hexdigest() == expected_digest
+    assert expected_name == "node_modules.tar.gz"
+
+
+def test_evaluator_has_only_bounded_named_volume_exchange() -> None:
+    compose = yaml.safe_load((PACKAGE / "tests/docker-compose.yaml").read_text(encoding="utf-8"))
+    main = compose["services"]["main"]
+    evaluator = compose["services"]["evaluator"]
+    assert main["network_mode"] == "none"
+    assert main["read_only"] is True
+    assert main["cap_drop"] == ["ALL"]
+    assert evaluator["network_mode"] == "none"
+    assert evaluator["read_only"] is True
+    assert evaluator["cap_drop"] == ["ALL"]
+    assert evaluator["security_opt"] == ["no-new-privileges:true"]
+    assert evaluator["user"] == "65532:65532"
+    assert set(evaluator["volumes"]) == {
+        "evaluator-repository:/repository:ro",
+        "evaluator-request:/request:ro",
+        "evaluator-result:/result",
+    }
+    declared_volumes = set(compose["volumes"])
+    for mount in evaluator["volumes"]:
+        assert mount.split(":", 1)[0] in declared_volumes
+    evaluator_contract = json.dumps(evaluator, sort_keys=True)
+    for forbidden in ("/tests", "/logs", "/capture", "docker.sock", "environment"):
+        assert forbidden not in evaluator_contract
+
+
+def test_evaluator_rejects_command_and_path_requests(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    request = tmp_path / "request"
+    result = tmp_path / "result"
+    output = tmp_path / "output"
+    shutil.copytree(PACKAGE / "environment/baseline", repository)
+    for directory in (request, result, output):
+        directory.mkdir()
+        os.chmod(directory, 0o777)
+    (request / "request.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "operation": "evaluate-functional-v1-react-author-filter",
+                "command": "node",
+                "path": "/tests/verify.mjs",
+                "cases": [
+                    {
+                        "id": "arbitrary-request",
+                        "state": {},
+                        "action": {"type": "UNRELATED_ACTION"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    override = tmp_path / "compose.override.yaml"
+    override.write_text(
+        yaml.safe_dump(
+            {
+                "services": {
+                    "main": {
+                        "command": [
+                            "sh",
+                            "-c",
+                            "while [ ! -f /evaluator-result/result.json ]; do sleep 0.05; done; "
+                            "cat /evaluator-result/result.json > /output/result.json",
+                        ],
+                        "volumes": [
+                            f"{result}:/evaluator-result",
+                            f"{output}:/output",
+                        ],
+                    },
+                    "evaluator": {
+                        "volumes": [
+                            f"{repository}:/repository:ro",
+                            f"{request}:/request:ro",
+                            f"{result}:/result",
+                        ]
+                    },
+                }
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    compose = PACKAGE / "tests/docker-compose.yaml"
+    project = "react-request-" + hashlib.sha256(str(tmp_path).encode()).hexdigest()[:12]
+    base_command = [
+        "docker",
+        "compose",
+        "--progress",
+        "quiet",
+        "-p",
+        project,
+        "-f",
+        str(compose),
+        "-f",
+        str(override),
+    ]
+    try:
+        completed = subprocess.run(
+            [
+                *base_command,
+                "up",
+                "--build",
+                "--abort-on-container-exit",
+                "--exit-code-from",
+                "main",
+            ],
+            cwd=PACKAGE / "tests",
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr or completed.stdout
+    finally:
+        subprocess.run(
+            [*base_command, "down", "-v", "--remove-orphans"],
+            cwd=PACKAGE / "tests",
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    assert json.loads((output / "result.json").read_text(encoding="utf-8")) == {
+        "cases": [],
+        "errorCode": "invalid-request",
+        "evaluatorStatus": "error",
+        "operation": "evaluate-functional-v1-react-author-filter",
+        "schemaVersion": 1,
+    }
+
+
+FAULTY_SUBMISSIONS = faulty_submissions()
+
+
+@pytest.mark.parametrize(
+    ("identifier", "submitted_source", "expected_scores"),
+    FAULTY_SUBMISSIONS,
+    ids=[record[0] for record in FAULTY_SUBMISSIONS],
+)
+def test_each_plausible_fault_is_rejected(
+    tmp_path: Path,
+    identifier: str,
+    submitted_source: str,
+    expected_scores: dict[str, int],
+) -> None:
+    assert run_isolated_verifier(tmp_path, identifier, submitted_source) == expected_scores
+
+
+def test_reference_submission_passes_isolated_matrix(tmp_path: Path) -> None:
+    _, reference = reference_source()
+    assert run_isolated_verifier(tmp_path, "reference", reference) == {
+        "acceptance_score": 1,
+        "author_filter_state": 1,
+        "regression_score": 1,
+        "task_success": 1,
+    }
+
+
 def test_qualification_proves_behavior_and_isolation() -> None:
     manifest = yaml.safe_load((PACKAGE / "scenario.yaml").read_text(encoding="utf-8"))
     lock = REGISTRY.validate_bytes((PACKAGE / "scenario.lock.json").read_bytes())
@@ -114,14 +515,19 @@ def test_qualification_proves_behavior_and_isolation() -> None:
     assert b"MODEL_BENCHMARK_PROVIDER_API_KEY" not in evidence_bytes
 
 
-def test_react_package_does_not_activate_existing_functional_v1_runs() -> None:
-    assert set(SCENARIOS) == {
-        "angular-reading-time",
+def test_react_package_activates_as_fourth_functional_v1_scenario() -> None:
+    assert SCENARIOS == (
         "python-sales-by-genre",
         "spring-petvalidator-whitespace",
-    }
+        "angular-reading-time",
+        "react-author-filter",
+    )
+    assert len(SCENARIOS) * len(CONDITIONS) == 16
     manifests = sorted(ROOT.glob("functional-v1*.yaml"))
-    assert manifests
+    assert len(manifests) == 4
     for path in manifests:
         loaded = FunctionalV1Manifest.load(path)
-        assert set(loaded.scenario_locks) == set(SCENARIOS)
+        assert tuple(loaded.scenario_locks) == SCENARIOS
+        assert loaded.identity_value["scenarios"]["react-author-filter"]["digest"] == (
+            "package-lock:sha256:80e3dbe5feae3af970ef6c090aeb19b8af2d6bc083bd7888c21183c19f4014c2"
+        )
