@@ -801,6 +801,19 @@ def test_mounted_launch_pins_the_hermes_environment_contract(
     assert environment["HERMES_INFERENCE_PROVIDER"] == (
         "custom:model-benchmark-proxy"
     )
+    child_python = home / ".model-benchmark/hermes-python/python"
+    assert environment["MODEL_BENCHMARK_HERMES_CHILD_PYTHON"] == str(
+        child_python
+    )
+    assert stat.S_IMODE(child_python.stat().st_mode) == 0o700
+    assert (
+        home / ".model-benchmark/hermes-python/support/sitecustomize.py"
+    ).read_text(encoding="utf-8") == (
+        "import os\nos.environ.pop('PYTHONHOME', None)\n"
+    )
+    assert f" {mount / 'usr/bin/python3'} \"$@\"" in child_python.read_text(
+        encoding="utf-8"
+    )
     arguments = captured["arguments"]
     # Real in-mount ELF, not the lib64 symlink (issue #99: absolute glibc
     # symlinks escape the image mount into the scenario container).
@@ -847,13 +860,27 @@ from pathlib import Path
 
 Path(sys.argv[1]).write_text(json.dumps({
     "argv": sys.argv,
+    "executable": sys.executable,
     "environment": {
         name: os.environ.get(name)
-        for name in ("LD_LIBRARY_PATH", "PATH", "PYTHONHOME", "PYTHONPATH")
+        for name in (
+            "LD_LIBRARY_PATH",
+            "MODEL_BENCHMARK_HERMES_CHILD_PYTHON",
+            "PATH",
+            "PYTHONHOME",
+            "PYTHONPATH",
+        )
     },
 }), encoding="utf-8")
 """,
         encoding="utf-8",
+    )
+    child_python = tmp_path / "mounted-python"
+    child_python.write_text("#!/bin/sh\n", encoding="utf-8")
+    child_python.chmod(0o700)
+    original_executable = sys.executable
+    monkeypatch.setenv(
+        "MODEL_BENCHMARK_HERMES_CHILD_PYTHON", str(child_python)
     )
     monkeypatch.setenv("LD_LIBRARY_PATH", "/mounted/lib")
     monkeypatch.setenv("PATH", "/mounted/bin")
@@ -866,9 +893,12 @@ Path(sys.argv[1]).write_text(json.dumps({
     ) == 0
 
     recorded = json.loads(observation.read_text(encoding="utf-8"))
+    assert recorded["executable"] == str(child_python)
+    assert sys.executable == original_executable
     assert recorded["argv"] == [str(entrypoint), str(observation), "task"]
     assert recorded["environment"] == {
         "LD_LIBRARY_PATH": None,
+        "MODEL_BENCHMARK_HERMES_CHILD_PYTHON": None,
         "PATH": "/usr/bin:/bin",
         "PYTHONHOME": None,
         "PYTHONPATH": None,

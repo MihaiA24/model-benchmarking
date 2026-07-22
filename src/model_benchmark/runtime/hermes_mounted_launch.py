@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import runpy
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -14,6 +15,7 @@ _UNQUALIFIED_EXIT = 78
 _PROVIDER_ID = "model-benchmark-proxy"
 _PROVIDER_ARGUMENT = f"custom:{_PROVIDER_ID}"
 _TOOL_PATH_ENV = "MODEL_BENCHMARK_HERMES_TOOL_PATH"
+_CHILD_PYTHON_ENV = "MODEL_BENCHMARK_HERMES_CHILD_PYTHON"
 
 
 def _digest(path: Path) -> str:
@@ -43,6 +45,36 @@ def _config(base_url: str, model: str) -> dict[str, object]:
         },
     }
 
+
+def _write_child_python(
+    root: Path,
+    *,
+    loader: Path,
+    library_path: str,
+    python: Path,
+) -> Path:
+    """Make stock execute_code reuse the mounted Python."""
+    root.mkdir(mode=0o700)
+    support = root / "support"
+    support.mkdir(mode=0o700)
+    sitecustomize = support / "sitecustomize.py"
+    sitecustomize.write_text(
+        "import os\nos.environ.pop('PYTHONHOME', None)\n",
+        encoding="utf-8",
+    )
+    sitecustomize.chmod(0o600)
+    wrapper = root / "python"
+    wrapper.write_text(
+        "#!/bin/sh\nset -eu\n"
+        f"export PYTHONHOME={shlex.quote(str(python.parent.parent))}\n"
+        f"export PYTHONPATH={shlex.quote(str(support))}"
+        "${PYTHONPATH:+:$PYTHONPATH}\n"
+        f"exec {shlex.quote(str(loader))} --library-path "
+        f"{shlex.quote(library_path)} {shlex.quote(str(python))} \"$@\"\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o700)
+    return wrapper
 
 def _valid_usage(path: Path, model: str) -> bool:
     try:
@@ -80,15 +112,32 @@ def _run_hermes_entrypoint(arguments: list[str]) -> int:
 def _bootstrap_hermes(arguments: list[str]) -> int:
     """Run Hermes in its mounted Python while isolating native child tools."""
     tool_path = os.environ.get(_TOOL_PATH_ENV)
-    if not arguments or not tool_path:
+    child_python = os.environ.get(_CHILD_PYTHON_ENV)
+    if not arguments or not tool_path or not child_python:
+        return _UNQUALIFIED_EXIT
+    child_path = Path(child_python)
+    if (
+        child_path.is_symlink()
+        or not child_path.is_file()
+        or not os.access(child_path, os.X_OK)
+    ):
         return _UNQUALIFIED_EXIT
     original_environment = dict(os.environ)
+    original_executable = sys.executable
     try:
+        sys.executable = str(child_path)
         os.environ["PATH"] = tool_path
-        for name in (_TOOL_PATH_ENV, "LD_LIBRARY_PATH", "PYTHONHOME", "PYTHONPATH"):
+        for name in (
+            _TOOL_PATH_ENV,
+            _CHILD_PYTHON_ENV,
+            "LD_LIBRARY_PATH",
+            "PYTHONHOME",
+            "PYTHONPATH",
+        ):
             os.environ.pop(name, None)
         return _run_hermes_entrypoint(arguments)
     finally:
+        sys.executable = original_executable
         os.environ.clear()
         os.environ.update(original_environment)
 
@@ -129,6 +178,12 @@ def main(argv: list[str] | None = None) -> int:
         model = os.environ["MODEL_BENCHMARK_PROVIDER_MODEL"]
         evidence = home / ".model-benchmark"
         evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
+        child_python = _write_child_python(
+            evidence / "hermes-python",
+            loader=loader,
+            library_path=library_path,
+            python=python,
+        )
         hermes_home = home / ".hermes"
         hermes_home.mkdir(mode=0o700, parents=True, exist_ok=True)
         config = json.dumps(
@@ -169,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
             "HERMES_TUI_DIR": str(mounted_hermes / "ui-tui"),
             "HERMES_WEB_DIST": str(mounted_hermes / "hermes_cli/web_dist"),
             _TOOL_PATH_ENV: os.environ.get("PATH", os.defpath),
+            _CHILD_PYTHON_ENV: str(child_python),
             "LD_LIBRARY_PATH": library_path,
             "PATH": f"{mounted_hermes / 'bin'}:{mounted_hermes / '.venv/bin'}:{os.environ.get('PATH', '')}",
             "PLAYWRIGHT_BROWSERS_PATH": str(mounted_hermes / ".playwright"),
