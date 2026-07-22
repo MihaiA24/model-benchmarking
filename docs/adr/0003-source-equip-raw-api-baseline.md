@@ -1,0 +1,3 @@
+# Source-equip the Raw API Baseline
+
+The Raw API Baseline remains a one-request, one-file, tool-free control, but its request includes the exact Scenario Baseline contents of the declared target file alongside the unchanged Developer Brief. A brief-only model cannot inspect the repository available to every Harness and therefore measures information starvation rather than raw-model repair capability; providing only the editable file removes that confound without exposing tests, fixtures, Verifier feedback, hidden data, tools, retries, or additional files. This changes the Condition Lock identity, so source-equipped results form a new comparison stratum and never replace brief-only evidence.

@@ -8,7 +8,11 @@ from typing import Any
 import pytest
 
 from model_benchmark.runtime.credential_proxy import CredentialProxy, CredentialProxyConfig
-from model_benchmark.runtime.raw_api import RawApiMaterializer, RawApiRequest
+from model_benchmark.runtime.raw_api import (
+    RawApiError,
+    RawApiMaterializer,
+    RawApiRequest,
+)
 
 
 _MODEL = "locked/model"
@@ -136,15 +140,42 @@ def test_raw_api_makes_one_request_and_atomically_changes_only_locked_file(
     assert len(recording_provider.requests) == 1
     provider_request = recording_provider.requests[0]
     request_value = json.loads(provider_request.body)
-    assert request_value["messages"][0] == {
+    messages = request_value["messages"]
+    assert len(messages) == 3
+    system_message, brief_message, target_message = messages
+    assert system_message["role"] == "system"
+    assert "exact current target file" in system_message["content"]
+    assert _TARGET in system_message["content"]
+    assert brief_message == {
         "content": "Replace the locked target with the requested implementation.\n",
         "role": "user",
+    }
+    assert target_message["role"] == "user"
+    assert json.loads(target_message["content"]) == {
+        "content": "before\n",
+        "path": _TARGET,
     }
     assert request_value["stream"] is True
     assert provider_request.headers["authorization"] == f"Bearer {_REAL_KEY}"
     # The materializer's own UA must survive the proxy unmodified: UA-less
     # upstream traffic is tarpitted by the provider's WAF (issue #99).
     assert provider_request.headers["user-agent"] == "model-benchmark-raw-api/1"
+
+
+def test_raw_api_rejects_non_utf8_target_before_provider_request(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    target = repository / _TARGET
+    target.write_bytes(b"\xff")
+
+    with _proxy(recording_provider, tmp_path) as proxy:
+        with pytest.raises(RawApiError, match="existing strict UTF-8 file"):
+            RawApiMaterializer().materialize(_request(proxy, repository))
+
+    assert recording_provider.requests == []
+    assert target.read_bytes() == b"\xff"
 
 
 @pytest.mark.parametrize(

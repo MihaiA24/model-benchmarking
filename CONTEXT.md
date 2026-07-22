@@ -9,7 +9,7 @@ A system under evaluation that autonomously attempts a scenario through its own 
 _Avoid_: Agent, runner
 
 **Raw API Baseline**:
-A minimal single-request OpenAI-compatible control condition that receives the same Developer Brief and one declared target file, writes only the returned replacement for that file, and passes the resulting Submission to the same Verifier path. It is a qualified control rather than a Harness: failure before response materialization measures baseline protocol incompatibility rather than raw-model task capability, and it is not eligible for Harness ranking.
+A minimal single-request OpenAI-compatible control condition that receives the same Developer Brief plus the exact Scenario Baseline contents of one declared target file, returns a replacement only for that file, and passes the resulting Submission to the same Verifier path. It is a qualified control rather than a Harness: failure before response materialization measures baseline protocol incompatibility rather than raw-model task capability, and it is not eligible for Harness ranking.
 _Avoid_: Harness, autonomous agent, fourth harness
 
 **Benchmark substrate**:
