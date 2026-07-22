@@ -7,9 +7,9 @@ the worker must provide. The CLI surface is exactly four commands:
 model-benchmark [--home DIR] [--json] {provision|preflight|run|inspect}
 ```
 
-Every command reads one strict manifest. The committed DeepSeek and MiMo examples are
-`functional-v1-manifest.yaml` and `functional-v1-mimo-v2.5.yaml`; all state lives under
-`--home` (default `.model-benchmark`).
+Every command reads one strict manifest. The committed DeepSeek, MiMo, and MiniMax examples
+are `functional-v1-manifest.yaml`, `functional-v1-mimo-v2.5.yaml`, and
+`functional-v1-minimax-m3.yaml`; all state lives under `--home` (default `.model-benchmark`).
 
 ## 1. Setup requirements
 
@@ -132,7 +132,7 @@ EOF
    window must cover the run date. Manifest load rejects any drift
    (`pricing-record-mismatch`).
 3. Run section 2 against the new manifest. Limits are manifest-bound: 64 requests,
-   375,000 tokens, $5.00 stop-after-cost, and 1800 s per Trial in both committed
+   375,000 tokens, $5.00 stop-after-cost, and 1800 s per Trial in every committed
    manifests. Provider-token use above 250,000 emits an advisory warning in inspect and
    every derived report without changing cell validity.
 
