@@ -153,7 +153,7 @@ def test_sealed_run_is_immutable_complete_and_path_independent(
     assert inspected.exit_code == 0
     assert inspected.human.startswith(
         "SCENARIO | CONDITION | DISPOSITION | TASK | ACCEPT | REGRESS | "
-        "DURATION | REQUESTS | TOKENS | COST_USD | BUNDLE\n"
+        "DURATION | REQUESTS | TOKENS | COST_USD | BUNDLE | WARNING\n"
     )
     with pytest.raises(FunctionalV1HomeError) as duplicate_seal:
         workspace.seal()
