@@ -1,0 +1,1 @@
+{"allow_additions":false,"allow_deletions":false,"allowed_paths":["src/reducers/articleList.js"],"forbidden_markers":["MODEL_BENCHMARK_HIDDEN:replace-with-private-verifier-canary"],"max_file_count":1,"max_total_bytes":50000,"protected_paths":[".git/**"],"stability_window_ms":250}

@@ -135,6 +135,12 @@ STAGES: tuple[Stage, ...] = (
         group="operator",
         proves="Functional V1 operator: manifest validation, managed home, dispositions, and CLI",
     ),
+    Stage(
+        issue=120,
+        slug="react_author_filter",
+        group="scenarios",
+        proves="React author-filter package: immutable provenance, bounded submission, and isolated behavioral qualification",
+    ),
 )
 
 

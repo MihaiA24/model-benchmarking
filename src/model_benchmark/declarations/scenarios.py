@@ -60,6 +60,7 @@ _TOP_LEVEL_SECTIONS = (
 )
 _ECOSYSTEMS = (
     "angular-typescript",
+    "react-javascript",
     "spring-boot-java",
     "python-data-engineering",
 )
