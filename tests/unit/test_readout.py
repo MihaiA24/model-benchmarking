@@ -200,7 +200,7 @@ def test_markdown_carries_pairs_scenarios_and_disclaimer(tmp_path: Path) -> None
 def test_token_advisory_is_derived_in_json_and_markdown(tmp_path: Path) -> None:
     record = _record("0198-warning")
     cell = record["cells"][0]
-    cell["provider_tokens"] = 100_001
+    cell["provider_tokens"] = 250_001
     path = _write(tmp_path, "warning.json", record)
 
     readout = build_readout([path])
@@ -211,10 +211,10 @@ def test_token_advisory_is_derived_in_json_and_markdown(tmp_path: Path) -> None:
             "cell_id": cell["cell_id"],
             "code": "provider-token-advisory-threshold-exceeded",
             "condition": cell["condition"],
-            "provider_tokens": 100_001,
+            "provider_tokens": 250_001,
             "run_id": "0198-warning",
             "scenario": cell["scenario"],
-            "threshold": 100_000,
+            "threshold": 250_000,
         }
     ]
     assert "## Token warnings" in rendered

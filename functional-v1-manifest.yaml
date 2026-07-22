@@ -17,7 +17,7 @@ provider:
 
 limits:
   requests_per_trial: 64
-  provider_tokens_per_trial: 150000
+  provider_tokens_per_trial: 375000
   stop_after_cost_usd_per_trial: "5.00"
   wall_time_seconds_per_trial: 1800
   cpu_cores_per_trial: 2
@@ -42,13 +42,13 @@ scenarios:
 conditions:
   omp:
     path: profiles/functional-v1/omp-v16.4.0.condition.json
-    digest: functional-v1-condition:sha256:99fb2e892f3859c5cb2f44a0fe838e34b5f236a4aef77e398ce52e3c07396adf
+    digest: functional-v1-condition:sha256:c2155858fb4fa8e179cfe8e768f1e6ebd1153268439bb3a7a3b3fcb520c24818
   opencode:
     path: profiles/functional-v1/opencode-v1.17.18.condition.json
-    digest: functional-v1-condition:sha256:b5f41c1e24cc604bcf73ef432683afdc050acead34ec594e999e03afa2aebc1a
+    digest: functional-v1-condition:sha256:92628a4c2c07f8cf6c45d297ba538ab8533d07dd02dd9c811ac4e586e91387f1
   hermes:
     path: profiles/functional-v1/hermes-v0.18.2.condition.json
-    digest: functional-v1-condition:sha256:bf27d4b7c2c1eea892f02fc3b4c0c988c6fcb5766bc507777c2e000fe89b51b1
+    digest: functional-v1-condition:sha256:e779cf4e9c646d59e00c2c42666935df162b1e4bab4f905bc731f306a5cd41ea
   raw-api:
     path: profiles/functional-v1/raw-api-v1.condition.json
-    digest: functional-v1-condition:sha256:231af6b82157b173ebc0fc9a211874ee6f80c467097d1f85d9de82213a5be590
+    digest: functional-v1-condition:sha256:1e9cbf086cbcd57073ec3799ba0eacd38e69ddabff0fddc1043e7f94e713ea03

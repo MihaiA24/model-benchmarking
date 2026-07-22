@@ -6,6 +6,6 @@ Functional V1 Run `019f85a7-0637-77a4-a0a0-b79d3923fc15` was complete and eviden
 
 - The Python Scenario remains repair-only: its example output moves outside the Evaluated Repository, and OpenCode-specific post-run cleanup is removed rather than generalized.
 - The Raw API Baseline accepts metadata-only SSE trailers after `[DONE]` while continuing to reject duplicate terminators and post-termination choice content.
-- Provider-token usage warns above the 100,000-token Advisory Token Threshold in CLI inspect output, its JSON projection, the Markdown readout, and the HTML dashboard. The Token Stop Threshold is 150,000 tokens, enforced after complete provider responses with explicit overshoot; no duplicate warning flag enters the canonical Run Record.
+- Provider-token usage warns above the 250,000-token Advisory Token Threshold in CLI inspect output, its JSON projection, the Markdown readout, and the HTML dashboard. The Token Stop Threshold is 375,000 tokens, enforced after complete provider responses with explicit overshoot; no duplicate warning flag enters the canonical Run Record.
 - Provisioned OMP native binaries are excluded from native diagnostic collection and remain identified by their immutable Condition Lock inputs.
 - Two complete corrected runs use MiMo v2.5 and DeepSeek v4 Flash separately. Their model strata are never pooled, and neither run replaces or rewrites the original evidence.

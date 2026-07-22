@@ -132,8 +132,8 @@ EOF
    window must cover the run date. Manifest load rejects any drift
    (`pricing-record-mismatch`).
 3. Run section 2 against the new manifest. Limits are manifest-bound: 64 requests,
-   150,000 tokens, $5.00 stop-after-cost, and 1800 s per Trial in both committed
-   manifests. Provider-token use above 100,000 emits an advisory warning in inspect and
+   375,000 tokens, $5.00 stop-after-cost, and 1800 s per Trial in both committed
+   manifests. Provider-token use above 250,000 emits an advisory warning in inspect and
    every derived report without changing cell validity.
 
 If the provider reports no monetary cost (flat-rate plans), enforcement and totals use

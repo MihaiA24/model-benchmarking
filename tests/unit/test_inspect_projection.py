@@ -83,7 +83,7 @@ def test_record_without_cell_list_renders_header_only() -> None:
 
 def test_token_advisory_is_derived_in_human_and_json_inspect() -> None:
     cell = _enriched_cell()
-    cell["provider_tokens"] = 100_001
+    cell["provider_tokens"] = 250_001
     value = {"cells": [cell], "state": "complete", "validity": "valid"}
     record = SealedRunRecord(
         identity=TypedDigest.parse("functional-v1-run-record:sha256:" + "1" * 64),
@@ -100,10 +100,10 @@ def test_token_advisory_is_derived_in_human_and_json_inspect() -> None:
             "cell_id": cell["cell_id"],
             "code": "provider-token-advisory-threshold-exceeded",
             "condition": cell["condition"],
-            "provider_tokens": 100_001,
+            "provider_tokens": 250_001,
             "run_id": None,
             "scenario": cell["scenario"],
-            "threshold": 100_000,
+            "threshold": 250_000,
         }
     ]
     assert "warnings" not in result.payload["record"]

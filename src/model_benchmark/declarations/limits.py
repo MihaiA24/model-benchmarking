@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from types import MappingProxyType
 
-PROVIDER_TOKENS_ADVISORY_THRESHOLD = 100_000
+PROVIDER_TOKENS_ADVISORY_THRESHOLD = 250_000
 PROVIDER_TOKENS_ADVISORY_CODE = "provider-token-advisory-threshold-exceeded"
 
 

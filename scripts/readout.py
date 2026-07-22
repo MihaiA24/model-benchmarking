@@ -41,7 +41,7 @@ _NUMERIC_ENDPOINTS = (
     ("provider_tokens", "count"),
     ("duration_seconds", "duration"),
 )
-PROVIDER_TOKENS_ADVISORY_THRESHOLD = 100_000
+PROVIDER_TOKENS_ADVISORY_THRESHOLD = 250_000
 PROVIDER_TOKENS_ADVISORY_CODE = "provider-token-advisory-threshold-exceeded"
 
 
