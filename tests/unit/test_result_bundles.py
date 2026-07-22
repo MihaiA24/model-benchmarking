@@ -224,11 +224,16 @@ def test_no_op_handoff_completes_without_patch_content(tmp_path: Path) -> None:
     assert outcome.result_bundle_identity is not None
 
 
-def test_omp_provisioned_natives_are_excluded_from_diagnostics(tmp_path: Path) -> None:
+def test_only_declared_digest_matched_native_is_excluded_from_diagnostics(
+    tmp_path: Path,
+) -> None:
     cell_id = "01-python-sales-by-genre-omp"
     cell_dir = _build_cell(tmp_path)
     trial = cell_dir / "raw/trials/t1"
-    _write(trial / "agent/home/.omp/natives/16.4.0/omp", b"provisioned binary")
+    native_path = "agent/home/.omp/natives/16.4.0/omp"
+    native = b"provisioned binary"
+    _write(trial / native_path, native)
+    _write(trial / "agent/home/.omp/natives/16.4.0/rogue", b"rogue binary")
     _write(trial / "agent/home/.omp/logs/session.log", b"diagnostic log")
 
     outcome = seal_cell_evidence(
@@ -236,6 +241,9 @@ def test_omp_provisioned_natives_are_excluded_from_diagnostics(tmp_path: Path) -
         cell_id=cell_id,
         run_id=RUN_ID,
         execution=_execution(cell_id=cell_id),
+        diagnostic_exclusions={
+            native_path: str(TypedDigest.from_bytes(DigestKind.ARTIFACT, native))
+        },
     )
 
     assert outcome.disposition == "valid_completed"
@@ -243,8 +251,30 @@ def test_omp_provisioned_natives_are_excluded_from_diagnostics(tmp_path: Path) -
     artifacts = inventory["artifacts"]
     assert isinstance(artifacts, list)
     paths = {entry["path"] for entry in artifacts}
-    assert "diagnostics/agent/home/.omp/natives/16.4.0/omp" not in paths
+    assert f"diagnostics/{native_path}" not in paths
+    assert "diagnostics/agent/home/.omp/natives/16.4.0/rogue" in paths
     assert "diagnostics/agent/home/.omp/logs/session.log" in paths
+
+
+def test_mismatched_declared_native_remains_diagnostic_evidence(tmp_path: Path) -> None:
+    cell_dir = _build_cell(tmp_path)
+    trial = cell_dir / "raw/trials/t1"
+    native_path = "agent/home/.omp/natives/16.4.0/omp"
+    _write(trial / native_path, b"untrusted binary")
+
+    outcome = _seal(
+        cell_dir,
+        _execution(),
+        diagnostic_exclusions={
+            native_path: str(
+                TypedDigest.from_bytes(DigestKind.ARTIFACT, b"provisioned binary")
+            )
+        },
+    )
+
+    assert outcome.disposition == "valid_completed"
+    paths = {entry["path"] for entry in _inventory(cell_dir)["artifacts"]}
+    assert f"diagnostics/{native_path}" in paths
 
 
 def test_rejected_handoff_reconciles_to_submission_rejected(tmp_path: Path) -> None:

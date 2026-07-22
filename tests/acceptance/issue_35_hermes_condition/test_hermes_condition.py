@@ -90,6 +90,7 @@ def test_condition_lock_seals_exact_stock_hermes_profile(
         "retries": "stock",
         "tools": "stock",
     }
+    assert configuration["runtime_relocation"] == mounted_launch.relocation_contract()
     assert configuration["fixed_environment"] == {
         "HERMES_DISABLE_LAZY_INSTALLS": "1",
         "HERMES_HOME": "fresh-home/.hermes",
@@ -709,6 +710,28 @@ def _mounted_launch_fixture(
     shim = mount / "opt/hermes/bin/hermes"
     shim.parent.mkdir(parents=True)
     shim.write_bytes(b"#!/bin/sh\nexec hermes-shim\n")
+    python_source = mount / mounted_launch._STOCK_PYTHON_PATH.lstrip("/")
+    python_source.parent.mkdir(parents=True)
+    stock_interpreter = mounted_launch._STOCK_ELF_INTERPRETER.encode() + b"\0"
+    python_bytes = b"\x7fELF-test-prefix" + stock_interpreter + b"test-suffix"
+    python_source.write_bytes(python_bytes)
+    loader_source = mount / mounted_launch._STOCK_LOADER_PATH.lstrip("/")
+    loader_source.parent.mkdir(parents=True)
+    loader_bytes = b"\x7fELF-test-loader"
+    loader_source.write_bytes(loader_bytes)
+    suffix = hashlib.sha256(str(tmp_path).encode()).hexdigest()[:8]
+    relocated_python = Path(f"/tmp/mbp-{suffix}")
+    relocated_loader = Path(f"/tmp/mbl-{suffix}")
+    monkeypatch.setattr(mounted_launch, "_STOCK_PYTHON_BYTES", len(python_bytes))
+    monkeypatch.setattr(
+        mounted_launch, "_STOCK_PYTHON_IDENTITY", mounted_launch._identity(python_bytes)
+    )
+    monkeypatch.setattr(mounted_launch, "_STOCK_LOADER_BYTES", len(loader_bytes))
+    monkeypatch.setattr(
+        mounted_launch, "_STOCK_LOADER_IDENTITY", mounted_launch._identity(loader_bytes)
+    )
+    monkeypatch.setattr(mounted_launch, "_RELOCATED_PYTHON_PATH", str(relocated_python))
+    monkeypatch.setattr(mounted_launch, "_RELOCATED_LOADER_PATH", str(relocated_loader))
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -736,7 +759,13 @@ def _mounted_launch_fixture(
             stderr=SimpleNamespace(buffer=io.BytesIO()),
         ),
     )
-    captured: dict[str, Any] = {}
+    captured: dict[str, Any] = {
+        "loader_bytes": loader_bytes,
+        "python_bytes": python_bytes,
+        "python_source": python_source,
+        "relocated_loader": relocated_loader,
+        "relocated_python": relocated_python,
+    }
     return mounted_launch._digest(shim), home, captured
 
 
@@ -750,6 +779,12 @@ def _fake_hermes_run(
     ) -> subprocess.CompletedProcess[bytes]:
         captured["arguments"] = arguments
         captured["env"] = env
+        python_path = Path(arguments[0])
+        loader_path = Path(mounted_launch._RELOCATED_LOADER_PATH)
+        captured["published_python"] = python_path.read_bytes()
+        captured["published_loader"] = loader_path.read_bytes()
+        captured["published_python_mode"] = stat.S_IMODE(python_path.stat().st_mode)
+        captured["published_loader_mode"] = stat.S_IMODE(loader_path.stat().st_mode)
         usage_path = Path(arguments[arguments.index("--usage-file") + 1])
         usage_path.write_text(json.dumps(usage), encoding="utf-8")
         return subprocess.CompletedProcess(arguments, 0, stdout=b"", stderr=b"")
@@ -801,33 +836,24 @@ def test_mounted_launch_pins_the_hermes_environment_contract(
     assert environment["HERMES_INFERENCE_PROVIDER"] == (
         "custom:model-benchmark-proxy"
     )
-    child_python = home / ".model-benchmark/hermes-python/python"
-    assert environment["MODEL_BENCHMARK_HERMES_CHILD_PYTHON"] == str(
-        child_python
+    assert "MODEL_BENCHMARK_HERMES_CHILD_PYTHON" not in environment
+    assert "MODEL_BENCHMARK_HERMES_TOOL_PATH" not in environment
+    before = mounted_launch._STOCK_ELF_INTERPRETER.encode() + b"\0"
+    after = mounted_launch._RELOCATED_LOADER_PATH.encode() + b"\0"
+    assert captured["published_python"] == captured["python_bytes"].replace(
+        before, after.ljust(len(before), b"\0")
     )
-    assert stat.S_IMODE(child_python.stat().st_mode) == 0o700
-    assert (
-        home / ".model-benchmark/hermes-python/support/sitecustomize.py"
-    ).read_text(encoding="utf-8") == (
-        "import os\nos.environ.pop('PYTHONHOME', None)\n"
-    )
-    assert f" {mount / 'usr/bin/python3'} \"$@\"" in child_python.read_text(
-        encoding="utf-8"
-    )
+    assert captured["published_loader"] == captured["loader_bytes"]
+    assert captured["published_python_mode"] == 0o500
+    assert captured["published_loader_mode"] == 0o500
+    assert not captured["relocated_python"].exists()
+    assert not captured["relocated_loader"].exists()
     arguments = captured["arguments"]
-    # Real in-mount ELF, not the lib64 symlink (issue #99: absolute glibc
-    # symlinks escape the image mount into the scenario container).
-    assert arguments[0] == str(mount / "usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2")
-    assert arguments[1] == "--library-path"
-    assert str(mount / "usr/bin/python3") in arguments
-    assert str(hermes_root / ".venv/bin/hermes") in arguments
-    python_index = arguments.index(str(mount / "usr/bin/python3"))
-    assert arguments[python_index + 1 : python_index + 4] == [
-        "-m",
-        "model_benchmark.runtime.hermes_mounted_launch",
-        "--bootstrap",
+    assert arguments[:2] == [
+        str(captured["relocated_python"]),
+        str(hermes_root / ".venv/bin/hermes"),
     ]
-    assert "--ignore-rules" in arguments
+    assert "--bootstrap" not in arguments
     assert arguments[arguments.index("-z") + 1] == "do the task"
     assert arguments[arguments.index("--model") + 1] == "locked/model"
     config = json.loads(
@@ -844,65 +870,21 @@ def test_mounted_launch_pins_the_hermes_environment_contract(
     )
     assert delivery["transport"] == "oneshot-argument-with-native-tools"
     assert delivery["runtime_installation"] is False
+    assert delivery["runtime_relocation"] == mounted_launch.relocation_contract()
 
 
-def test_hermes_bootstrap_sanitizes_native_tool_environment(
+def test_mounted_launch_rejects_an_undeclared_mounted_python(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    observation = tmp_path / "environment.json"
-    entrypoint = tmp_path / "hermes-entrypoint.py"
-    entrypoint.write_text(
-        """import json
-import os
-import sys
-from pathlib import Path
+    identity, _, captured = _mounted_launch_fixture(tmp_path, monkeypatch)
+    captured["python_source"].write_bytes(captured["python_bytes"] + b"changed")
+    _fake_hermes_run(captured, monkeypatch, _VALID_USAGE)
 
-Path(sys.argv[1]).write_text(json.dumps({
-    "argv": sys.argv,
-    "executable": sys.executable,
-    "environment": {
-        name: os.environ.get(name)
-        for name in (
-            "LD_LIBRARY_PATH",
-            "MODEL_BENCHMARK_HERMES_CHILD_PYTHON",
-            "PATH",
-            "PYTHONHOME",
-            "PYTHONPATH",
-        )
-    },
-}), encoding="utf-8")
-""",
-        encoding="utf-8",
-    )
-    child_python = tmp_path / "mounted-python"
-    child_python.write_text("#!/bin/sh\n", encoding="utf-8")
-    child_python.chmod(0o700)
-    original_executable = sys.executable
-    monkeypatch.setenv(
-        "MODEL_BENCHMARK_HERMES_CHILD_PYTHON", str(child_python)
-    )
-    monkeypatch.setenv("LD_LIBRARY_PATH", "/mounted/lib")
-    monkeypatch.setenv("PATH", "/mounted/bin")
-    monkeypatch.setenv("PYTHONHOME", "/mounted/usr")
-    monkeypatch.setenv("PYTHONPATH", "/mounted/site-packages")
-    monkeypatch.setenv("MODEL_BENCHMARK_HERMES_TOOL_PATH", "/usr/bin:/bin")
-
-    assert mounted_launch._bootstrap_hermes(
-        [str(entrypoint), str(observation), "task"]
-    ) == 0
-
-    recorded = json.loads(observation.read_text(encoding="utf-8"))
-    assert recorded["executable"] == str(child_python)
-    assert sys.executable == original_executable
-    assert recorded["argv"] == [str(entrypoint), str(observation), "task"]
-    assert recorded["environment"] == {
-        "LD_LIBRARY_PATH": None,
-        "MODEL_BENCHMARK_HERMES_CHILD_PYTHON": None,
-        "PATH": "/usr/bin:/bin",
-        "PYTHONHOME": None,
-        "PYTHONPATH": None,
-    }
+    assert mounted_launch.main(["--artifact-identity", identity]) == 78
+    assert "arguments" not in captured
+    assert not captured["relocated_python"].exists()
+    assert not captured["relocated_loader"].exists()
 
 
 def test_mounted_launch_rejects_an_invalid_usage_report(

@@ -11,15 +11,12 @@ from pathlib import Path
 
 try:
     from scripts.dashboard import DashboardError, build_dashboard
-    from scripts.readout import ReadoutError, build_readout, render_markdown
+    from scripts.readout import (ReadoutError, build_readout, load_sealed_run_record, render_markdown)
 except ImportError:  # executed from scripts/
     from dashboard import DashboardError, build_dashboard
-    from readout import ReadoutError, build_readout, render_markdown
+    from readout import ReadoutError, build_readout, load_sealed_run_record, render_markdown
 
 
-_MANIFEST_IDENTITY_RE = re.compile(
-    r"functional-v1-manifest:sha256:([0-9a-f]{64})"
-)
 _READOUT_NAME_RE = re.compile(r"readout-[0-9a-f]{64}\.(?:json|md)")
 
 
@@ -28,14 +25,8 @@ class ResultsError(ValueError):
 
 
 def _manifest_identity(path: Path) -> str:
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ResultsError(f"cannot read {path}: {error}") from error
-    identity = document.get("manifest_identity") if isinstance(document, dict) else None
-    if not isinstance(identity, str) or not _MANIFEST_IDENTITY_RE.fullmatch(identity):
-        raise ResultsError(f"{path}: invalid manifest_identity")
-    return identity
+    record = load_sealed_run_record(path)
+    return str(record["value"]["manifest_identity"])
 
 
 def _report_name(identity: str, extension: str) -> str:

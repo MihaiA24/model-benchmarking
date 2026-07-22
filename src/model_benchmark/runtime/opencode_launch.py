@@ -90,7 +90,6 @@ def _run_opencode(
             "OPENCODE_CONFIG": str(config_path),
             "OPENCODE_DISABLE_AUTOUPDATE": "true",
             "OPENCODE_DISABLE_PROJECT_CONFIG": "true",
-            "PYTHONDONTWRITEBYTECODE": "1",
         }
     )
     workspace = Path.cwd()

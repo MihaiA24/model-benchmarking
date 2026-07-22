@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -8,13 +9,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "generate-functional-v1-results"
+_CONDITIONS = ("omp", "opencode", "hermes", "raw-api")
+_SCENARIOS = (
+    "python-sales-by-genre",
+    "spring-petvalidator-whitespace",
+    "angular-reading-time",
+)
 
 
 def _record(run_id: str, manifest_hex: str) -> dict[str, object]:
     return {
         "cells": [
             {
-                "cell_id": f"python--{condition}",
+                "cell_id": f"{index:02d}-{scenario}-{condition}",
                 "condition": condition,
                 "cost_usd": "0.01",
                 "disposition": "valid_completed",
@@ -23,20 +30,25 @@ def _record(run_id: str, manifest_hex: str) -> dict[str, object]:
                 "provider_requests": 1,
                 "provider_tokens": 100,
                 "reason_code": "verifier-completed",
-                "scenario": "python",
+                "result_bundle_identity": "result-bundle:sha256:" + "d" * 64,
+                "scenario": scenario,
                 "scores": {
                     "acceptance_score": 1,
                     "regression_score": 1,
                     "task_success": condition == "omp",
                 },
             }
-            for condition in ("omp", "raw-api")
+            for index, (scenario, condition) in enumerate(
+                ((scenario, condition) for scenario in _SCENARIOS for condition in _CONDITIONS),
+                start=1,
+            )
         ],
         "manifest_identity": f"functional-v1-manifest:sha256:{manifest_hex}",
         "resolved_manifest_identity": f"resolved-v1-manifest:sha256:{manifest_hex}",
         "run_id": run_id,
         "schema_version": 1,
         "state": "complete",
+        "unscheduled_cells": [],
         "validity": "valid",
     }
 
@@ -44,8 +56,18 @@ def _record(run_id: str, manifest_hex: str) -> dict[str, object]:
 def _write_record(home: Path, run_id: str, manifest_hex: str) -> Path:
     path = home / "runs" / run_id / "run-record.json"
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps(_record(run_id, manifest_hex)), encoding="utf-8")
+    data = (json.dumps(_record(run_id, manifest_hex), sort_keys=True) + "\n").encode()
+    path.write_bytes(data)
+    identity = "functional-v1-run-record:sha256:" + hashlib.sha256(data).hexdigest()
+    path.with_suffix(".identity").write_text(identity + "\n", encoding="ascii")
     return path
+
+
+def _reseal_record(path: Path, value: dict[str, object]) -> None:
+    data = (json.dumps(value, sort_keys=True) + "\n").encode()
+    path.write_bytes(data)
+    identity = "functional-v1-run-record:sha256:" + hashlib.sha256(data).hexdigest()
+    path.with_suffix(".identity").write_text(identity + "\n", encoding="ascii")
 
 
 def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -87,7 +109,7 @@ def test_discovers_runs_and_writes_one_readout_per_manifest(tmp_path: Path) -> N
         assert (output / f"readout-{manifest_hex}.md").is_file()
 
 
-def test_rejects_unsafe_manifest_identity_before_writing(tmp_path: Path) -> None:
+def test_rejects_tampered_run_record_before_writing(tmp_path: Path) -> None:
     home = tmp_path / "home"
     record = _write_record(home, "run-a", "a" * 64)
     document = json.loads(record.read_text(encoding="utf-8"))
@@ -98,5 +120,50 @@ def test_rejects_unsafe_manifest_identity_before_writing(tmp_path: Path) -> None
     completed = _run(str(record), "--output", str(output))
 
     assert completed.returncode == 2
-    assert "invalid manifest_identity" in completed.stderr
+    assert "Run Record identity does not match its bytes" in completed.stderr
+    assert not output.exists()
+
+
+def test_rejects_run_record_without_adjacent_identity(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    record = _write_record(home, "run-a", "a" * 64)
+    record.with_suffix(".identity").unlink()
+    output = tmp_path / "reports"
+
+    completed = _run(str(record), "--output", str(output))
+
+    assert completed.returncode == 2
+    assert "cannot read sealed Run Record" in completed.stderr
+    assert not output.exists()
+
+
+def test_rejects_rehashed_incomplete_schedule_before_writing(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    record = _write_record(home, "run-a", "a" * 64)
+    document = json.loads(record.read_text(encoding="utf-8"))
+    document["cells"].pop()
+    _reseal_record(record, document)
+    output = tmp_path / "reports"
+
+    completed = _run(str(record), "--output", str(output))
+
+    assert completed.returncode == 2
+    assert "exact 12-cell schedule" in completed.stderr
+    assert not output.exists()
+
+
+def test_rejects_rehashed_duplicate_schedule_cell_before_writing(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    record = _write_record(home, "run-a", "a" * 64)
+    document = json.loads(record.read_text(encoding="utf-8"))
+    document["cells"][-1] = dict(document["cells"][0])
+    _reseal_record(record, document)
+    output = tmp_path / "reports"
+
+    completed = _run(str(record), "--output", str(output))
+
+    assert completed.returncode == 2
+    assert "schedule identity mismatch" in completed.stderr
     assert not output.exists()

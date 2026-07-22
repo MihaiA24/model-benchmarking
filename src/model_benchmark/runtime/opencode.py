@@ -132,7 +132,6 @@ def _locked_configuration() -> dict[str, object]:
             "OPENCODE_CONFIG": "fresh-home/.model-benchmark/opencode.json",
             "OPENCODE_DISABLE_AUTOUPDATE": "true",
             "OPENCODE_DISABLE_PROJECT_CONFIG": "true",
-            "PYTHONDONTWRITEBYTECODE": "1",
         },
         "instruction_transport": "run-stdin-json-events",
         "launch_shim": {

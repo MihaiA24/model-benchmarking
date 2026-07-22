@@ -47,6 +47,7 @@ CONDITIONS: Mapping[str, ConditionDefinition] = MappingProxyType(
             seal_process=omp.sealed_omp_process,
             evaluate_qualification=omp.evaluate_omp_qualification,
             entrypoint_script=_DEFAULT_ENTRYPOINT_SCRIPT,
+            diagnostic_exclusions=omp.OMP_DIAGNOSTIC_EXCLUSIONS,
         ),
         "opencode": ConditionDefinition(
             name="opencode",

@@ -23,6 +23,7 @@ from model_benchmark.runtime.credential_proxy import CredentialProxy, Credential
 from model_benchmark.runtime.omp import (
     OMP_ARTIFACT_BYTES,
     OMP_ARTIFACT_IDENTITY,
+    OMP_DIAGNOSTIC_EXCLUSIONS,
     OMP_ARTIFACT_URL,
     OMP_ENVIRONMENT_NAMES,
     OMP_SHIM_IDENTITY,
@@ -61,6 +62,7 @@ def test_condition_lock_seals_the_exact_stock_omp_profile(
     assert configuration["artifact_bytes"] == OMP_ARTIFACT_BYTES
     assert configuration["artifact_source"] == OMP_ARTIFACT_URL
     assert configuration["artifact_version"] == OMP_VERSION
+    assert configuration["diagnostic_exclusions"] == dict(OMP_DIAGNOSTIC_EXCLUSIONS)
     assert configuration["runtime_installation"] is False
     assert configuration["session_persistence"] is False
     assert configuration["instruction_transport"] == "rpc-prompt-jsonl"

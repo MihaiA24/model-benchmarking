@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -19,7 +20,11 @@ from scripts.dashboard import (  # noqa: E402
 
 
 _CONDITIONS = ("omp", "opencode", "hermes", "raw-api")
-_SCENARIOS = ("python", "spring", "angular")
+_SCENARIOS = (
+    "python-sales-by-genre",
+    "spring-petvalidator-whitespace",
+    "angular-reading-time",
+)
 
 
 def _cell(
@@ -28,8 +33,9 @@ def _cell(
     *,
     task_success: object = False,
 ) -> dict[str, object]:
+    index = _SCENARIOS.index(scenario) * len(_CONDITIONS) + _CONDITIONS.index(condition) + 1
     return {
-        "cell_id": f"{scenario}--{condition}",
+        "cell_id": f"{index:02d}-{scenario}-{condition}",
         "condition": condition,
         "cost_usd": "0.01",
         "disposition": "valid_completed",
@@ -38,6 +44,7 @@ def _cell(
         "provider_requests": 3,
         "provider_tokens": 1000,
         "reason_code": "verifier-completed",
+        "result_bundle_identity": "result-bundle:sha256:" + "c" * 64,
         "scenario": scenario,
         "scores": {
             "acceptance_score": 1,
@@ -69,13 +76,17 @@ def _record(
         "run_id": run_id,
         "schema_version": 1,
         "state": "complete",
+        "unscheduled_cells": [],
         "validity": "valid",
     }
 
 
 def _write(tmp_path: Path, name: str, record: dict[str, object]) -> Path:
     path = tmp_path / name
-    path.write_text(json.dumps(record, sort_keys=True), encoding="utf-8")
+    data = (json.dumps(record, sort_keys=True) + "\n").encode()
+    path.write_bytes(data)
+    identity = "functional-v1-run-record:sha256:" + hashlib.sha256(data).hexdigest()
+    path.with_suffix(".identity").write_text(identity + "\n", encoding="ascii")
     return path
 
 
@@ -87,7 +98,7 @@ def _two_runs(tmp_path: Path, manifest: str | None = None) -> list[Path]:
             f"run-{index}-{(manifest or 'a')[-8:]}.json",
             _record(
                 f"0198-{(manifest or 'a')[-8:]}-{index}",
-                successes={("python", "omp"): True},
+                successes={(_SCENARIOS[0], "omp"): True},
                 **keywords,
             ),
         )

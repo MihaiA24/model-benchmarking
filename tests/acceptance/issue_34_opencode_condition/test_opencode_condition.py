@@ -80,7 +80,6 @@ def test_condition_lock_seals_exact_stock_opencode_profile(
         "OPENCODE_CONFIG": "fresh-home/.model-benchmark/opencode.json",
         "OPENCODE_DISABLE_AUTOUPDATE": "true",
         "OPENCODE_DISABLE_PROJECT_CONFIG": "true",
-        "PYTHONDONTWRITEBYTECODE": "1",
     }
     assert "workspace_cleanup" not in configuration
     assert configuration["opencode_json"] == {
@@ -229,8 +228,6 @@ if os.environ.get("OPENCODE_DISABLE_AUTOUPDATE") != "true":
     raise SystemExit(93)
 if os.environ.get("OPENCODE_DISABLE_PROJECT_CONFIG") != "true":
     raise SystemExit(94)
-if os.environ.get("PYTHONDONTWRITEBYTECODE") != "1":
-    raise SystemExit(98)
 config_path = Path(os.environ["OPENCODE_CONFIG"])
 if config_path != home / ".model-benchmark/opencode.json":
     raise SystemExit(95)

@@ -31,9 +31,9 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 try:  # imported as scripts.dashboard (tests) or executed from scripts/
-    from scripts.readout import ReadoutError, build_readout
+    from scripts.readout import ReadoutError, build_readout, load_sealed_run_record
 except ImportError:  # pragma: no cover - script-execution fallback
-    from readout import ReadoutError, build_readout
+    from readout import ReadoutError, build_readout, load_sealed_run_record
 
 
 _BANNER = "Diagnostic readout — no claims. Reference margins are annotation only."
@@ -71,12 +71,10 @@ class DashboardError(ValueError):
 
 def _load_value(path: Path) -> dict[str, object]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise DashboardError(f"unreadable run record {path}: {error}") from error
-    if not isinstance(value, dict) or not isinstance(
-        value.get("manifest_identity"), str
-    ):
+        value = load_sealed_run_record(path)["value"]
+    except ReadoutError as error:
+        raise DashboardError(str(error)) from error
+    if not isinstance(value, dict):  # load_sealed_run_record guarantees this
         raise DashboardError(f"{path} is not a Run Record object")
     return value
 

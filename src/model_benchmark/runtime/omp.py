@@ -41,6 +41,12 @@ OMP_ARTIFACT_IDENTITY = (
     "artifact:sha256:c7a2fa328c965131c0d0ef62a07a4fe63306ed1b7a90fbbb924c75605c68d38a"
 )
 OMP_ARTIFACT_BYTES = 171_952_256
+OMP_NATIVE_DIAGNOSTIC_PATH = (
+    f"agent/home/.omp/natives/{OMP_VERSION.removeprefix('v')}/omp"
+)
+OMP_DIAGNOSTIC_EXCLUSIONS: Mapping[str, str] = MappingProxyType(
+    {OMP_NATIVE_DIAGNOSTIC_PATH: OMP_ARTIFACT_IDENTITY}
+)
 OMP_SHIM_IDENTITY = (
     "artifact:sha256:3fa359ee22bb709a545a3dfed099d95f5567e189e13786bc00e415f387206271"
 )
@@ -105,6 +111,7 @@ def _locked_configuration() -> dict[str, object]:
         "artifact_source": OMP_ARTIFACT_URL,
         "artifact_version": OMP_VERSION,
         "instruction_transport": "rpc-prompt-jsonl",
+        "diagnostic_exclusions": dict(OMP_DIAGNOSTIC_EXCLUSIONS),
         "launch_shim": {
             "digest": OMP_SHIM_IDENTITY,
             "source_path": "model_benchmark/runtime/omp_launch.py",
