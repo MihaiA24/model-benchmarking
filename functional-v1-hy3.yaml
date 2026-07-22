@@ -1,0 +1,54 @@
+schema_version: 1
+
+provider:
+  base_url: https://opencode.ai/zen/go/v1
+  model: hy3
+  pricing:
+    schema_version: 1
+    currency: USD
+    unit: usd-per-million-tokens
+    input_usd_per_million_tokens: "0.14"
+    output_usd_per_million_tokens: "0.58"
+    effective_from_utc: "2026-07-22T00:00:00Z"
+    effective_until_utc: "2026-09-01T00:00:00Z"
+    source_url: https://models.dev/providers/opencode-go
+    retrieved_at_utc: "2026-07-22T20:39:29Z"
+    identity: pricing-record:sha256:73a1c8e126ba8e3c8b69867404609290e948c8965908179b52d81838eab4c8c1
+
+limits:
+  requests_per_trial: 64
+  provider_tokens_per_trial: 375000
+  stop_after_cost_usd_per_trial: "5.00"
+  wall_time_seconds_per_trial: 1800
+  cpu_cores_per_trial: 2
+  memory_mib_per_trial: 4096
+  writable_disk_mib_per_trial: 8192
+
+execution:
+  max_parallel: 3
+  network_policy: proxy-only-v1
+
+scenarios:
+  python-sales-by-genre:
+    path: scenarios/calibration/python-sales-by-genre/scenario.lock.json
+    digest: package-lock:sha256:55c3e367621678e7d913fe5055c8e12403f196db5355ab747cd47810591b1665
+  spring-petvalidator-whitespace:
+    path: scenarios/calibration/spring-petvalidator-whitespace/scenario.lock.json
+    digest: package-lock:sha256:b4b723bc4260bd4233248c2da1be94a04fb2675344205121d95f53e01a280794
+  angular-reading-time:
+    path: scenarios/calibration/angular-reading-time/scenario.lock.json
+    digest: package-lock:sha256:0abf78113f0d695f88c58e5ca137206ca644d0235c960a0ec58f8e34e5638284
+
+conditions:
+  omp:
+    path: profiles/functional-v1/omp-v16.4.0.condition.json
+    digest: functional-v1-condition:sha256:dce8184104647439dd21e31d85b3360140c346d36a1d25ec4ebf65309bd88e28
+  opencode:
+    path: profiles/functional-v1/opencode-v1.17.18.condition.json
+    digest: functional-v1-condition:sha256:844d49b5e623b44212c4c3ad1fda133daa215f630b350549e09e7bc5449c8e4c
+  hermes:
+    path: profiles/functional-v1/hermes-v0.18.2.condition.json
+    digest: functional-v1-condition:sha256:cffbb5428fc6baf3a516bc7ef64206987fa5312d967333f83ec05ab0c2cb1f2f
+  raw-api:
+    path: profiles/functional-v1/raw-api-v1.condition.json
+    digest: functional-v1-condition:sha256:c3916e04f236774434394cd7da972ec15d33fff9fc01fb4f5fa13f515f7eee45

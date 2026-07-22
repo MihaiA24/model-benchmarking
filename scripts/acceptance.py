@@ -142,6 +142,13 @@ STAGES: tuple[Stage, ...] = (
         proves="MiniMax M3 Functional V1 manifest: sealed route, pricing, fixed matrix, and canonical identities",
         extra=("--acceptance-input=functional-v1-minimax-m3.yaml",),
     ),
+    Stage(
+        issue=123,
+        slug="hy3_manifest",
+        group="operator",
+        proves="Hy3 Functional V1 manifest: sealed route, pricing, fixed matrix, and canonical identities",
+        extra=("--acceptance-input=functional-v1-hy3.yaml",),
+    ),
 )
 
 

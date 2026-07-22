@@ -7,9 +7,10 @@ the worker must provide. The CLI surface is exactly four commands:
 model-benchmark [--home DIR] [--json] {provision|preflight|run|inspect}
 ```
 
-Every command reads one strict manifest. The committed DeepSeek, MiMo, and MiniMax examples
-are `functional-v1-manifest.yaml`, `functional-v1-mimo-v2.5.yaml`, and
-`functional-v1-minimax-m3.yaml`; all state lives under `--home` (default `.model-benchmark`).
+Every command reads one strict manifest. The committed DeepSeek, MiMo, MiniMax, and Hy3
+examples are `functional-v1-manifest.yaml`, `functional-v1-mimo-v2.5.yaml`,
+`functional-v1-minimax-m3.yaml`, and `functional-v1-hy3.yaml`; all state lives under
+`--home` (default `.model-benchmark`).
 
 ## 1. Setup requirements
 
