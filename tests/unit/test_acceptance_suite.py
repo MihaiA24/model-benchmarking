@@ -44,7 +44,7 @@ def test_selection_accepts_number_slug_and_directory_tokens() -> None:
     assert [stage.issue for stage in subset] == [33, 34, 35]
 
     tail = acceptance.select_stages(acceptance.STAGES, None, "51")
-    assert [stage.issue for stage in tail] == [51, 54, 55, 74]
+    assert [stage.issue for stage in tail] == [51, 54, 55, 74, 123]
 
     with pytest.raises(acceptance.SuiteLayoutError, match="unknown --only stage"):
         acceptance.select_stages(acceptance.STAGES, "no-such-stage", None)

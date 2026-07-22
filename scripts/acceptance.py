@@ -135,6 +135,13 @@ STAGES: tuple[Stage, ...] = (
         group="operator",
         proves="Functional V1 operator: manifest validation, managed home, dispositions, and CLI",
     ),
+    Stage(
+        issue=123,
+        slug="hy3_manifest",
+        group="operator",
+        proves="Hy3 Functional V1 manifest: sealed route, pricing, fixed matrix, and canonical identities",
+        extra=("--acceptance-input=functional-v1-hy3.yaml",),
+    ),
 )
 
 
