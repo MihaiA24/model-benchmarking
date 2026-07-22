@@ -49,7 +49,7 @@ OPENCODE_ARTIFACT_IDENTITY = (
 )
 OPENCODE_ARTIFACT_BYTES = 188_979_328
 OPENCODE_SHIM_IDENTITY = (
-    "artifact:sha256:34d39830c2ce3c4062d6a0c5f5311fa2d20c082db5ad117ace716ddc69faced2"
+    "artifact:sha256:1f3d45dbc839d6438ddd4a4cb1a62f4a3365df569bdee38c57bbb2da71386d45"
 )
 OPENCODE_ENVIRONMENT_NAMES = (
     "MODEL_BENCHMARK_PROVIDER_MODEL",
@@ -149,7 +149,6 @@ def _locked_configuration() -> dict[str, object]:
         "runtime_installation": False,
         "session_persistence": False,
         "shutdown": "process-exit-then-process-group-teardown",
-        "workspace_cleanup": "new-brief-declared-output-files",
     }
 
 

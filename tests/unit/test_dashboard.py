@@ -166,6 +166,18 @@ def test_presentation_template_elements_render(tmp_path: Path) -> None:
     assert 'name="viewport"' in page
 
 
+def test_token_advisory_is_visible_in_dashboard(tmp_path: Path) -> None:
+    record = _record("0198-warning")
+    record["cells"][0]["provider_tokens"] = 100_001
+    path = _write(tmp_path, "warning.json", record)
+
+    page = build_dashboard([path], "Results")
+
+    assert "Token warnings" in page
+    assert "provider-token-advisory-threshold-exceeded" in page
+    assert "100001 &gt; 100000" in page
+
+
 def test_hostile_record_fields_are_escaped(tmp_path: Path) -> None:
     record = _record("0198-a", manifest="functional-v1-manifest:sha256:" + "a" * 64)
     record["cells"][0]["reason_code"] = "<script>alert(1)</script>"  # type: ignore[index]

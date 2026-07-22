@@ -7,8 +7,9 @@ the worker must provide. The CLI surface is exactly four commands:
 model-benchmark [--home DIR] [--json] {provision|preflight|run|inspect}
 ```
 
-Every command reads one strict manifest (`functional-v1-manifest.yaml` is the committed,
-runnable example). All state lives under `--home` (default `.model-benchmark`).
+Every command reads one strict manifest. The committed DeepSeek and MiMo examples are
+`functional-v1-manifest.yaml` and `functional-v1-mimo-v2.5.yaml`; all state lives under
+`--home` (default `.model-benchmark`).
 
 ## 1. Setup requirements
 
@@ -130,8 +131,10 @@ EOF
    `provider.pricing`. `retrieved_at_utc` must fall inside the effective window; the
    window must cover the run date. Manifest load rejects any drift
    (`pricing-record-mismatch`).
-3. Run section 2 against the new manifest. Limits are template-fixed (64 requests,
-   100k tokens, $5.00 stop-after-cost, 1800 s per Trial) and are not tunable in V1.
+3. Run section 2 against the new manifest. Limits are manifest-bound: 64 requests,
+   150,000 tokens, $5.00 stop-after-cost, and 1800 s per Trial in both committed
+   manifests. Provider-token use above 100,000 emits an advisory warning in inspect and
+   every derived report without changing cell validity.
 
 If the provider reports no monetary cost (flat-rate plans), enforcement and totals use
 the exact Decimal cost derived from token usage at the sealed rates; any
@@ -234,7 +237,7 @@ for condition, relative in locks.items():           # 1. reseal each lock's imag
 EOF
 ```
 
-Update each `conditions.<name>.digest` in the manifest with the printed
+Update every affected manifest's `conditions.<name>.digest` with the printed
 `functional-v1-condition:` identities, then re-run `provision` (it will build fresh
 sealed images). The dev gate (`uv run python scripts/verify.py run-development
 --base origin/master --head HEAD`) must stay green.

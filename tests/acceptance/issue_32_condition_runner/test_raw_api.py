@@ -258,6 +258,33 @@ def test_sse_metadata_and_finish_reason_are_valid_without_done(
     assert (repository / _TARGET).read_text(encoding="utf-8") == "print('after')\n"
 
 
+def test_sse_metadata_only_trailer_after_done_materializes(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    replacement = {"content": "print('after')\n", "path": _TARGET}
+    metadata = {
+        "choices": [],
+        "model": _MODEL,
+        "usage": {"cost_usd": "0.10", "total_tokens": 23},
+    }
+    body = (
+        _sse_stream(json.dumps(replacement))
+        + b"data: "
+        + json.dumps(metadata, separators=(",", ":")).encode()
+        + b"\n\n"
+    )
+    recording_provider.enqueue_bytes(body, content_type="text/event-stream")
+    repository = _repository(tmp_path)
+
+    with _proxy(recording_provider, tmp_path) as proxy:
+        result = RawApiMaterializer().materialize(_request(proxy, repository))
+
+    assert result.outcome == "ready-for-capture"
+    assert result.diagnostic_code is None
+    assert (repository / _TARGET).read_text(encoding="utf-8") == "print('after')\n"
+
+
 def test_truncated_stream_without_terminal_marker_is_diagnosed(
     recording_provider: Any,
     tmp_path: Path,

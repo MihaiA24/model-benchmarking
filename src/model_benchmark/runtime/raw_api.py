@@ -374,10 +374,10 @@ def _assemble_sse_envelope(text: str) -> dict[str, object]:
                 raise _invalid_sse("sse-duplicate-terminator")
             saw_done = True
             continue
-        if saw_done:
-            raise _invalid_sse("sse-data-after-terminator")
         choice = _decode_sse_choice(payload)
-        if choice is None:
+        if saw_done and choice is not None:
+            raise _invalid_sse("sse-data-after-terminator")
+        if saw_done or choice is None:
             # Standard usage-only and provider metadata trailers carry no choice.
             continue
         if saw_finish_reason:

@@ -27,6 +27,10 @@ from model_benchmark.declarations.identities import (
     IdentityError,
     TypedDigest,
 )
+from model_benchmark.declarations.limits import (
+    PROVIDER_TOKENS_ADVISORY_CODE,
+    PROVIDER_TOKENS_ADVISORY_THRESHOLD,
+)
 
 
 CELL_DISPOSITIONS = (
@@ -829,10 +833,50 @@ def _count_text(value: object) -> str:
     return "-"
 
 
+def _exceeds_provider_token_advisory(value: object) -> bool:
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and value > PROVIDER_TOKENS_ADVISORY_THRESHOLD
+    )
+
+
+def _provider_token_warning_text(value: object) -> str:
+    if _exceeds_provider_token_advisory(value):
+        return PROVIDER_TOKENS_ADVISORY_CODE
+    return "-"
+
+
+def _provider_token_warnings(record: Mapping[str, object]) -> list[dict[str, object]]:
+    raw_cells = record.get("cells")
+    if not isinstance(raw_cells, list):
+        return []
+    run_id = record.get("run_id")
+    warnings: list[dict[str, object]] = []
+    for cell in raw_cells:
+        if not isinstance(cell, dict):
+            continue
+        provider_tokens = cell.get("provider_tokens")
+        if not _exceeds_provider_token_advisory(provider_tokens):
+            continue
+        warnings.append(
+            {
+                "cell_id": cell.get("cell_id"),
+                "code": PROVIDER_TOKENS_ADVISORY_CODE,
+                "condition": cell.get("condition"),
+                "provider_tokens": provider_tokens,
+                "run_id": run_id,
+                "scenario": cell.get("scenario"),
+                "threshold": PROVIDER_TOKENS_ADVISORY_THRESHOLD,
+            }
+        )
+    return warnings
+
+
 def _human_table(record: Mapping[str, object]) -> str:
     columns = (
         "SCENARIO | CONDITION | DISPOSITION | TASK | ACCEPT | REGRESS | "
-        "DURATION | REQUESTS | TOKENS | COST_USD | BUNDLE"
+        "DURATION | REQUESTS | TOKENS | COST_USD | BUNDLE | WARNING"
     )
     raw_cells = record.get("cells")
     if not isinstance(raw_cells, list):
@@ -871,7 +915,8 @@ def _human_table(record: Mapping[str, object]) -> str:
             f"{_count_text(raw_cell.get('provider_requests'))} | "
             f"{_count_text(raw_cell.get('provider_tokens'))} | "
             f"{cost_usd if isinstance(cost_usd, str) and cost_usd else '-'} | "
-            f"{raw_cell.get('result_bundle_identity') or '-'}"
+            f"{raw_cell.get('result_bundle_identity') or '-'} | "
+            f"{_provider_token_warning_text(raw_cell.get('provider_tokens'))}"
         )
     return "\n".join(rows)
 
@@ -884,6 +929,7 @@ def _inspect_result(record: SealedRunRecord) -> CommandResult:
         "outcome": "complete" if success else "incomplete",
         "record": dict(value),
         "run_record_identity": str(record.identity),
+        "warnings": _provider_token_warnings(value),
     }
     return CommandResult(
         exit_code=0 if success else 1,

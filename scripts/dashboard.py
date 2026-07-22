@@ -307,6 +307,30 @@ def _minibar(value: Decimal | int, maximum: Decimal | int) -> str:
     return f'<div class="mini"><i style="width:{percent:.1f}%"></i></div>'
 
 
+def _token_warning_callout(readout: dict[str, object]) -> str:
+    warnings = readout.get("warnings")
+    if not isinstance(warnings, list) or not warnings:
+        return ""
+    items = []
+    for warning in warnings:
+        if not isinstance(warning, dict):
+            continue
+        detail = (
+            f"{warning.get('run_id')} {warning.get('cell_id')} "
+            f"{warning.get('scenario')}/{warning.get('condition')}: "
+            f"{warning.get('provider_tokens')} > {warning.get('threshold')} "
+            f"({warning.get('code')})"
+        )
+        items.append(f"<li>{html.escape(detail)}</li>")
+    if not items:
+        return ""
+    return (
+        '<div class="callout warn"><strong>Token warnings</strong><ul>'
+        + "".join(items)
+        + "</ul></div>"
+    )
+
+
 def _state_chip(record: dict[str, object]) -> str:
     state = f"{record['state']}/{record['validity']}"
     variant = (
@@ -695,6 +719,7 @@ def _version_section(version: _Version) -> str:
         f'<span class="chip">margins (annotation): task_success ±{margins["task_success_worthwhile_pp"]} pp'  # type: ignore[index]
         f' · regression harm {margins["regression_harm_pp"]} pp</span>'  # type: ignore[index]
         "</div>"
+        f"{_token_warning_callout(readout)}"
         f"<h3>Runs</h3>{_runs_table(version.records)}"
         f"<h3>Task-success rate by condition</h3>{_legend(conditions)}{_rate_chart(readout)}"
         f"<h3>Task success by scenario</h3>{_matrix_table(readout)}"

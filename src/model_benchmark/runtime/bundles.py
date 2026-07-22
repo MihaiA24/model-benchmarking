@@ -25,6 +25,7 @@ _CAPTURE_SCHEMA_VERSION = "scenario-capture-v1"
 _CAPTURE_TOOL_TIMEOUT_SECONDS = 60
 _STABILITY_WINDOW_MS = "25"
 _REDACTION = b"[REDACTED]"
+_OMP_PROVISIONED_NATIVE_PREFIX = "agent/home/.omp/natives/"
 _SANITIZED_RECORD_KEYS = (
     "artifact_sha256",
     "hidden_markers",
@@ -799,6 +800,8 @@ def seal_cell_evidence(
                 if not stat.S_ISREG(os.lstat(path).st_mode):
                     continue
                 relative_path = path.relative_to(trial_root).as_posix()
+                if relative_path.startswith(_OMP_PROVISIONED_NATIVE_PREFIX):
+                    continue
                 spec = _ArtifactSpec(
                     path=f"diagnostics/{relative_path}",
                     role="native-diagnostics",

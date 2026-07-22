@@ -41,6 +41,8 @@ _NUMERIC_ENDPOINTS = (
     ("provider_tokens", "count"),
     ("duration_seconds", "duration"),
 )
+PROVIDER_TOKENS_ADVISORY_THRESHOLD = 100_000
+PROVIDER_TOKENS_ADVISORY_CODE = "provider-token-advisory-threshold-exceeded"
 
 
 class ReadoutError(ValueError):
@@ -136,6 +138,32 @@ def _success(cell: dict[str, object]) -> bool:
 def _missing_success(cell: dict[str, object]) -> bool:
     scores = cell.get("scores")
     return not isinstance(scores, dict) or scores.get("task_success") is None
+
+
+def _token_warnings(records: list[dict[str, object]]) -> list[dict[str, object]]:
+    warnings: list[dict[str, object]] = []
+    for record in records:
+        value = record["value"]
+        run_id = value["run_id"]
+        for cell in value["cells"]:
+            provider_tokens = cell.get("provider_tokens")
+            if (
+                isinstance(provider_tokens, int)
+                and not isinstance(provider_tokens, bool)
+                and provider_tokens > PROVIDER_TOKENS_ADVISORY_THRESHOLD
+            ):
+                warnings.append(
+                    {
+                        "cell_id": cell.get("cell_id"),
+                        "code": PROVIDER_TOKENS_ADVISORY_CODE,
+                        "condition": cell.get("condition"),
+                        "provider_tokens": provider_tokens,
+                        "run_id": run_id,
+                        "scenario": cell.get("scenario"),
+                        "threshold": PROVIDER_TOKENS_ADVISORY_THRESHOLD,
+                    }
+                )
+    return warnings
 
 
 def _endpoint_value(cell: dict[str, object], endpoint: str) -> float | None:
@@ -261,6 +289,7 @@ def build_readout(paths: list[Path]) -> dict[str, object]:
     manifest_identity, resolved_identity = _consistent(records)
     conditions, scenarios, blocks = _blocks(records)
     run_digests = [str(record["digest"]) for record in records]
+    warnings = _token_warnings(records)
     pairs = [
         _pair_analysis(first, second, blocks, run_digests)
         for first, second in combinations(conditions, 2)
@@ -304,6 +333,7 @@ def build_readout(paths: list[Path]) -> dict[str, object]:
             "bootstrap_resamples": BOOTSTRAP_RESAMPLES,
             "seed_basis": "sha256(sorted run digests | pair | endpoint)",
         },
+        "warnings": warnings,
     }
 
 
@@ -330,6 +360,15 @@ def render_markdown(readout: dict[str, object]) -> str:
     ]
     for entry in readout["inputs"]:
         lines.append(f"- `{entry['run_id']}` `{entry['digest']}`")
+    if readout["warnings"]:
+        lines += ["", "## Token warnings", ""]
+        for warning in readout["warnings"]:
+            lines.append(
+                f"- `{warning['run_id']}` `{warning['cell_id']}` "
+                f"{warning['scenario']}/{warning['condition']}: "
+                f"{warning['provider_tokens']} > {warning['threshold']} "
+                f"(`{warning['code']}`)"
+            )
     lines += [
         "",
         "## Paired contrasts (a vs b, pooled over blocks)",

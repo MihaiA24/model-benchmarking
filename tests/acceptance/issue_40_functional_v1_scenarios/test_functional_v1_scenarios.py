@@ -110,6 +110,15 @@ def test_sales_fixtures_reproduce_from_the_declared_generator(tmp_path: Path) ->
     } == expected
 
 
+def test_python_brief_keeps_sample_output_outside_submission() -> None:
+    instruction = (
+        SCENARIO_ROOT / "python-sales-by-genre/instruction.md"
+    ).read_text(encoding="utf-8")
+
+    assert "--output /tmp/sales-by-genre.csv" in instruction
+    assert "--output sales-by-genre.csv" not in instruction
+
+
 def test_diagnostic_qualification_evidence_covers_all_isolated_cases() -> None:
     assert sorted(path.stem for path in EVIDENCE_ROOT.glob("*.json")) == sorted(PACKAGES)
     for directory in PACKAGES:

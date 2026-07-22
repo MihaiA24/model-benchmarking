@@ -40,7 +40,7 @@ repository:
     visibility: verifier
 instruction:
   path: instruction.md
-  sha256: artifact:sha256:835e1448f4849dc14a3ca44e9c2c1bd8ed5dcc9e9ffc239b5687c6dcc2327392
+  sha256: artifact:sha256:53583c27dad46326eadd619d0f0a1baabcf284190885890cd7535ebb3a7f8ffa
 submission:
   kind: git-patch
   repository_root: /workspace/repository

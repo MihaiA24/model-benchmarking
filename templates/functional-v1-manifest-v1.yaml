@@ -17,7 +17,7 @@ provider:
 
 limits:
   requests_per_trial: 64
-  provider_tokens_per_trial: 100000
+  provider_tokens_per_trial: 150000
   stop_after_cost_usd_per_trial: "5.00"
   wall_time_seconds_per_trial: 1800
   cpu_cores_per_trial: 2

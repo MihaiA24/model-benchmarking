@@ -197,6 +197,30 @@ def test_markdown_carries_pairs_scenarios_and_disclaimer(tmp_path: Path) -> None
     assert "counted as failures" in rendered
 
 
+def test_token_advisory_is_derived_in_json_and_markdown(tmp_path: Path) -> None:
+    record = _record("0198-warning")
+    cell = record["cells"][0]
+    cell["provider_tokens"] = 100_001
+    path = _write(tmp_path, "warning.json", record)
+
+    readout = build_readout([path])
+    rendered = render_markdown(readout)
+
+    assert readout["warnings"] == [
+        {
+            "cell_id": cell["cell_id"],
+            "code": "provider-token-advisory-threshold-exceeded",
+            "condition": cell["condition"],
+            "provider_tokens": 100_001,
+            "run_id": "0198-warning",
+            "scenario": cell["scenario"],
+            "threshold": 100_000,
+        }
+    ]
+    assert "## Token warnings" in rendered
+    assert "provider-token-advisory-threshold-exceeded" in rendered
+
+
 def test_cli_writes_deterministic_json(tmp_path: Path) -> None:
     paths = _three_runs(tmp_path)
     first_out = tmp_path / "first.json"

@@ -82,10 +82,7 @@ def test_condition_lock_seals_exact_stock_opencode_profile(
         "OPENCODE_DISABLE_PROJECT_CONFIG": "true",
         "PYTHONDONTWRITEBYTECODE": "1",
     }
-    assert (
-        configuration["workspace_cleanup"]
-        == "new-brief-declared-output-files"
-    )
+    assert "workspace_cleanup" not in configuration
     assert configuration["opencode_json"] == {
         "autoupdate": False,
         "mcp": {},
@@ -477,13 +474,13 @@ def test_fresh_run_trials_preserve_stock_autonomy_and_complete_evidence(
         assert delivery["brief_sha256"] == (
             "sha256:" + hashlib.sha256(_BRIEF).hexdigest()
         )
-        assert delivery["cleaned_generated_paths"] == ["generated.csv"]
+        assert "cleaned_generated_paths" not in delivery
         assert delivery["model"] == _MODEL
         assert delivery["provider"] == "model-benchmark-proxy"
         assert delivery["proxy_base_url"].startswith("http://127.0.0.1:")
         assert delivery["transport"] == "run-stdin-json-events"
         assert delivery["workspace"] == str(trial_root / "repository")
-        assert not (trial_root / "repository/generated.csv").exists()
+        assert (trial_root / "repository/generated.csv").read_text(encoding="utf-8") == "derived output"
         assert snapshot.request_count == 2
         assert snapshot.provider_tokens == 34
         assert snapshot.provider_cost_usd == "0.20"

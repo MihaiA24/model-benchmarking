@@ -271,7 +271,7 @@ def test_published_template_has_the_exact_fixed_shape() -> None:
     }
     assert template["limits"] == {
         "requests_per_trial": 64,
-        "provider_tokens_per_trial": 100_000,
+        "provider_tokens_per_trial": 150_000,
         "stop_after_cost_usd_per_trial": "5.00",
         "wall_time_seconds_per_trial": 1_800,
         "cpu_cores_per_trial": 2,

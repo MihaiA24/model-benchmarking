@@ -224,6 +224,29 @@ def test_no_op_handoff_completes_without_patch_content(tmp_path: Path) -> None:
     assert outcome.result_bundle_identity is not None
 
 
+def test_omp_provisioned_natives_are_excluded_from_diagnostics(tmp_path: Path) -> None:
+    cell_id = "01-python-sales-by-genre-omp"
+    cell_dir = _build_cell(tmp_path)
+    trial = cell_dir / "raw/trials/t1"
+    _write(trial / "agent/home/.omp/natives/16.4.0/omp", b"provisioned binary")
+    _write(trial / "agent/home/.omp/logs/session.log", b"diagnostic log")
+
+    outcome = seal_cell_evidence(
+        cell_dir,
+        cell_id=cell_id,
+        run_id=RUN_ID,
+        execution=_execution(cell_id=cell_id),
+    )
+
+    assert outcome.disposition == "valid_completed"
+    inventory = _inventory(cell_dir)
+    artifacts = inventory["artifacts"]
+    assert isinstance(artifacts, list)
+    paths = {entry["path"] for entry in artifacts}
+    assert "diagnostics/agent/home/.omp/natives/16.4.0/omp" not in paths
+    assert "diagnostics/agent/home/.omp/logs/session.log" in paths
+
+
 def test_rejected_handoff_reconciles_to_submission_rejected(tmp_path: Path) -> None:
     cell_dir = _build_cell(
         tmp_path,
