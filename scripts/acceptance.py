@@ -149,6 +149,12 @@ STAGES: tuple[Stage, ...] = (
         proves="Hy3 Functional V1 manifest: sealed route, pricing, fixed matrix, and canonical identities",
         extra=("--acceptance-input=functional-v1-hy3.yaml",),
     ),
+    Stage(
+        issue=120,
+        slug="react_author_filter",
+        group="scenarios",
+        proves="React author-filter package: immutable provenance, bounded submission, and isolated behavioral qualification",
+    ),
 )
 
 

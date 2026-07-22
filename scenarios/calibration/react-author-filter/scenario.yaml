@@ -1,0 +1,105 @@
+schema_version: 1
+scenario:
+  id: functional-v1/react-author-filter
+  version: 1.0.0
+  lifecycle_state: candidate
+  visibility: public
+  ecosystem: react-javascript
+  workload_family: bounded-feature-implementation
+  difficulty: standard
+  execution_profile: standard-v1
+repository:
+  pristine:
+    origin: https://github.com/gothinkster/react-redux-realworld-example-app
+    commit: ee72eba4056392c95a27bc48d385d3f54ba38a18
+    archive: seed/pristine.tar
+    archive_sha256: artifact:sha256:d072cbbb45ad5e08361283ccfb66e2ed5ad0cbc376d0fbff88cbb8fa57df2d3c
+    tree_sha256: source-tree:sha256:c35fec7d5a27c0341e470695f1ec1e2bc6b2b034286ebfbaf6101adea92f6228
+    license: MIT
+  seed_inputs: []
+  baseline_tree_sha256: source-tree:sha256:c35fec7d5a27c0341e470695f1ec1e2bc6b2b034286ebfbaf6101adea92f6228
+  datasets: []
+instruction:
+  path: instruction.md
+  sha256: artifact:sha256:1919edfdaa6d8cf3eb714b55a526359feab9220cbac2fa4f98a7b0e5b930dba8
+submission:
+  kind: git-patch
+  repository_root: /workspace/repository
+  allowed_paths:
+  - src/reducers/articleList.js
+  protected_paths:
+  - .git/**
+  allow_additions: false
+  allow_deletions: false
+  max_files: 1
+  max_bytes: 50000
+  symlinks: reject
+  executable_bits: reject
+  submodules: reject
+  nested_repositories: reject
+  binary_files: reject
+verification:
+  verifier:
+    version: 1.0.0
+  score_contract:
+    version: 1.0.0
+  check_groups:
+  - id: author-filter-output
+    class: acceptance
+    required: true
+    weight: '1'
+    score_direction: maximize
+    evidence_key: author-filter-output
+  - id: author-filter-state
+    class: domain
+    required: true
+    weight: '1'
+    score_direction: maximize
+    evidence_key: author-filter-state
+  - id: reducer-regression
+    class: regression
+    required: true
+    weight: '1'
+    score_direction: maximize
+    evidence_key: reducer-regression
+  domain_scores:
+  - name: author_filter_state
+    check_groups:
+    - author-filter-state
+  qualification:
+    baseline_score_vector:
+    - name: acceptance_score
+      value: '0'
+    - name: author_filter_state
+      value: '0'
+    - name: regression_score
+      value: '1'
+    - name: task_success
+      value: '0'
+    reference_score_vector:
+    - name: acceptance_score
+      value: '1'
+    - name: author_filter_state
+      value: '1'
+    - name: regression_score
+      value: '1'
+    - name: task_success
+      value: '1'
+  total_scoring:
+    safe_partial: score-declared-groups
+    missing: score-zero
+    malformed: reject-score-zero
+    oversized: reject-score-zero
+    unsafe: reject-score-zero
+provenance:
+  authors:
+  - urn:model-benchmark:author:functional-v1-scenarios
+  source_references:
+  - https://github.com/gothinkster/react-redux-realworld-example-app/tree/ee72eba4056392c95a27bc48d385d3f54ba38a18
+  - https://github.com/Ufransa/model-benchmarking/blob/efb243da54cc77d3a250a1cae9cd4ca5ac7d2714/run_react.py
+  - https://github.com/MihaiA24/model-benchmarking/issues/120
+  licenses:
+  - MIT
+  contamination_disclosures:
+  - The legacy author-filter task statement, happy-path test, and prior model outputs were public before this package was authored.
+  - The legacy setup cloned a moving upstream branch and preserved no baseline digest; this package pins the exact text source closure (license, README, package metadata, public index, and src) from ee72eba4056392c95a27bc48d385d3f54ba38a18 as a re-authored descendant and does not claim byte-identical legacy provenance.

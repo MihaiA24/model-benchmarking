@@ -19,6 +19,7 @@ EVIDENCE_ROOT = ROOT / "artifacts/qualification/functional-v1"
 PACKAGES = {
     "angular-reading-time": "functional-v1/angular-reading-time",
     "python-sales-by-genre": "functional-v1/python-sales-by-genre",
+    "react-author-filter": "functional-v1/react-author-filter",
     "spring-petvalidator-whitespace": "functional-v1/spring-petvalidator-whitespace",
 }
 REGISTRY = SchemaRegistry(schema_root_path())

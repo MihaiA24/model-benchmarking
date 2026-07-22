@@ -1,0 +1,34 @@
+version = "1.0"
+
+artifacts = [
+  { source = "/capture/capture.json", service = "capture" },
+  { source = "/capture/submission.patch", service = "capture" },
+]
+
+[task]
+name = "functional-v1/react-author-filter"
+description = "Add behaviorally verified article filtering by author to the Redux reducer."
+keywords = ["model-benchmark", "standard-v1"]
+
+[verifier]
+timeout_sec = 600.0
+environment_mode = "separate"
+network_mode = "no-network"
+user = 65532
+
+[[verifier.collect]]
+service = "capture"
+command = "python3 /opt/capture/capture.py --repository /input/repository --baseline /opt/capture/baseline --policy /opt/capture/policy.json --output /capture"
+timeout_sec = 30.0
+
+[agent]
+network_mode = "no-network"
+user = 65532
+
+[environment]
+build_timeout_sec = 600.0
+workdir = "/workspace/repository"
+network_mode = "no-network"
+cpus = 1
+memory_mb = 512
+storage_mb = 1024

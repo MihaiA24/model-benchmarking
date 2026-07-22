@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[3]
 REGISTRY = SchemaRegistry(ROOT / "schemas")
 ECOSYSTEMS = (
     "angular-typescript",
+    "react-javascript",
     "spring-boot-java",
     "python-data-engineering",
 )
