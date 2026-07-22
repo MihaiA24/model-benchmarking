@@ -12,6 +12,19 @@ from pathlib import Path
 _UNQUALIFIED_EXIT = 78
 _PROVIDER_ID = "model-benchmark-proxy"
 _PROVIDER_ARGUMENT = f"custom:{_PROVIDER_ID}"
+_STOCK_ELF_INTERPRETER = "/lib64/ld-linux-x86-64.so.2"
+_STOCK_PYTHON_PATH = "/usr/bin/python3.13"
+_STOCK_PYTHON_IDENTITY = (
+    "artifact:sha256:4703a3d15898c0b5d81c3f939e93bdd8ca6116342093fb160ab1e01860dd7d8b"
+)
+_STOCK_PYTHON_BYTES = 6_812_336
+_STOCK_LOADER_PATH = "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+_STOCK_LOADER_IDENTITY = (
+    "artifact:sha256:438c546d8e8cc48496bf3a95f753051afd9db66a629a74e31a9ded71586b56e0"
+)
+_STOCK_LOADER_BYTES = 225_672
+_RELOCATED_PYTHON_PATH = "/tmp/mb-hermes-python"
+_RELOCATED_LOADER_PATH = "/tmp/mb-hermes-ld.so"
 
 
 def _digest(path: Path) -> str:
@@ -42,6 +55,86 @@ def _config(base_url: str, model: str) -> dict[str, object]:
     }
 
 
+def relocation_contract() -> dict[str, object]:
+    return {
+        "elf_interpreter": {
+            "before": _STOCK_ELF_INTERPRETER,
+            "after": _RELOCATED_LOADER_PATH,
+        },
+        "loader": {
+            "source_path": _STOCK_LOADER_PATH,
+            "source_identity": _STOCK_LOADER_IDENTITY,
+            "source_bytes": _STOCK_LOADER_BYTES,
+            "runtime_path": _RELOCATED_LOADER_PATH,
+        },
+        "python": {
+            "source_path": _STOCK_PYTHON_PATH,
+            "source_identity": _STOCK_PYTHON_IDENTITY,
+            "source_bytes": _STOCK_PYTHON_BYTES,
+            "runtime_path": _RELOCATED_PYTHON_PATH,
+        },
+    }
+
+
+def _identity(data: bytes) -> str:
+    return f"artifact:sha256:{hashlib.sha256(data).hexdigest()}"
+
+
+def _publish_exclusive(path: Path, data: bytes) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o500)
+    try:
+        os.fchmod(descriptor, 0o500)
+        remaining = memoryview(data)
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written == 0:
+                raise OSError("short write while relocating Hermes runtime")
+            remaining = remaining[written:]
+        os.fsync(descriptor)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    finally:
+        os.close(descriptor)
+    if _digest(path) != _identity(data):
+        path.unlink(missing_ok=True)
+        raise OSError("relocated Hermes runtime failed read-back verification")
+
+
+def _materialize_relocated_python(
+    mounted_root: Path,
+) -> tuple[Path, tuple[Path, ...]]:
+    python_source = mounted_root / _STOCK_PYTHON_PATH.removeprefix("/")
+    loader_source = mounted_root / _STOCK_LOADER_PATH.removeprefix("/")
+    python_bytes = python_source.read_bytes()
+    loader_bytes = loader_source.read_bytes()
+    if (
+        len(python_bytes) != _STOCK_PYTHON_BYTES
+        or _identity(python_bytes) != _STOCK_PYTHON_IDENTITY
+        or len(loader_bytes) != _STOCK_LOADER_BYTES
+        or _identity(loader_bytes) != _STOCK_LOADER_IDENTITY
+    ):
+        raise ValueError("mounted Hermes runtime does not match its declaration")
+
+    before = _STOCK_ELF_INTERPRETER.encode() + b"\0"
+    after = _RELOCATED_LOADER_PATH.encode() + b"\0"
+    if len(after) > len(before) or python_bytes.count(before) != 1:
+        raise ValueError("stock Hermes Python ELF interpreter is not relocatable")
+    relocated_python = python_bytes.replace(before, after.ljust(len(before), b"\0"))
+    python_path = Path(_RELOCATED_PYTHON_PATH)
+    loader_path = Path(_RELOCATED_LOADER_PATH)
+    published: list[Path] = []
+    try:
+        _publish_exclusive(loader_path, loader_bytes)
+        published.append(loader_path)
+        _publish_exclusive(python_path, relocated_python)
+        published.append(python_path)
+    except BaseException:
+        for path in reversed(published):
+            path.unlink(missing_ok=True)
+        raise
+    return python_path, (python_path, loader_path)
+
 def _valid_usage(path: Path, model: str) -> bool:
     try:
         value = json.loads(path.read_text(encoding="utf-8", errors="strict"))
@@ -61,26 +154,15 @@ def _valid_usage(path: Path, model: str) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw_arguments = sys.argv[1:] if argv is None else argv
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--artifact-identity", required=True)
-    arguments = parser.parse_args(argv)
+    arguments = parser.parse_args(raw_arguments)
     mounted_root = Path("/opt/model-benchmark-condition")
     mounted_hermes = mounted_root / "opt/hermes"
-    # The real ELF, not the lib64 symlink: on absolute-symlink glibc layouts
-    # the symlink escapes the read-only image mount into the scenario image
-    # (issue #99).
-    loader = mounted_root / "usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
-    library_path = ":".join(
-        str(path)
-        for path in (
-            mounted_root / "lib/x86_64-linux-gnu",
-            mounted_root / "usr/lib/x86_64-linux-gnu",
-            mounted_root / "usr/local/lib",
-        )
-    )
     shim = mounted_hermes / "bin/hermes"
-    python = mounted_root / "usr/bin/python3"
     real = mounted_hermes / ".venv/bin/hermes"
+    relocated_paths: tuple[Path, ...] = ()
     try:
         if _digest(shim) != arguments.artifact_identity:
             return _UNQUALIFIED_EXIT
@@ -93,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
         model = os.environ["MODEL_BENCHMARK_PROVIDER_MODEL"]
         evidence = home / ".model-benchmark"
         evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
+        python, relocated_paths = _materialize_relocated_python(mounted_root)
         hermes_home = home / ".hermes"
         hermes_home.mkdir(mode=0o700, parents=True, exist_ok=True)
         config = json.dumps(
@@ -115,6 +198,7 @@ def main(argv: list[str] | None = None) -> int:
             "proxy_base_url": base_url,
             "rules_injection": False,
             "runtime_installation": False,
+            "runtime_relocation": relocation_contract(),
             "schema_version": 1,
             "skills_injection": False,
             "transport": "oneshot-argument-with-native-tools",
@@ -123,6 +207,14 @@ def main(argv: list[str] | None = None) -> int:
         (evidence / "hermes-delivery.json").write_text(
             json.dumps(delivery, separators=(",", ":"), sort_keys=True),
             encoding="utf-8",
+        )
+        library_path = ":".join(
+            str(path)
+            for path in (
+                mounted_root / "lib/x86_64-linux-gnu",
+                mounted_root / "usr/lib/x86_64-linux-gnu",
+                mounted_root / "usr/local/lib",
+            )
         )
         environment = {
             **os.environ,
@@ -133,7 +225,10 @@ def main(argv: list[str] | None = None) -> int:
             "HERMES_TUI_DIR": str(mounted_hermes / "ui-tui"),
             "HERMES_WEB_DIST": str(mounted_hermes / "hermes_cli/web_dist"),
             "LD_LIBRARY_PATH": library_path,
-            "PATH": f"{mounted_hermes / 'bin'}:{mounted_hermes / '.venv/bin'}:{os.environ.get('PATH', '')}",
+            "PATH": (
+                f"{mounted_hermes / 'bin'}:{mounted_hermes / '.venv/bin'}:"
+                f"{os.environ.get('PATH', '')}"
+            ),
             "PLAYWRIGHT_BROWSERS_PATH": str(mounted_hermes / ".playwright"),
             "PYTHONHOME": str(mounted_root / "usr"),
             "PYTHONPATH": ":".join(
@@ -146,9 +241,6 @@ def main(argv: list[str] | None = None) -> int:
         }
         completed = subprocess.run(
             [
-                str(loader),
-                "--library-path",
-                library_path,
                 str(python),
                 str(real),
                 "--ignore-rules",
@@ -180,6 +272,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except (KeyError, OSError, UnicodeError, ValueError, subprocess.SubprocessError):
         return _UNQUALIFIED_EXIT
+    finally:
+        for path in relocated_paths:
+            path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

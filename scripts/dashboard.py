@@ -31,9 +31,9 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 try:  # imported as scripts.dashboard (tests) or executed from scripts/
-    from scripts.readout import ReadoutError, build_readout
+    from scripts.readout import ReadoutError, build_readout, load_sealed_run_record
 except ImportError:  # pragma: no cover - script-execution fallback
-    from readout import ReadoutError, build_readout
+    from readout import ReadoutError, build_readout, load_sealed_run_record
 
 
 _BANNER = "Diagnostic readout — no claims. Reference margins are annotation only."
@@ -71,12 +71,10 @@ class DashboardError(ValueError):
 
 def _load_value(path: Path) -> dict[str, object]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise DashboardError(f"unreadable run record {path}: {error}") from error
-    if not isinstance(value, dict) or not isinstance(
-        value.get("manifest_identity"), str
-    ):
+        value = load_sealed_run_record(path)["value"]
+    except ReadoutError as error:
+        raise DashboardError(str(error)) from error
+    if not isinstance(value, dict):  # load_sealed_run_record guarantees this
         raise DashboardError(f"{path} is not a Run Record object")
     return value
 
@@ -305,6 +303,30 @@ def _legend(conditions: list[str]) -> str:
 def _minibar(value: Decimal | int, maximum: Decimal | int) -> str:
     percent = float(value) / float(maximum) * 100 if maximum else 0.0
     return f'<div class="mini"><i style="width:{percent:.1f}%"></i></div>'
+
+
+def _token_warning_callout(readout: dict[str, object]) -> str:
+    warnings = readout.get("warnings")
+    if not isinstance(warnings, list) or not warnings:
+        return ""
+    items = []
+    for warning in warnings:
+        if not isinstance(warning, dict):
+            continue
+        detail = (
+            f"{warning.get('run_id')} {warning.get('cell_id')} "
+            f"{warning.get('scenario')}/{warning.get('condition')}: "
+            f"{warning.get('provider_tokens')} > {warning.get('threshold')} "
+            f"({warning.get('code')})"
+        )
+        items.append(f"<li>{html.escape(detail)}</li>")
+    if not items:
+        return ""
+    return (
+        '<div class="callout warn"><strong>Token warnings</strong><ul>'
+        + "".join(items)
+        + "</ul></div>"
+    )
 
 
 def _state_chip(record: dict[str, object]) -> str:
@@ -695,6 +717,7 @@ def _version_section(version: _Version) -> str:
         f'<span class="chip">margins (annotation): task_success ±{margins["task_success_worthwhile_pp"]} pp'  # type: ignore[index]
         f' · regression harm {margins["regression_harm_pp"]} pp</span>'  # type: ignore[index]
         "</div>"
+        f"{_token_warning_callout(readout)}"
         f"<h3>Runs</h3>{_runs_table(version.records)}"
         f"<h3>Task-success rate by condition</h3>{_legend(conditions)}{_rate_chart(readout)}"
         f"<h3>Task success by scenario</h3>{_matrix_table(readout)}"

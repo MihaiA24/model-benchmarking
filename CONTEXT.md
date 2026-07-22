@@ -9,7 +9,7 @@ A system under evaluation that autonomously attempts a scenario through its own 
 _Avoid_: Agent, runner
 
 **Raw API Baseline**:
-A minimal single-request OpenAI-compatible control condition that receives the same Developer Brief and one declared target file, writes only the returned replacement for that file, and passes the resulting Submission to the same Verifier path. It is not a Harness and is not eligible for Harness ranking.
+A minimal single-request OpenAI-compatible control condition that receives the same Developer Brief plus the exact Scenario Baseline contents of one declared target file, returns a replacement only for that file, and passes the resulting Submission to the same Verifier path. It is a qualified control rather than a Harness: failure before response materialization measures baseline protocol incompatibility rather than raw-model task capability, and it is not eligible for Harness ranking.
 _Avoid_: Harness, autonomous agent, fourth harness
 
 **Benchmark substrate**:
@@ -35,6 +35,14 @@ _Avoid_: Source YAML, mutable runtime configuration, Functional V1 Run Manifest
 **Functional V1 Execution Envelope**:
 The fixed diagnostic-only per-cell resource and provider limits shared by all 12 Functional V1 Trial Cells, including an enforced 30-minute wall-time limit that does not apply to production measured Trials.
 _Avoid_: Execution Profile, production Trial limits, operator override
+
+**Advisory Token Threshold**:
+A non-enforcing cumulative provider-token level that produces an operator-visible warning while allowing the Trial to continue.
+_Avoid_: Token limit, upper boundary
+
+**Token Stop Threshold**:
+A cumulative provider-token level evaluated after each complete provider response; once reached, the next provider request is rejected. Actual usage may exceed it by the final response and preserves that overshoot explicitly.
+_Avoid_: Exact hard cap, absolute token boundary
 
 **Functional V1 Condition Lock**:
 A sealed platform-aware declaration binding one Functional V1 comparison condition to its exact executable or materializer, adapter behavior, native configuration, Provider Route and model mapping, evidence surfaces, and transitive common execution inputs.
@@ -249,6 +257,34 @@ _Avoid_: Trial, result row
 **Trial Attempt Record**:
 The immutable terminal Run Ledger record for one coordinator attempt to fulfill a Planned Trial Cell, including an attempt that ends before a measured Trial starts. It links any started Trial and its Result Bundle.
 _Avoid_: Mutable run row, report row
+
+**Failure**:
+An incomplete label that must be qualified by the affected projection: task quality, Submission handoff, Trial validity, or diagnostic completeness. It is not a Trial Attempt disposition.
+_Avoid_: Failed run, benchmark failure
+
+**Trial Attempt Disposition**:
+The coordinator-assigned top-level classification of a Trial Attempt's validity and termination category, kept orthogonal to task score, Submission outcome, and diagnostic availability.
+_Avoid_: Pass/fail, task result
+
+**Task Failure**:
+A valid Trial Attempt whose declared `task_success` outcome is false. It records task quality, not the cause of that outcome.
+_Avoid_: Harness failure, infrastructure failure
+
+**Comparison Contract Defect**:
+A conflict or condition-specific behavior in shared Scenario, Submission, or cleanup rules that changes an observed outcome independently of the capability intended for comparison. Affected evidence is diagnostic rather than claim-bearing.
+_Avoid_: Harness failure, task difficulty
+
+**Rejected Handoff**:
+A complete Final Repository Capture whose candidate changes cannot become an accepted Submission because they violate the Submission contract. It remains a scoreable Harness outcome unless separate integrity evidence proves a breach.
+_Avoid_: Missing Submission, infrastructure failure
+
+**Infrastructure-invalid Trial Attempt**:
+A Trial Attempt with no authoritative task-quality observation because trusted benchmark machinery failed independently of Harness output.
+_Avoid_: Task Failure, Rejected Handoff
+
+**Diagnostic Limitation**:
+Unavailable optional diagnostic evidence that does not invalidate the Trial Attempt or its task-quality score.
+_Avoid_: Infrastructure-invalid Trial Attempt, Task Failure
 
 **Replacement Trial**:
 The single new Trial Attempt permitted for a Planned Trial Cell after its prior attempt ends `not_started` or `invalid_infrastructure`, under the identical Condition Fingerprint.

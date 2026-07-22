@@ -8,7 +8,11 @@ from typing import Any
 import pytest
 
 from model_benchmark.runtime.credential_proxy import CredentialProxy, CredentialProxyConfig
-from model_benchmark.runtime.raw_api import RawApiMaterializer, RawApiRequest
+from model_benchmark.runtime.raw_api import (
+    RawApiError,
+    RawApiMaterializer,
+    RawApiRequest,
+)
 
 
 _MODEL = "locked/model"
@@ -136,15 +140,42 @@ def test_raw_api_makes_one_request_and_atomically_changes_only_locked_file(
     assert len(recording_provider.requests) == 1
     provider_request = recording_provider.requests[0]
     request_value = json.loads(provider_request.body)
-    assert request_value["messages"][0] == {
+    messages = request_value["messages"]
+    assert len(messages) == 3
+    system_message, brief_message, target_message = messages
+    assert system_message["role"] == "system"
+    assert "exact current target file" in system_message["content"]
+    assert _TARGET in system_message["content"]
+    assert brief_message == {
         "content": "Replace the locked target with the requested implementation.\n",
         "role": "user",
+    }
+    assert target_message["role"] == "user"
+    assert json.loads(target_message["content"]) == {
+        "content": "before\n",
+        "path": _TARGET,
     }
     assert request_value["stream"] is True
     assert provider_request.headers["authorization"] == f"Bearer {_REAL_KEY}"
     # The materializer's own UA must survive the proxy unmodified: UA-less
     # upstream traffic is tarpitted by the provider's WAF (issue #99).
     assert provider_request.headers["user-agent"] == "model-benchmark-raw-api/1"
+
+
+def test_raw_api_rejects_non_utf8_target_before_provider_request(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    target = repository / _TARGET
+    target.write_bytes(b"\xff")
+
+    with _proxy(recording_provider, tmp_path) as proxy:
+        with pytest.raises(RawApiError, match="existing strict UTF-8 file"):
+            RawApiMaterializer().materialize(_request(proxy, repository))
+
+    assert recording_provider.requests == []
+    assert target.read_bytes() == b"\xff"
 
 
 @pytest.mark.parametrize(
@@ -225,7 +256,67 @@ def test_non_streamed_json_response_still_materializes(
     assert (repository / _TARGET).read_text(encoding="utf-8") == "print('after')\n"
 
 
-def test_truncated_stream_without_done_is_invalid_provider_json(
+def test_sse_metadata_and_finish_reason_are_valid_without_done(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    replacement = {"content": "print('after')\n", "path": _TARGET}
+    events = (
+        {"choices": [{"delta": {"role": "assistant"}, "index": 0}]},
+        {
+            "choices": [
+                {"delta": {"content": json.dumps(replacement)}, "index": 0}
+            ]
+        },
+        {
+            "choices": [
+                {"delta": {}, "finish_reason": "stop", "index": 0}
+            ]
+        },
+    )
+    body = b": keepalive\n\nevent: message\n" + b"".join(
+        b"data: " + json.dumps(event, separators=(",", ":")).encode() + b"\n\n"
+        for event in events
+    )
+    recording_provider.enqueue_bytes(body, content_type="text/event-stream")
+    repository = _repository(tmp_path)
+
+    with _proxy(recording_provider, tmp_path) as proxy:
+        result = RawApiMaterializer().materialize(_request(proxy, repository))
+
+    assert result.outcome == "ready-for-capture"
+    assert result.diagnostic_code is None
+    assert (repository / _TARGET).read_text(encoding="utf-8") == "print('after')\n"
+
+
+def test_sse_metadata_only_trailer_after_done_materializes(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    replacement = {"content": "print('after')\n", "path": _TARGET}
+    metadata = {
+        "choices": [],
+        "model": _MODEL,
+        "usage": {"cost_usd": "0.10", "total_tokens": 23},
+    }
+    body = (
+        _sse_stream(json.dumps(replacement))
+        + b"data: "
+        + json.dumps(metadata, separators=(",", ":")).encode()
+        + b"\n\n"
+    )
+    recording_provider.enqueue_bytes(body, content_type="text/event-stream")
+    repository = _repository(tmp_path)
+
+    with _proxy(recording_provider, tmp_path) as proxy:
+        result = RawApiMaterializer().materialize(_request(proxy, repository))
+
+    assert result.outcome == "ready-for-capture"
+    assert result.diagnostic_code is None
+    assert (repository / _TARGET).read_text(encoding="utf-8") == "print('after')\n"
+
+
+def test_truncated_stream_without_terminal_marker_is_diagnosed(
     recording_provider: Any,
     tmp_path: Path,
 ) -> None:
@@ -241,6 +332,7 @@ def test_truncated_stream_without_done_is_invalid_provider_json(
 
     assert result.outcome == "valid_harness_outcome"
     assert result.reason_code == "invalid-provider-envelope"
+    assert result.diagnostic_code == "sse-missing-terminator"
     assert (repository / _TARGET).read_text(encoding="utf-8") == "before\n"
 
 

@@ -62,5 +62,6 @@ results/_verdict_data.json
 .env
 # Managed home / cache content-addressed de Functional V1 (~cientos de MB).
 .benchmark-cache/
+.model-benchmark/
 # Estado de herramientas locales.
 .serena/

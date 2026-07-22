@@ -17,7 +17,7 @@ provider:
 
 limits:
   requests_per_trial: 64
-  provider_tokens_per_trial: 100000
+  provider_tokens_per_trial: 375000
   stop_after_cost_usd_per_trial: "5.00"
   wall_time_seconds_per_trial: 1800
   cpu_cores_per_trial: 2
@@ -31,7 +31,7 @@ execution:
 scenarios:
   python-sales-by-genre:
     path: scenarios/calibration/python-sales-by-genre/scenario.lock.json
-    digest: package-lock:sha256:a5fab9dfbd43c0713723843fb1fdbeff01c4d5b05d2bbeb137339f0ae1a86920
+    digest: package-lock:sha256:55c3e367621678e7d913fe5055c8e12403f196db5355ab747cd47810591b1665
   spring-petvalidator-whitespace:
     path: scenarios/calibration/spring-petvalidator-whitespace/scenario.lock.json
     digest: package-lock:sha256:b4b723bc4260bd4233248c2da1be94a04fb2675344205121d95f53e01a280794
@@ -42,13 +42,13 @@ scenarios:
 conditions:
   omp:
     path: profiles/functional-v1/omp-v16.4.0.condition.json
-    digest: functional-v1-condition:sha256:0376f3538ad5d3dccc6f251cc7dd4e714592cba152733a683a034f28ecd6adcd
+    digest: functional-v1-condition:sha256:350ab556eb3b3028998d6ea326fdccac2aa425588f64c26e8fc0540365f1a105
   opencode:
     path: profiles/functional-v1/opencode-v1.17.18.condition.json
-    digest: functional-v1-condition:sha256:513cf45c033191ee387442494bae0def1cb7ad419d8bbd1a509f3a7fefb77cef
+    digest: functional-v1-condition:sha256:4068ec30f36f8c4004ddbe38bc1788c8e918585712e6f307292a6d29279c958e
   hermes:
     path: profiles/functional-v1/hermes-v0.18.2.condition.json
-    digest: functional-v1-condition:sha256:89c563b2270a0af296c3d8231cc663f04ec528dae84c5e327d097ef9ffa168c6
+    digest: functional-v1-condition:sha256:f38ae47d65d4ed8bf4875c17e1a01633b08129e2fd74ccb2f305eab9e93ac9df
   raw-api:
     path: profiles/functional-v1/raw-api-v1.condition.json
-    digest: functional-v1-condition:sha256:8d2b6aefe76f6c276bb5ff86933528b54070d1ae4d90d57beff0f64239e1d944
+    digest: functional-v1-condition:sha256:0cfb1baaac77ab146087bcc0e20a36ef7c8e860b271b5543f8dbb1963e730450

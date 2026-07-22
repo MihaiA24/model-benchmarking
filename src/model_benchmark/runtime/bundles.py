@@ -291,6 +291,45 @@ def _load_json_object(path: Path) -> dict[str, object] | None:
     return loaded
 
 
+def _matches_declared_artifact(path: Path, identity_text: str) -> bool:
+    try:
+        identity = TypedDigest.parse(identity_text)
+    except (TypeError, ValueError):
+        return False
+    if identity.kind is not DigestKind.ARTIFACT:
+        return False
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return False
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            return False
+        digest = hashlib.sha256()
+        while chunk := os.read(descriptor, 1024 * 1024):
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+    except OSError:
+        return False
+    finally:
+        os.close(descriptor)
+    stable = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    ) == (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    return stable and digest.hexdigest() == identity.value
+
+
 def _copy_regular_file(
     spec: _ArtifactSpec, source: Path, destination: Path
 ) -> dict[str, object]:
@@ -722,6 +761,7 @@ def seal_cell_evidence(
     cell_id: str,
     run_id: str,
     execution: Mapping[str, object],
+    diagnostic_exclusions: Mapping[str, str] | None = None,
     injected_secrets: tuple[bytes, ...] = (),
     capture_tool: Path = TRUSTED_CAPTURE_TOOL,
 ) -> CellSealOutcome:
@@ -799,6 +839,15 @@ def seal_cell_evidence(
                 if not stat.S_ISREG(os.lstat(path).st_mode):
                     continue
                 relative_path = path.relative_to(trial_root).as_posix()
+                expected_identity = (
+                    diagnostic_exclusions.get(relative_path)
+                    if diagnostic_exclusions is not None
+                    else None
+                )
+                if expected_identity is not None and _matches_declared_artifact(
+                    path, expected_identity
+                ):
+                    continue
                 spec = _ArtifactSpec(
                     path=f"diagnostics/{relative_path}",
                     role="native-diagnostics",

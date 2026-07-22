@@ -7,8 +7,9 @@ the worker must provide. The CLI surface is exactly four commands:
 model-benchmark [--home DIR] [--json] {provision|preflight|run|inspect}
 ```
 
-Every command reads one strict manifest (`functional-v1-issue-75.yaml` is the committed,
-runnable example). All state lives under `--home` (default `.model-benchmark`).
+Every command reads one strict manifest. The committed DeepSeek and MiMo examples are
+`functional-v1-manifest.yaml` and `functional-v1-mimo-v2.5.yaml`; all state lives under
+`--home` (default `.model-benchmark`).
 
 ## 1. Setup requirements
 
@@ -63,22 +64,31 @@ git clone <repo> && cd model-benchmarking && uv sync --frozen
 ## 2. The standard run — all harnesses, all scenarios
 
 The twelve-cell matrix (3 Scenario Packages × OMP, OpenCode, Hermes, Raw API) is the
-only operator-executable unit. One invocation each, in order:
+only operator-executable unit.
+
+The one-command wrapper validates the committed inputs, starts the dedicated worker,
+provisions, restores the worker uplink even if preflight fails, and executes the run:
+
+```sh
+scripts/run-functional-v1
+```
+
+The equivalent manual sequence is:
 
 ```sh
 # 1. Network-enabled provisioning (idempotent, content-addressed; `reused: true` on repeat)
 uv run --frozen --env-file .env model-benchmark --home .model-benchmark --json \
-  provision functional-v1-issue-75.yaml
+  provision functional-v1-manifest.yaml
 
 # 2. Network-disabled preflight: drop the daemon's uplink for the whole window
 sudo ip link set mb-host0 down
 uv run --frozen --env-file .env model-benchmark --home .model-benchmark --json \
-  preflight functional-v1-issue-75.yaml            # expect "outcome": "passed"
+  preflight functional-v1-manifest.yaml            # expect "outcome": "passed"
 sudo ip link set mb-host0 up
 
 # 3. The run (provider-enabled). Prints the Run ID; seals a Run Record on completion.
 uv run --frozen --env-file .env model-benchmark --home .model-benchmark --json \
-  run functional-v1-issue-75.yaml                  # expect "outcome": "sealed", "validity": "valid"
+  run functional-v1-manifest.yaml                  # expect "outcome": "sealed", "validity": "valid"
 
 # 4. Read-only verification (repeatable, byte-identical)
 uv run --frozen model-benchmark --home .model-benchmark --json inspect <RUN_ID>
@@ -121,8 +131,10 @@ EOF
    `provider.pricing`. `retrieved_at_utc` must fall inside the effective window; the
    window must cover the run date. Manifest load rejects any drift
    (`pricing-record-mismatch`).
-3. Run section 2 against the new manifest. Limits are template-fixed (64 requests,
-   100k tokens, $5.00 stop-after-cost, 1800 s per Trial) and are not tunable in V1.
+3. Run section 2 against the new manifest. Limits are manifest-bound: 64 requests,
+   375,000 tokens, $5.00 stop-after-cost, and 1800 s per Trial in both committed
+   manifests. Provider-token use above 250,000 emits an advisory warning in inspect and
+   every derived report without changing cell validity.
 
 If the provider reports no monetary cost (flat-rate plans), enforcement and totals use
 the exact Decimal cost derived from token usage at the sealed rates; any
@@ -153,7 +165,55 @@ Windows-oriented); they are not part of the sealed V1 protocol.
 - After completion nothing Run-owned remains: no containers, networks, volumes, or
   `/tmp` scratch. `docker ps --all` / `docker network ls` should show only defaults.
 
-## 6. After changing runtime code
+## 6. Generate results and dashboards
+
+Reporting is read-only: it consumes sealed `run-record.json` files and needs no Docker,
+provider credential, or network access. The generated JSON and Markdown are paired
+diagnostic readouts; the HTML is a static, zero-JavaScript dashboard. All retain the
+`authority: none` / no-claims boundary of the source records.
+
+Generate reports for every sealed run under `.model-benchmark/runs/`:
+
+```sh
+scripts/generate-functional-v1-results
+```
+
+The default output directory is `.model-benchmark/reports/`. It contains
+`dashboard.html` plus one `readout-<manifest-sha256>.json` and
+`readout-<manifest-sha256>.md` pair per manifest identity. Records from different
+manifests become separate dashboard versions and separate readouts; records sharing a
+manifest are analyzed together as paired repetitions. The script prints every written
+path.
+Each invocation replaces prior generated dashboard/readout files in that directory while
+preserving unrelated files.
+
+To report only selected runs or choose another destination, pass their sealed records:
+
+```sh
+scripts/generate-functional-v1-results \
+  .model-benchmark/runs/<RUN_ID_1>/run-record.json \
+  .model-benchmark/runs/<RUN_ID_2>/run-record.json \
+  --output /tmp/functional-v1-results \
+  --title 'Functional V1 — July campaign'
+xdg-open /tmp/functional-v1-results/dashboard.html
+```
+
+Optional display labels never alter sealed identities. Map an identity prefix of at
+least eight hexadecimal characters to a label, then pass `--names`:
+
+```json
+{"57e2ba7a": "deepseek-v4-flash — July campaign"}
+```
+
+```sh
+scripts/generate-functional-v1-results --names manifest-names.json
+```
+
+Generation fails closed if any selected record is incomplete, invalid, malformed, or
+inconsistent with the other records in its manifest group. Given the same records,
+title, and names map, output bytes are deterministic.
+
+## 7. After changing runtime code
 
 Condition-image identities embed the runtime tree (`src/model_benchmark/**`); any change
 there stales the four condition locks and every manifest that pins them:
@@ -177,19 +237,19 @@ for condition, relative in locks.items():           # 1. reseal each lock's imag
 EOF
 ```
 
-Update each `conditions.<name>.digest` in the manifest with the printed
+Update every affected manifest's `conditions.<name>.digest` with the printed
 `functional-v1-condition:` identities, then re-run `provision` (it will build fresh
 sealed images). The dev gate (`uv run python scripts/verify.py run-development
 --base origin/master --head HEAD`) must stay green.
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
 | `unsupported-native-platform` before any Docker call | not native Linux/amd64 |
-| provision/preflight can't reach the daemon | reboot cleared the transient units — `sudo bash scripts/functional-v1-worker start` |
-| `condition-image-pin-mismatch` / `reference-digest-mismatch` | runtime tree changed — section 6 |
+| provision/preflight can't reach the daemon | reboot cleared the transient units or an interrupted preflight left the uplink down — `sudo bash scripts/functional-v1-worker start` restores both |
+| `condition-image-pin-mismatch` / `reference-digest-mismatch` | runtime tree changed — section 7 |
 | `invalid-pricing-record` / `pricing-record-mismatch` | pricing fields edited without resealing — section 3 |
 | `pricing-record-expired` at `run` start | the sealed record's `effective_until_utc` has passed — re-retrieve and reseal per section 3; `inspect` and sealed-run `run --resume` are unaffected |
 | preflight isolation probe fails on proxy name | proxy container died at start — check its env is complete; the proxy import closure must stay stdlib-only (guarded by `tests/architecture`) |
-| provider unreachable during `run` only | uplink still down from the preflight window — `sudo ip link set mb-host0 up` |
+| provider unreachable during `run` only | unexpected after the wrapper's uplink restore — rerun `sudo bash scripts/functional-v1-worker start`; inspect host routing if it persists |

@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import json
 import random
+import re
 import sys
 from decimal import Decimal, InvalidOperation
 from itertools import combinations
@@ -41,18 +42,51 @@ _NUMERIC_ENDPOINTS = (
     ("provider_tokens", "count"),
     ("duration_seconds", "duration"),
 )
+PROVIDER_TOKENS_ADVISORY_THRESHOLD = 250_000
+PROVIDER_TOKENS_ADVISORY_CODE = "provider-token-advisory-threshold-exceeded"
+_RUN_RECORD_IDENTITY = re.compile(
+    r"functional-v1-run-record:sha256:[0-9a-f]{64}"
+)
+_RESULT_BUNDLE_IDENTITY = re.compile(r"result-bundle:sha256:[0-9a-f]{64}")
+_MANIFEST_IDENTITY = re.compile(r"functional-v1-manifest:sha256:[0-9a-f]{64}")
+_RESOLVED_MANIFEST_IDENTITY = re.compile(
+    r"resolved-v1-manifest:sha256:[0-9a-f]{64}"
+)
+# Closed schema-v1 schedule, repeated here so the readout stays stdlib-only and portable.
+_SCENARIOS = (
+    "python-sales-by-genre",
+    "spring-petvalidator-whitespace",
+    "angular-reading-time",
+)
+_CONDITIONS = ("omp", "opencode", "hermes", "raw-api")
+_EXPECTED_CELLS = tuple(
+    (f"{index:02d}-{scenario}-{condition}", scenario, condition)
+    for index, (scenario, condition) in enumerate(
+        ((scenario, condition) for scenario in _SCENARIOS for condition in _CONDITIONS),
+        start=1,
+    )
+)
 
 
 class ReadoutError(ValueError):
     """The readout inputs are unusable or mutually inconsistent."""
 
-
-def _load_record(path: Path) -> dict[str, object]:
+def load_sealed_run_record(path: Path) -> dict[str, object]:
+    identity_path = path.with_suffix(".identity")
     try:
         data = path.read_bytes()
+        identity_text = identity_path.read_text(encoding="ascii")
         value = json.loads(data)
     except (OSError, ValueError) as error:
-        raise ReadoutError(f"cannot read Run Record {path}: {error}") from error
+        raise ReadoutError(f"cannot read sealed Run Record {path}: {error}") from error
+    expected_identity = (
+        "functional-v1-run-record:sha256:" + hashlib.sha256(data).hexdigest()
+    )
+    if (
+        _RUN_RECORD_IDENTITY.fullmatch(identity_text.removesuffix("\n")) is None
+        or identity_text != expected_identity + "\n"
+    ):
+        raise ReadoutError(f"{path}: Run Record identity does not match its bytes")
     if not isinstance(value, dict):
         raise ReadoutError(f"{path}: Run Record is not an object")
     if value.get("schema_version") != 1:
@@ -62,22 +96,39 @@ def _load_record(path: Path) -> dict[str, object]:
             f"{path}: only complete, valid Run Records are readable "
             f"(state={value.get('state')!r}, validity={value.get('validity')!r})"
         )
+    if (
+        not isinstance(value.get("run_id"), str)
+        or _MANIFEST_IDENTITY.fullmatch(str(value.get("manifest_identity"))) is None
+        or _RESOLVED_MANIFEST_IDENTITY.fullmatch(
+            str(value.get("resolved_manifest_identity"))
+        )
+        is None
+        or value.get("unscheduled_cells") != []
+    ):
+        raise ReadoutError(f"{path}: malformed sealed Run Record identities")
     cells = value.get("cells")
-    if not isinstance(cells, list) or not cells:
-        raise ReadoutError(f"{path}: Run Record has no cells")
-    for cell in cells:
+    if not isinstance(cells, list) or len(cells) != len(_EXPECTED_CELLS):
+        raise ReadoutError(f"{path}: Run Record does not contain the exact 12-cell schedule")
+    for cell, (cell_id, scenario, condition) in zip(cells, _EXPECTED_CELLS, strict=True):
         if not isinstance(cell, dict):
             raise ReadoutError(f"{path}: malformed cell record")
         if (
+            cell.get("cell_id") != cell_id
+            or cell.get("scenario") != scenario
+            or cell.get("condition") != condition
+        ):
+            raise ReadoutError(f"{path}: Run Record schedule identity mismatch")
+        if (
             cell.get("disposition") not in VALID_DISPOSITIONS
             or cell.get("evidence_valid") is not True
-        ):
-            raise ReadoutError(
-                f"{path}: cell {cell.get('cell_id')!r} is not a valid terminal"
+            or _RESULT_BUNDLE_IDENTITY.fullmatch(
+                str(cell.get("result_bundle_identity"))
             )
+            is None
+        ):
+            raise ReadoutError(f"{path}: cell {cell_id!r} is not a valid terminal")
     return {
-        "digest": "functional-v1-run-record:sha256:"
-        + hashlib.sha256(data).hexdigest(),
+        "digest": expected_identity,
         "path": str(path),
         "value": value,
     }
@@ -136,6 +187,32 @@ def _success(cell: dict[str, object]) -> bool:
 def _missing_success(cell: dict[str, object]) -> bool:
     scores = cell.get("scores")
     return not isinstance(scores, dict) or scores.get("task_success") is None
+
+
+def _token_warnings(records: list[dict[str, object]]) -> list[dict[str, object]]:
+    warnings: list[dict[str, object]] = []
+    for record in records:
+        value = record["value"]
+        run_id = value["run_id"]
+        for cell in value["cells"]:
+            provider_tokens = cell.get("provider_tokens")
+            if (
+                isinstance(provider_tokens, int)
+                and not isinstance(provider_tokens, bool)
+                and provider_tokens > PROVIDER_TOKENS_ADVISORY_THRESHOLD
+            ):
+                warnings.append(
+                    {
+                        "cell_id": cell.get("cell_id"),
+                        "code": PROVIDER_TOKENS_ADVISORY_CODE,
+                        "condition": cell.get("condition"),
+                        "provider_tokens": provider_tokens,
+                        "run_id": run_id,
+                        "scenario": cell.get("scenario"),
+                        "threshold": PROVIDER_TOKENS_ADVISORY_THRESHOLD,
+                    }
+                )
+    return warnings
 
 
 def _endpoint_value(cell: dict[str, object], endpoint: str) -> float | None:
@@ -257,10 +334,11 @@ def _pair_analysis(
 def build_readout(paths: list[Path]) -> dict[str, object]:
     if not paths:
         raise ReadoutError("at least one run-record.json path is required")
-    records = [_load_record(path) for path in paths]
+    records = [load_sealed_run_record(path) for path in paths]
     manifest_identity, resolved_identity = _consistent(records)
     conditions, scenarios, blocks = _blocks(records)
     run_digests = [str(record["digest"]) for record in records]
+    warnings = _token_warnings(records)
     pairs = [
         _pair_analysis(first, second, blocks, run_digests)
         for first, second in combinations(conditions, 2)
@@ -304,6 +382,7 @@ def build_readout(paths: list[Path]) -> dict[str, object]:
             "bootstrap_resamples": BOOTSTRAP_RESAMPLES,
             "seed_basis": "sha256(sorted run digests | pair | endpoint)",
         },
+        "warnings": warnings,
     }
 
 
@@ -330,6 +409,15 @@ def render_markdown(readout: dict[str, object]) -> str:
     ]
     for entry in readout["inputs"]:
         lines.append(f"- `{entry['run_id']}` `{entry['digest']}`")
+    if readout["warnings"]:
+        lines += ["", "## Token warnings", ""]
+        for warning in readout["warnings"]:
+            lines.append(
+                f"- `{warning['run_id']}` `{warning['cell_id']}` "
+                f"{warning['scenario']}/{warning['condition']}: "
+                f"{warning['provider_tokens']} > {warning['threshold']} "
+                f"(`{warning['code']}`)"
+            )
     lines += [
         "",
         "## Paired contrasts (a vs b, pooled over blocks)",

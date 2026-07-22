@@ -92,6 +92,7 @@ def _run_opencode(
             "OPENCODE_DISABLE_PROJECT_CONFIG": "true",
         }
     )
+    workspace = Path.cwd()
     completed = subprocess.run(
         [
             str(opencode),
@@ -101,7 +102,7 @@ def _run_opencode(
             "--model",
             f"{_PROVIDER_ID}/{model}",
         ],
-        cwd=Path.cwd(),
+        cwd=workspace,
         env=environment,
         input=brief,
         stdout=subprocess.PIPE,
@@ -174,17 +175,17 @@ def main(argv: list[str] | None = None) -> int:
             return _UNQUALIFIED_EXIT
         evidence = home / ".model-benchmark"
         config_path = _write_config(home, base_url=base_url, model=model)
-        _write_delivery_evidence(
-            evidence / "opencode-delivery.json",
-            base_url=base_url,
-            brief=brief,
-            model=model,
-        )
         exit_code = _run_opencode(
             arguments.opencode,
             brief,
             evidence / "opencode-events.jsonl",
             config_path=config_path,
+            model=model,
+        )
+        _write_delivery_evidence(
+            evidence / "opencode-delivery.json",
+            base_url=base_url,
+            brief=brief,
             model=model,
         )
         if _artifact_digest(arguments.opencode) != expected_identity:

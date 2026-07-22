@@ -47,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
         delivery = {
             "artifact_identity": arguments.artifact_identity,
             "brief_sha256": f"sha256:{hashlib.sha256(brief).hexdigest()}",
+            "diagnostic_code": result.diagnostic_code,
             "outcome": result.outcome,
             "provider_model": os.environ["MODEL_BENCHMARK_PROVIDER_MODEL"],
             "proxy_base_url": os.environ["MODEL_BENCHMARK_PROXY_BASE_URL"],

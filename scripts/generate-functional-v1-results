@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Generate diagnostic readouts and a dashboard from sealed Functional V1 runs."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+try:
+    from scripts.dashboard import DashboardError, build_dashboard
+    from scripts.readout import (ReadoutError, build_readout, load_sealed_run_record, render_markdown)
+except ImportError:  # executed from scripts/
+    from dashboard import DashboardError, build_dashboard
+    from readout import ReadoutError, build_readout, load_sealed_run_record, render_markdown
+
+
+_READOUT_NAME_RE = re.compile(r"readout-[0-9a-f]{64}\.(?:json|md)")
+
+
+class ResultsError(ValueError):
+    """The selected run records cannot produce reporting artifacts."""
+
+
+def _manifest_identity(path: Path) -> str:
+    record = load_sealed_run_record(path)
+    return str(record["value"]["manifest_identity"])
+
+
+def _report_name(identity: str, extension: str) -> str:
+    digest = identity.rsplit(":", 1)[-1]
+    return f"readout-{digest}.{extension}"
+
+
+def generate(
+    records: list[Path],
+    output: Path,
+    title: str,
+    names: Path | None = None,
+) -> list[Path]:
+    if not records:
+        raise ResultsError("no run records found")
+
+    grouped: dict[str, list[Path]] = {}
+    for record in records:
+        grouped.setdefault(_manifest_identity(record), []).append(record)
+
+    rendered: dict[str, str] = {}
+    for identity, paths in sorted(grouped.items()):
+        readout = build_readout(sorted(paths))
+        rendered[_report_name(identity, "json")] = (
+            json.dumps(readout, sort_keys=True, separators=(",", ":")) + "\n"
+        )
+        rendered[_report_name(identity, "md")] = render_markdown(readout)
+    rendered["dashboard.html"] = build_dashboard(
+        sorted(records), title, names
+    )
+
+    output.mkdir(parents=True, exist_ok=True)
+    for path in output.iterdir():
+        if path.name == "dashboard.html" or _READOUT_NAME_RE.fullmatch(path.name):
+            path.unlink()
+    written = []
+    for name, content in sorted(rendered.items()):
+        path = output / name
+        path.write_text(content, encoding="utf-8")
+        written.append(path)
+    return written
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Generate readout JSON/Markdown and a static HTML dashboard from "
+            "sealed Functional V1 Run Records."
+        )
+    )
+    parser.add_argument("records", nargs="*", type=Path)
+    parser.add_argument("--home", type=Path, default=Path(".model-benchmark"))
+    parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument("--title", default="Functional V1 results")
+    parser.add_argument(
+        "--names",
+        type=Path,
+        default=None,
+        help="JSON mapping manifest-identity prefixes to display labels",
+    )
+    arguments = parser.parse_args(argv)
+    records = list(arguments.records)
+    if not records:
+        records = sorted((arguments.home / "runs").glob("*/run-record.json"))
+    output = arguments.output or arguments.home / "reports"
+
+    try:
+        written = generate(records, output, str(arguments.title), arguments.names)
+    except (DashboardError, ReadoutError, ResultsError, OSError) as error:
+        print(f"results: {error}", file=sys.stderr)
+        return 2
+    for path in written:
+        print(path)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

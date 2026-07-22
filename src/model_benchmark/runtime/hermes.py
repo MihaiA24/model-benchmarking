@@ -32,6 +32,7 @@ from model_benchmark.runtime.conditions import (
     read_regular_file,
 )
 from model_benchmark.runtime.credential_proxy import TRIAL_PROXY_TOKEN_ENV
+from model_benchmark.runtime.hermes_mounted_launch import relocation_contract
 
 
 HERMES_VERSION = "v0.18.2"
@@ -145,6 +146,7 @@ def _locked_configuration() -> dict[str, object]:
             "retries": "stock",
             "tools": "stock",
         },
+        "runtime_relocation": relocation_contract(),
         "provision": {
             "image_bytes": HERMES_IMAGE_BYTES,
             "image_id": HERMES_IMAGE_ID,

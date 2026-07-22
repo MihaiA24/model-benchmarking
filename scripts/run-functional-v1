@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly PROJECT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+readonly MANIFEST=${MODEL_BENCHMARK_MANIFEST:-$PROJECT_ROOT/functional-v1-manifest.yaml}
+readonly RUN_HOME=${MODEL_BENCHMARK_HOME:-$PROJECT_ROOT/.model-benchmark}
+readonly ENV_FILE=${MODEL_BENCHMARK_ENV_FILE:-$PROJECT_ROOT/.env}
+readonly WORKER=$PROJECT_ROOT/scripts/functional-v1-worker
+readonly WORKER_SOCKET=/run/model-benchmark-docker/docker.sock
+readonly WORKER_UPLINK=mb-host0
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/run-functional-v1
+
+Runs the committed Functional V1 configuration end to end:
+  1. start the dedicated worker
+  2. provision inputs
+  3. run network-disabled preflight
+  4. execute and seal all 12 cells
+
+Optional environment overrides:
+  MODEL_BENCHMARK_MANIFEST   manifest path
+  MODEL_BENCHMARK_HOME       managed run home
+  MODEL_BENCHMARK_ENV_FILE   provider credential file
+EOF
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+run_benchmark() {
+  uv run --frozen --env-file "$ENV_FILE" model-benchmark \
+    --home "$RUN_HOME" --json "$1" "$MANIFEST"
+}
+
+restore_uplink() {
+  if [[ ${uplink_disabled:-0} -eq 1 ]]; then
+    printf '==> restoring worker network uplink\n' >&2
+    sudo ip link set "$WORKER_UPLINK" up
+    uplink_disabled=0
+  fi
+}
+
+case ${1:-} in
+  '') ;;
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
+
+[[ $(uname -s) == Linux ]] || die "Functional V1 requires native Linux/amd64"
+[[ $(uname -m) == x86_64 ]] || die "Functional V1 requires native Linux/amd64"
+[[ -f $MANIFEST ]] || die "manifest not found: $MANIFEST"
+[[ -f $ENV_FILE ]] || die "credential file not found: $ENV_FILE"
+grep -Eq '^MODEL_BENCHMARK_PROVIDER_API_KEY=.+$' "$ENV_FILE" ||
+  die "$ENV_FILE must define a non-empty MODEL_BENCHMARK_PROVIDER_API_KEY"
+
+for command in sudo uv docker ip stat; do
+  require_command "$command"
+done
+
+[[ $(stat --format '%a' "$ENV_FILE") == 600 ]] ||
+  die "credential file must have mode 0600: $ENV_FILE"
+
+cd "$PROJECT_ROOT"
+
+printf '==> syncing frozen environment\n' >&2
+uv sync --frozen
+
+printf '==> starting dedicated Functional V1 worker\n' >&2
+sudo bash "$WORKER" start
+export DOCKER_HOST="unix://$WORKER_SOCKET"
+
+printf '==> provisioning Functional V1 inputs\n' >&2
+run_benchmark provision
+
+printf '==> running network-disabled preflight\n' >&2
+uplink_disabled=0
+trap restore_uplink EXIT INT TERM
+sudo ip link set "$WORKER_UPLINK" down
+uplink_disabled=1
+run_benchmark preflight
+restore_uplink
+trap - EXIT INT TERM
+
+printf '==> executing all 12 Functional V1 cells\n' >&2
+run_benchmark run

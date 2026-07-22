@@ -107,6 +107,7 @@ def test_launch_module_materializes_and_seals_delivery_evidence(
     assert _delivery(home) == {
         "artifact_identity": _module_identity(),
         "brief_sha256": f"sha256:{hashlib.sha256(_BRIEF).hexdigest()}",
+        "diagnostic_code": None,
         "outcome": "ready-for-capture",
         "provider_model": _MODEL,
         "proxy_base_url": base_url,
@@ -122,6 +123,16 @@ def test_launch_module_materializes_and_seals_delivery_evidence(
     assert isinstance(body, dict)
     assert body["model"] == _MODEL
     assert body["stream"] is True
+    messages = body["messages"]
+    assert isinstance(messages, list)
+    assert len(messages) == 3
+    assert messages[0]["role"] == "system"
+    assert messages[1] == {"content": _BRIEF.decode(), "role": "user"}
+    assert messages[2]["role"] == "user"
+    assert json.loads(messages[2]["content"]) == {
+        "content": "before\n",
+        "path": _TARGET,
+    }
 
 
 def test_launch_module_reports_provider_failure_without_materializing(
@@ -172,6 +183,11 @@ def test_committed_condition_lock_pins_current_launch_module() -> None:
     assert configuration["launch_module"] == {
         "digest": _module_identity(),
         "source_path": _MODULE_SOURCE_PATH,
+    }
+    assert configuration["request_context"] == {
+        "additional_files": 0,
+        "developer_brief": "exact",
+        "target_file": "exact-scenario-baseline-utf8",
     }
     artifact = lock["artifact"]
     assert isinstance(artifact, dict)

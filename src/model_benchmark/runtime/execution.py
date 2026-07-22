@@ -2520,6 +2520,9 @@ class NativeFunctionalV1Runtime:
                 cell_id=cell_id,
                 run_id=workspace.run_id,
                 execution=execution_record,
+                diagnostic_exclusions=CONDITION_REGISTRY[
+                    str(cell["condition"])
+                ].diagnostic_exclusions,
                 injected_secrets=injected_secrets,
             )
             duration = execution_record.get("duration_ns")

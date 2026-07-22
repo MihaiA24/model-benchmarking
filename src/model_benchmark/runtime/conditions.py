@@ -67,6 +67,7 @@ class ConditionDefinition:
     evaluate_qualification: Callable[..., ConditionQualification] | None = None
     image_base: str | None = None
     entrypoint_script: str | None = None
+    diagnostic_exclusions: Mapping[str, str] = field(default_factory=dict)
     requires_scenario_target: bool = False
 
     def __post_init__(self) -> None:
@@ -85,6 +86,24 @@ class ConditionDefinition:
                 "invalid-condition-definition",
                 f"{self.name} harness definition is missing a verb",
             )
+        exclusions = dict(self.diagnostic_exclusions)
+        for path, identity_text in exclusions.items():
+            try:
+                _safe_relative_path(path, label="diagnostic exclusion")
+                identity = TypedDigest.parse(identity_text)
+            except (ConditionRunnerError, IdentityError) as error:
+                raise ConditionAdapterError(
+                    "invalid-condition-definition",
+                    f"{self.name} diagnostic exclusion is invalid: {error}",
+                ) from error
+            if identity.kind is not DigestKind.ARTIFACT:
+                raise ConditionAdapterError(
+                    "invalid-condition-definition",
+                    f"{self.name} diagnostic exclusion must use artifact identity",
+                )
+        object.__setattr__(
+            self, "diagnostic_exclusions", MappingProxyType(exclusions)
+        )
 
 
 def publish_bytes(
