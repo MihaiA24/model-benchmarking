@@ -198,7 +198,8 @@ def run_development(policy: Policy, selection: object) -> dict[str, object]:
         "environment": {
             "acceptance_publication": "forbidden",
             "docker": "forbidden",
-            "network": "forbidden",
+            "loopback": "allowed",
+            "network": "external-forbidden",
             "provider_credentials": "removed",
         },
         "policy_sha256": policy.sha256,
@@ -301,17 +302,57 @@ def _write_guards(guard_root: Path) -> None:
     )
     docker.chmod(0o755)
     (guard_root / "sitecustomize.py").write_text(
-        """import socket
+        """import ipaddress
+import socket
 
 
-def _forbidden(*args, **kwargs):
-    raise RuntimeError("network is forbidden in development verification")
+_original_getaddrinfo = socket.getaddrinfo
+_original_connect = socket.socket.connect
+_original_connect_ex = socket.socket.connect_ex
 
 
-socket.create_connection = _forbidden
-socket.getaddrinfo = _forbidden
-socket.socket.connect = _forbidden
-socket.socket.connect_ex = _forbidden
+def _is_loopback(host):
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except (TypeError, ValueError):
+        return False
+
+
+def _forbidden():
+    raise RuntimeError("external network is forbidden in development verification")
+
+
+def _guarded_getaddrinfo(host, *args, **kwargs):
+    if not _is_loopback(host):
+        _forbidden()
+    return _original_getaddrinfo(host, *args, **kwargs)
+
+
+def _is_local_address(sock, address):
+    return sock.family == socket.AF_UNIX or (
+        isinstance(address, tuple)
+        and bool(address)
+        and _is_loopback(address[0])
+    )
+
+
+def _guarded_connect(sock, address):
+    if not _is_local_address(sock, address):
+        _forbidden()
+    return _original_connect(sock, address)
+
+
+def _guarded_connect_ex(sock, address):
+    if not _is_local_address(sock, address):
+        _forbidden()
+    return _original_connect_ex(sock, address)
+
+
+socket.getaddrinfo = _guarded_getaddrinfo
+socket.socket.connect = _guarded_connect
+socket.socket.connect_ex = _guarded_connect_ex
 """,
         encoding="utf-8",
     )

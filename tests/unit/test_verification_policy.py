@@ -190,6 +190,27 @@ def test_development_network_attempt_fails(tmp_path: Path, monkeypatch: pytest.M
         verify.run_development(policy, selection)
 
 
+def test_development_loopback_is_allowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_uv(tmp_path, monkeypatch)
+    monkeypatch.setattr(verify, "PROJECT_ROOT", tmp_path)
+    command = (
+        "uv run --offline --frozen python -c "
+        '"import socket; server=socket.socket(); '
+        "server.bind(('127.0.0.1', 0)); server.listen(); "
+        "client=socket.create_connection(server.getsockname()); "
+        'peer, _ = server.accept(); client.close(); peer.close(); server.close()"'
+    )
+    policy, selection = _development_policy(command)
+
+    result = verify.run_development(policy, selection)
+
+    assert result["commands"][0]["exit_code"] == 0
+    assert result["environment"]["loopback"] == "allowed"
+    assert result["environment"]["network"] == "external-forbidden"
+
+
 def test_development_publication_attempt_is_removed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
