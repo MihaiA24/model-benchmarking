@@ -40,7 +40,10 @@ from model_benchmark.declarations.functional_v1 import (
 )
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
 from model_benchmark.declarations.limits import FIXED_LIMITS
-from model_benchmark.declarations.provider_routes import PROVIDER_PROTOCOL_ENV
+from model_benchmark.declarations.provider_routes import (
+    PROVIDER_PROTOCOL_ENV,
+    ProviderProtocol,
+)
 from model_benchmark.declarations.scenarios import (
     ScenarioPackageError,
     check_scenario_package,
@@ -864,6 +867,8 @@ def _probe_network(
                 "--env",
                 "MODEL_BENCHMARK_PROVIDER_MODEL=preflight/model",
                 "--env",
+                f"{PROVIDER_PROTOCOL_ENV}={ProviderProtocol.OPENAI_CHAT_COMPLETIONS.value}",
+                "--env",
                 "MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL=1",
                 "--env",
                 "MODEL_BENCHMARK_REQUESTS_PER_TRIAL=1",
@@ -875,7 +880,11 @@ def _probe_network(
                 "--env",
                 "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS=1.00",
                 "--env",
+                "MODEL_BENCHMARK_CACHE_READ_USD_PER_MILLION_TOKENS=0",
+                "--env",
                 "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS=1.00",
+                "--env",
+                f"{PRICING_TIERS_ENV}=[]",
                 proxy_image,
             ]
         )

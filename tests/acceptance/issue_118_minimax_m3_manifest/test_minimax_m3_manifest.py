@@ -18,11 +18,11 @@ def test_published_minimax_m3_manifest_loads_with_sealed_projection() -> None:
 
     assert str(manifest.identity) == (
         "functional-v1-manifest:sha256:"
-        "f2a2ce8cd5761343c6a868d0abf39fe89abc93792ba3d216f5571e50f4e06353"
+        "bbc221b30b903dc93ca958e41040c891468ca38c90d2f9dc756951cf78248387"
     )
     assert str(manifest.resolved_identity) == (
         "resolved-v1-manifest:sha256:"
-        "0682341dbf53f0eccd7c0e8791ac497c139cdf986715a03933b4cefe98c2247e"
+        "87beb65ddd261e221581103b68bead32d66d04394f96558152618a29cfa64575"
     )
     assert manifest.identity_value["provider"] == {
         "base_url": "https://opencode.ai/zen/go/v1",

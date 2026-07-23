@@ -386,10 +386,13 @@ def test_network_probe_launches_harbor_firewall_entrypoint(
     assert "--init" in firewall
     proxy_run = next(arguments for arguments in calls if "proxy:sealed" in arguments)
     for required in (
+        "MODEL_BENCHMARK_PROVIDER_PROTOCOL=openai-chat-completions",
         "MODEL_BENCHMARK_REQUESTS_PER_TRIAL=1",
         "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY=pricing-record:sha256:" + "0" * 64,
         "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS=1.00",
+        "MODEL_BENCHMARK_CACHE_READ_USD_PER_MILLION_TOKENS=0",
         "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS=1.00",
+        "MODEL_BENCHMARK_PRICING_TIERS_JSON=[]",
     ):
         assert required in proxy_run
     assert [
