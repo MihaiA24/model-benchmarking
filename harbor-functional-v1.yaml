@@ -1,0 +1,8 @@
+jobs_dir: .model-benchmark/harbor-jobs
+n_attempts: 3
+n_concurrent_trials: 3
+
+tasks:
+  - path: scenarios/calibration/python-sales-by-genre
+  - path: scenarios/calibration/spring-petvalidator-whitespace
+  - path: scenarios/calibration/angular-reading-time
