@@ -69,14 +69,7 @@ printf '==> provisioning sealed DeepSeek structural reference\n' >&2
 uv run --offline --frozen model-benchmark --home "$HOME_PATH" --json \
   provision "$REFERENCE"
 
-printf '==> preflighting with worker uplink disabled\n' >&2
-sudo ip link set "$WORKER_UPLINK" down
-uplink_disabled=1
-uv run --offline --frozen model-benchmark --home "$HOME_PATH" --json \
-  preflight "$REFERENCE"
-restore_uplink
-
-printf '==> executing isolated local-provider 16-cell lifecycle\n' >&2
+printf '==> preflighting and executing isolated local-provider 16-cell lifecycle with worker uplink disabled\n' >&2
 sudo ip link set "$WORKER_UPLINK" down
 uplink_disabled=1
 uv run --offline --frozen python -m model_benchmark.runtime.dry_launch_qualification \

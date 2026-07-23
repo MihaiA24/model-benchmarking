@@ -186,3 +186,64 @@ def test_seal_writes_identity_and_inventory_only_after_uplink_restoration(
     inspected = qualification.inspect_qualification(output)
     assert inspected["terminal_lifecycles"] == 16
     assert inspected["sealed_bundles"] == 16
+
+
+def test_execute_preflights_without_reading_provider_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class BoundaryReached(RuntimeError):
+        pass
+
+    class FakeManifest:
+        identity = "functional-v1-manifest:sha256:" + _DIGEST
+        value = {"provider": {"model": "deepseek-v4-flash"}}
+
+    class FakeManifestLoader:
+        @staticmethod
+        def load(_path: Path) -> FakeManifest:
+            return FakeManifest()
+
+    class FakeLease:
+        def __enter__(self) -> None:
+            return None
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    class FakeHome:
+        def __init__(self, _path: Path) -> None:
+            pass
+
+        def coordinator_lease(self) -> FakeLease:
+            return FakeLease()
+
+    class FakeRuntime:
+        def __init__(self, _home: FakeHome) -> None:
+            pass
+
+        def _preflight(
+            self,
+            _manifest: FakeManifest,
+            *,
+            require_provider_credential: bool = True,
+        ) -> None:
+            assert require_provider_credential is False
+            raise BoundaryReached
+
+    monkeypatch.delenv("MODEL_BENCHMARK_PROVIDER_API_KEY", raising=False)
+    monkeypatch.setattr(qualification, "FunctionalV1Manifest", FakeManifestLoader)
+    monkeypatch.setattr(qualification, "FunctionalV1Home", FakeHome)
+    monkeypatch.setattr(qualification, "NativeFunctionalV1Runtime", FakeRuntime)
+    monkeypatch.setattr(qualification, "_load_catalog_validation", lambda *_: {})
+    monkeypatch.setattr(qualification, "_check_pricing_window", lambda *_: None)
+    monkeypatch.setattr(qualification, "_link_state", lambda *_: "down")
+
+    with pytest.raises(BoundaryReached):
+        qualification.execute_qualification(
+            tmp_path / "reference.yaml",
+            [tmp_path / f"manifest-{index}.yaml" for index in range(4)],
+            home_path=tmp_path / "home",
+            catalog_validation_path=tmp_path / "catalog.json",
+            draft_path=tmp_path / "draft.json",
+            worker_uplink="mb-host0",
+        )

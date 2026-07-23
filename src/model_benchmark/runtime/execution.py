@@ -2231,12 +2231,19 @@ class NativeFunctionalV1Runtime:
             },
         )
 
-    def _preflight(self, manifest: FunctionalV1Manifest) -> PreflightProjection:
+    def _preflight(
+        self,
+        manifest: FunctionalV1Manifest,
+        *,
+        require_provider_credential: bool = True,
+    ) -> PreflightProjection:
         self.home.verify_manifest_inputs(manifest)
         host = _native_host()
         inventory = _load_inventory(self.home, manifest)
         _verify_inventory_images(inventory)
-        if not os.environ.get("MODEL_BENCHMARK_PROVIDER_API_KEY"):
+        if require_provider_credential and not os.environ.get(
+            "MODEL_BENCHMARK_PROVIDER_API_KEY"
+        ):
             raise ExecutionError(
                 "provider-credential-missing",
                 "MODEL_BENCHMARK_PROVIDER_API_KEY is absent",

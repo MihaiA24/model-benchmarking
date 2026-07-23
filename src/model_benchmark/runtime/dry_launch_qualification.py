@@ -362,7 +362,9 @@ def execute_qualification(
     executor = None
     try:
         with home.coordinator_lease():
-            projection = runtime._preflight(reference)
+            projection = runtime._preflight(
+                reference, require_provider_credential=False
+            )
             if _link_state(worker_uplink) != "down":
                 raise DryLaunchQualificationError(
                     "worker uplink changed during preflight"

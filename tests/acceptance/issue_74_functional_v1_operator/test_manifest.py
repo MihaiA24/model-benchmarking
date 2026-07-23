@@ -355,10 +355,12 @@ class _PreflightBoundaryReached(RuntimeError):
     pass
 
 
+@pytest.mark.parametrize("require_provider_credential", [True, False])
 def test_functional_v1_preflight_uses_diagnostic_integration_boundary(
     tmp_path: Path,
     manifest_bundle: tuple[Path, dict[str, object]],
     monkeypatch: pytest.MonkeyPatch,
+    require_provider_credential: bool,
 ) -> None:
     manifest = FunctionalV1Manifest.load(manifest_bundle[0])
     home = execution.FunctionalV1Home(tmp_path / "home")
@@ -373,7 +375,10 @@ def test_functional_v1_preflight_uses_diagnostic_integration_boundary(
         },
         tmp_path / "inventory.json",
     )
-    monkeypatch.setenv("MODEL_BENCHMARK_PROVIDER_API_KEY", "secret")
+    if require_provider_credential:
+        monkeypatch.setenv("MODEL_BENCHMARK_PROVIDER_API_KEY", "secret")
+    else:
+        monkeypatch.delenv("MODEL_BENCHMARK_PROVIDER_API_KEY", raising=False)
     monkeypatch.setattr(execution, "_native_host", lambda: {})
     monkeypatch.setattr(execution, "_load_inventory", lambda *_: inventory)
     monkeypatch.setattr(execution, "_verify_inventory_images", lambda *_: None)
@@ -394,4 +399,6 @@ def test_functional_v1_preflight_uses_diagnostic_integration_boundary(
     )
 
     with pytest.raises(_PreflightBoundaryReached):
-        runtime._preflight(manifest)
+        runtime._preflight(
+            manifest, require_provider_credential=require_provider_credential
+        )
