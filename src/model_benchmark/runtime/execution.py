@@ -40,11 +40,13 @@ from model_benchmark.declarations.functional_v1 import (
 )
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
 from model_benchmark.declarations.limits import FIXED_LIMITS
+from model_benchmark.declarations.provider_routes import PROVIDER_PROTOCOL_ENV
 from model_benchmark.declarations.scenarios import (
     ScenarioPackageError,
     check_scenario_package,
 )
 from model_benchmark.runtime.bundles import seal_cell_evidence
+from model_benchmark.runtime.credential_proxy import PRICING_TIERS_ENV
 from model_benchmark.runtime.condition_registry import (
     CONDITIONS as CONDITION_REGISTRY,
     HARNESS_CONDITIONS,
@@ -1314,8 +1316,10 @@ class HarborCellExecutor:
                         "MODEL_BENCHMARK_PROVIDER_API_KEY": "${MODEL_BENCHMARK_PROVIDER_API_KEY:?}",
                         "MODEL_BENCHMARK_PROVIDER_BASE_URL": "${MODEL_BENCHMARK_PROVIDER_BASE_URL:?}",
                         "MODEL_BENCHMARK_PROVIDER_MODEL": "${MODEL_BENCHMARK_PROVIDER_MODEL:?}",
+                        PROVIDER_PROTOCOL_ENV: f"${{{PROVIDER_PROTOCOL_ENV}:?}}",
                         "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY": "${MODEL_BENCHMARK_PRICING_RECORD_IDENTITY:?}",
                         "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS": "${MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS:?}",
+                        "MODEL_BENCHMARK_CACHE_READ_USD_PER_MILLION_TOKENS": "${MODEL_BENCHMARK_CACHE_READ_USD_PER_MILLION_TOKENS:?}",
                         "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS": "${MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS:?}",
                         "MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL": "${MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL:?}",
                         "MODEL_BENCHMARK_REQUESTS_PER_TRIAL": "${MODEL_BENCHMARK_REQUESTS_PER_TRIAL:?}",
@@ -1684,7 +1688,7 @@ class HarborCellExecutor:
             raise ExecutionError(
                 "invalid-condition-lock", "condition artifact is malformed"
             )
-        token = secrets.token_urlsafe(32)
+        token = secrets.token_hex(32)
         real_key = (
             DRY_LAUNCH_API_KEY
             if self.dry_launch
@@ -1752,6 +1756,8 @@ class HarborCellExecutor:
                 "--agent-env",
                 f"MODEL_BENCHMARK_PROVIDER_MODEL={self.manifest.value['provider']['model']}",
                 "--agent-env",
+                f"{PROVIDER_PROTOCOL_ENV}={self.manifest.value['provider']['protocol']}",
+                "--agent-env",
                 "MODEL_BENCHMARK_PROXY_BASE_URL=http://credential-proxy:8080"
                 + urlsplit(str(self.manifest.value["provider"]["base_url"])).path,
                 "--agent-env",
@@ -1770,12 +1776,21 @@ class HarborCellExecutor:
                 "MODEL_BENCHMARK_PROVIDER_MODEL": str(
                     self.manifest.value["provider"]["model"]
                 ),
+                PROVIDER_PROTOCOL_ENV: str(self.manifest.value["provider"]["protocol"]),
                 "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY": str(
                     self.manifest.value["provider"]["pricing"]["identity"]
                 ),
+                PRICING_TIERS_ENV: canonical_json_bytes(
+                    self.manifest.value["provider"]["pricing"]["tiers"]
+                ).decode("utf-8"),
                 "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS": str(
                     self.manifest.value["provider"]["pricing"][
                         "input_usd_per_million_tokens"
+                    ]
+                ),
+                "MODEL_BENCHMARK_CACHE_READ_USD_PER_MILLION_TOKENS": str(
+                    self.manifest.value["provider"]["pricing"][
+                        "cache_read_usd_per_million_tokens"
                     ]
                 ),
                 "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS": str(

@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 import pytest
 
 from model_benchmark.declarations.canonical import load_canonical_json
+from model_benchmark.declarations.provider_routes import PROVIDER_PROTOCOL_ENV
 from model_benchmark.runtime.raw_api import (
     RawApiError,
     RawApiMaterializer,
@@ -72,6 +73,7 @@ def _run_launch_module(
         env={
             "HOME": str(home),
             "MODEL_BENCHMARK_PROVIDER_MODEL": _MODEL,
+            PROVIDER_PROTOCOL_ENV: "openai-chat-completions",
             "MODEL_BENCHMARK_PROXY_BASE_URL": base_url,
             "MODEL_BENCHMARK_PROXY_TOKEN": _TOKEN,
             "PATH": os.environ["PATH"],
@@ -82,9 +84,7 @@ def _run_launch_module(
 
 
 def _delivery(home: Path) -> dict[str, object]:
-    data = (home / ".model-benchmark/raw-api-delivery.json").read_text(
-        encoding="utf-8"
-    )
+    data = (home / ".model-benchmark/raw-api-delivery.json").read_text(encoding="utf-8")
     value = json.loads(data)
     assert isinstance(value, dict)
     return value
@@ -163,9 +163,7 @@ def test_launch_module_rejects_identity_mismatch_before_any_request(
     home.mkdir()
     wrong = f"artifact:sha256:{'0' * 64}"
 
-    completed = _run_launch_module(
-        repository, home, base_url, artifact_identity=wrong
-    )
+    completed = _run_launch_module(repository, home, base_url, artifact_identity=wrong)
 
     assert completed.returncode == 78
     assert not (home / ".model-benchmark/raw-api-delivery.json").exists()

@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 import model_benchmark.runtime.hermes as hermes_runtime
+import model_benchmark.runtime.hermes_launch as hermes_launch
 import model_benchmark.runtime.hermes_mounted_launch as mounted_launch
 from model_benchmark.declarations.canonical import (
     canonical_json_bytes,
@@ -97,7 +98,7 @@ def test_condition_lock_seals_exact_stock_hermes_profile(
     }
     assert configuration["hermes_config_yaml"] == {
         "model": {
-            "api_mode": "chat_completions",
+            "api_mode": "manifest-provider-transport",
             "base_url": "manifest-provider-base-url",
             "default": "manifest-provider-model",
             "provider": "custom:model-benchmark-proxy",
@@ -108,7 +109,7 @@ def test_condition_lock_seals_exact_stock_hermes_profile(
                 "default_model": "manifest-provider-model",
                 "key_env": "MODEL_BENCHMARK_PROXY_TOKEN",
                 "name": "Model Benchmark Credential Proxy",
-                "transport": "chat_completions",
+                "transport": "manifest-provider-transport",
             }
         },
     }
@@ -678,9 +679,7 @@ def test_image_identity_does_not_depend_on_storage_driver_size(
         "Architecture": "amd64",
         "Config": {
             "Env": ["HERMES_DISABLE_LAZY_INSTALLS=1"],
-            "Labels": {
-                "org.opencontainers.image.revision": HERMES_RELEASE_COMMIT
-            },
+            "Labels": {"org.opencontainers.image.revision": HERMES_RELEASE_COMMIT},
         },
         "Id": HERMES_IMAGE_ID,
         "Os": "linux",
@@ -739,6 +738,7 @@ def _mounted_launch_fixture(
         "MODEL_BENCHMARK_PROXY_BASE_URL", "http://credential-proxy:8080/v1"
     )
     monkeypatch.setenv("MODEL_BENCHMARK_PROVIDER_MODEL", "locked/model")
+    monkeypatch.setenv("MODEL_BENCHMARK_PROVIDER_PROTOCOL", "openai-chat-completions")
 
     real_path = Path
 
@@ -833,9 +833,7 @@ def test_mounted_launch_pins_the_hermes_environment_contract(
     assert environment["PYTHONHOME"] == str(mount / "usr")
     assert environment["HERMES_DISABLE_LAZY_INSTALLS"] == "1"
     assert environment["HERMES_INFERENCE_MODEL"] == "locked/model"
-    assert environment["HERMES_INFERENCE_PROVIDER"] == (
-        "custom:model-benchmark-proxy"
-    )
+    assert environment["HERMES_INFERENCE_PROVIDER"] == ("custom:model-benchmark-proxy")
     assert "MODEL_BENCHMARK_HERMES_CHILD_PYTHON" not in environment
     assert "MODEL_BENCHMARK_HERMES_TOOL_PATH" not in environment
     before = mounted_launch._STOCK_ELF_INTERPRETER.encode() + b"\0"
@@ -856,9 +854,7 @@ def test_mounted_launch_pins_the_hermes_environment_contract(
     assert "--bootstrap" not in arguments
     assert arguments[arguments.index("-z") + 1] == "do the task"
     assert arguments[arguments.index("--model") + 1] == "locked/model"
-    config = json.loads(
-        (home / ".hermes/config.yaml").read_text(encoding="utf-8")
-    )
+    config = json.loads((home / ".hermes/config.yaml").read_text(encoding="utf-8"))
     assert config["providers"]["model-benchmark-proxy"]["key_env"] == (
         "MODEL_BENCHMARK_PROXY_TOKEN"
     )
@@ -901,9 +897,7 @@ def test_mounted_launch_fails_closed_without_the_mounted_tree() -> None:
     # On any host without the sealed condition mount the launch must exit
     # unqualified, never crash.
     assert (
-        mounted_launch.main(
-            ["--artifact-identity", "artifact:sha256:" + "0" * 64]
-        )
+        mounted_launch.main(["--artifact-identity", "artifact:sha256:" + "0" * 64])
         == 78
     )
 
@@ -928,3 +922,26 @@ def test_mounted_launch_usage_matrix(
     usage_path.write_text(json.dumps({**_VALID_USAGE, **mutation}), encoding="utf-8")
 
     assert mounted_launch._valid_usage(usage_path, "locked/model") is valid
+
+
+@pytest.mark.parametrize(
+    ("protocol", "transport"),
+    [
+        ("openai-chat-completions", "chat_completions"),
+        ("anthropic-messages", "anthropic_messages"),
+    ],
+)
+def test_launch_config_selects_the_declared_provider_protocol(
+    protocol: str,
+    transport: str,
+) -> None:
+    value = hermes_launch._provider_config(
+        base_url="http://credential-proxy:8080",
+        model="locked/model",
+        protocol=protocol,
+    )
+
+    provider = value["providers"]["model-benchmark-proxy"]
+    assert value["model"]["api_mode"] == transport
+    assert provider["transport"] == transport
+    assert provider["api"] == "http://credential-proxy:8080"

@@ -18,6 +18,10 @@ from model_benchmark.declarations.canonical import (
     load_canonical_json,
 )
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
+from model_benchmark.declarations.provider_routes import (
+    PROVIDER_PROTOCOL_ENV,
+    parse_provider_protocol,
+)
 from model_benchmark.declarations.scenario_locks import (
     project_resource_root,
     standard_profile_path,
@@ -55,10 +59,11 @@ HERMES_ARTIFACT_IDENTITY = (
 )
 HERMES_ARTIFACT_BYTES = 3_711
 HERMES_SHIM_IDENTITY = (
-    "artifact:sha256:1d0e721cead8e28b53dd10f479d92d39a2f1a60dd032ecaa195243d460932e4a"
+    "artifact:sha256:b0a83ede0470f1859f04e412c40021a1be93d0fa2e0503f30f1ca0e3c0ec1786"
 )
 HERMES_ENVIRONMENT_NAMES = (
     "MODEL_BENCHMARK_PROVIDER_MODEL",
+    PROVIDER_PROTOCOL_ENV,
     "MODEL_BENCHMARK_PROXY_BASE_URL",
     TRIAL_PROXY_TOKEN_ENV,
 )
@@ -106,7 +111,7 @@ def hermes_launch_shim_path() -> Path:
 def _locked_provider_config() -> dict[str, object]:
     return {
         "model": {
-            "api_mode": "chat_completions",
+            "api_mode": "manifest-provider-transport",
             "base_url": "manifest-provider-base-url",
             "default": "manifest-provider-model",
             "provider": "custom:model-benchmark-proxy",
@@ -117,7 +122,7 @@ def _locked_provider_config() -> dict[str, object]:
                 "default_model": "manifest-provider-model",
                 "key_env": "MODEL_BENCHMARK_PROXY_TOKEN",
                 "name": "Model Benchmark Credential Proxy",
-                "transport": "chat_completions",
+                "transport": "manifest-provider-transport",
             }
         },
     }
@@ -304,7 +309,9 @@ def provision_hermes(cache_root: Path, condition_lock: bytes) -> HermesProvision
         shim_bytes=len(shim_data),
         image=image,
     )
-    publish_bytes(manifest_path, canonical_json_bytes(manifest), mode=0o400, condition="Hermes")
+    publish_bytes(
+        manifest_path, canonical_json_bytes(manifest), mode=0o400, condition="Hermes"
+    )
     return preflight_hermes(cache_root, condition_lock)
 
 
@@ -401,13 +408,16 @@ def sealed_hermes_process(
     proxy_base_url: str,
     provider_model: str,
     trial_proxy_token: str,
+    provider_protocol: str = "openai-chat-completions",
 ) -> SealedConditionProcess:
     _, lock, condition_identity = load_hermes_condition_lock()
     artifact = lock.get("artifact")
     adapter = lock.get("adapter")
     configuration = adapter.get("configuration") if isinstance(adapter, dict) else None
     shim = configuration.get("launch_shim") if isinstance(configuration, dict) else None
-    provision = configuration.get("provision") if isinstance(configuration, dict) else None
+    provision = (
+        configuration.get("provision") if isinstance(configuration, dict) else None
+    )
     if (
         not isinstance(artifact, dict)
         or not isinstance(configuration, dict)
@@ -470,6 +480,10 @@ def sealed_hermes_process(
             "condition-unqualified",
             "Hermes proxy token is invalid",
         )
+    try:
+        protocol = parse_provider_protocol(provider_protocol)
+    except ValueError as error:
+        raise ConditionAdapterError("condition-unqualified", str(error)) from error
     return SealedConditionProcess(
         condition="hermes",
         artifact_path=provisioning.launch_shim_path,
@@ -490,6 +504,7 @@ def sealed_hermes_process(
         ),
         environment={
             "MODEL_BENCHMARK_PROVIDER_MODEL": provider_model,
+            PROVIDER_PROTOCOL_ENV: protocol.value,
             "MODEL_BENCHMARK_PROXY_BASE_URL": proxy_base_url,
             TRIAL_PROXY_TOKEN_ENV: trial_proxy_token,
         },
@@ -579,7 +594,9 @@ def _docker(
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        raise ConditionAdapterError("provisioning-runtime-failed", str(error)) from error
+        raise ConditionAdapterError(
+            "provisioning-runtime-failed", str(error)
+        ) from error
     if check and completed.returncode != 0:
         detail = (completed.stderr.strip() or completed.stdout.strip())[-2000:]
         raise ConditionAdapterError(
@@ -675,7 +692,9 @@ def _extract_artifact(destination: Path) -> None:
                 "artifact-verification-failed",
                 "Docker did not return a Hermes extraction container identity",
             )
-        _docker(["cp", f"{container_id}:{HERMES_ARTIFACT_CONTAINER_PATH}", str(temporary)])
+        _docker(
+            ["cp", f"{container_id}:{HERMES_ARTIFACT_CONTAINER_PATH}", str(temporary)]
+        )
         temporary.chmod(0o555)
         _verify_file(
             temporary,

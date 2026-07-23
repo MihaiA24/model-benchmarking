@@ -18,28 +18,36 @@ def test_published_hy3_manifest_loads_with_sealed_projection() -> None:
 
     assert str(manifest.identity) == (
         "functional-v1-manifest:sha256:"
-        "f0a304c15066b1db44faa0073231b82a4be48981f1f1f29d9376789bfb636986"
+        "ef8f10a78c0c5e9e2e977883bd00e97c826d174d79b20fe54f612d7ef91026a2"
     )
     assert str(manifest.resolved_identity) == (
         "resolved-v1-manifest:sha256:"
-        "167eba54c4f0d9ab473c1bcf4626dfece9f15d7d794de1a5ccca4bf44f558fba"
+        "88ba11e5b3c1b95fc14b9f1760739cc493921b0b865500af840acf23323319bb"
     )
     assert manifest.identity_value["provider"] == {
         "base_url": "https://opencode.ai/zen/go/v1",
+        "protocol": "openai-chat-completions",
         "model": "hy3",
         "pricing": {
-            "schema_version": 1,
+            "schema_version": 3,
+            "billing_basis": "opencode-go-catalog",
             "currency": "USD",
             "unit": "usd-per-million-tokens",
             "input_usd_per_million_tokens": "0.14",
             "output_usd_per_million_tokens": "0.58",
+            "cache_read_usd_per_million_tokens": "0.035",
+            "tiers": [],
             "effective_from_utc": "2026-07-22T00:00:00Z",
             "effective_until_utc": "2026-09-01T00:00:00Z",
-            "source_url": "https://models.dev/providers/opencode-go",
-            "retrieved_at_utc": "2026-07-22T23:01:53Z",
+            "source_url": "https://models.dev/api.json",
+            "source_snapshot_sha256": (
+                "sha256:"
+                "0fde178efd91764a20ae11948d9c26cdaad216a76efcd48590904962b77bb48e"
+            ),
+            "retrieved_at_utc": "2026-07-23T07:08:24Z",
             "identity": (
                 "pricing-record:sha256:"
-                "839345de1c365754df4745dcffec03b98a3102723bfe4926273401478557afea"
+                "97498b9f6d24dc58be4dd62a54d56c8d94add242cb59c3088a322b7b49df7044"
             ),
         },
     }

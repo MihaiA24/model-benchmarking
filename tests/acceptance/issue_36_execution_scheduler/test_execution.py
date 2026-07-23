@@ -178,7 +178,10 @@ def test_shared_fault_stops_refill_and_terminates_running_cells(
     assert all(outcome.disposition == "invalid_infrastructure" for outcome in outcomes)
     acceptance_observation(
         "shared-fault-stops-refill",
-        {"started_indices": sorted(executor.calls), "terminate_calls": executor.terminated},
+        {
+            "started_indices": sorted(executor.calls),
+            "terminate_calls": executor.terminated,
+        },
     )
 
 
@@ -266,9 +269,7 @@ def test_runtime_package_rejects_unsealed_image_bindings(tmp_path: Path) -> None
     (source / "task.toml").write_text(
         'version = "1.0"\n\n[environment]\n'
         'docker_image = "model-benchmark.local/other:tag"\n'
-        '\n[verifier.environment]\ndocker_image = "sha256:'
-        + "2" * 64
-        + '"\n',
+        '\n[verifier.environment]\ndocker_image = "sha256:' + "2" * 64 + '"\n',
         encoding="utf-8",
     )
 
@@ -452,7 +453,6 @@ def test_condition_mount_probe_verifies_mounted_artifact_tree(
     assert all(result["verifier_bytes_present"] is False for result in results)
 
 
-
 def test_provider_limit_and_score_vector_are_terminal_facts(tmp_path: Path) -> None:
     executor = HarborCellExecutor.__new__(HarborCellExecutor)
     result_path = tmp_path / "trial" / "result.json"
@@ -582,10 +582,14 @@ def test_harbor_overlay_exposes_only_selected_image_and_proxy_route(
     assert proxy["environment"]["MODEL_BENCHMARK_REQUESTS_PER_TRIAL"] == (
         "${MODEL_BENCHMARK_REQUESTS_PER_TRIAL:?}"
     )
+    assert proxy["environment"]["MODEL_BENCHMARK_PROVIDER_PROTOCOL"] == (
+        "${MODEL_BENCHMARK_PROVIDER_PROTOCOL:?}"
+    )
     for pricing_variable in (
         "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY",
         "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS",
         "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS",
+        "MODEL_BENCHMARK_CACHE_READ_USD_PER_MILLION_TOKENS",
     ):
         assert proxy["environment"][pricing_variable] == (
             "${" + pricing_variable + ":?}"
@@ -672,6 +676,7 @@ def test_harbor_agent_command_has_only_proxy_credentials(tmp_path: Path) -> None
         artifact_identity="artifact:sha256:" + "a" * 64,
         extra_env={
             "MODEL_BENCHMARK_PROVIDER_MODEL": "locked/model",
+            "MODEL_BENCHMARK_PROVIDER_PROTOCOL": "anthropic-messages",
             "MODEL_BENCHMARK_PROXY_BASE_URL": "http://credential-proxy:8080/v1",
             "MODEL_BENCHMARK_PROXY_TOKEN": "opaque-token",
         },
@@ -686,6 +691,7 @@ def test_harbor_agent_command_has_only_proxy_credentials(tmp_path: Path) -> None
     assert set(environment) == {
         "HOME",
         "MODEL_BENCHMARK_PROVIDER_MODEL",
+        "MODEL_BENCHMARK_PROVIDER_PROTOCOL",
         "MODEL_BENCHMARK_PROXY_BASE_URL",
         "MODEL_BENCHMARK_PROXY_TOKEN",
         "XDG_CACHE_HOME",
@@ -814,9 +820,7 @@ def test_drained_cell_raw_evidence_is_preserved_and_redacted(tmp_path: Path) -> 
     (source / "trials" / "stdout.bin").write_bytes(b"before secret-value after")
     destination = tmp_path / "raw"
 
-    preserved = executor._preserve_raw_evidence(
-        source, destination, (b"secret-value",)
-    )
+    preserved = executor._preserve_raw_evidence(source, destination, (b"secret-value",))
 
     assert preserved is True
     assert (destination / "trials" / "stdout.bin").read_bytes() == (
@@ -874,10 +878,13 @@ def _cell_executor(
             "provider": {
                 "base_url": "https://provider.example/v1",
                 "model": "locked/model",
+                "protocol": "openai-chat-completions",
                 "pricing": {
                     "identity": "pricing-record:sha256:" + "0" * 64,
                     "input_usd_per_million_tokens": "1.00",
                     "output_usd_per_million_tokens": "1.00",
+                    "cache_read_usd_per_million_tokens": "0.10",
+                    "tiers": [],
                 },
             },
             "limits": {
@@ -1003,7 +1010,7 @@ def test_scratch_ownership_is_returned_to_the_coordinator_user(
 
     executor._normalize_scratch_ownership(tmp_path)
 
-    (arguments, keywords), = calls
+    ((arguments, keywords),) = calls
     assert arguments == [
         "run",
         "--rm",

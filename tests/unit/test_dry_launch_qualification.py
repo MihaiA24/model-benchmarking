@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import urllib.error
+import urllib.request
+
 from pathlib import Path
 
 import pytest
@@ -61,8 +64,12 @@ def _record() -> dict[str, object]:
     manifests = [
         {
             "base_url": "https://opencode.ai/zen/go/v1",
+            "catalog_cache_read_usd_per_million_tokens": "0.0028",
+            "catalog_context_tokens": 1_000_000,
             "catalog_input_usd_per_million_tokens": "0.14",
             "catalog_output_usd_per_million_tokens": "0.28",
+            "catalog_output_tokens": 131_072,
+            "catalog_tiers": [],
             "effective_from_utc": _TIMESTAMP,
             "effective_until_utc": "2026-09-01T00:00:00Z",
             "live_route_status": 401,
@@ -70,6 +77,8 @@ def _record() -> dict[str, object]:
             "manifest_identity": f"functional-v1-manifest:sha256:{_DIGEST}",
             "model": model,
             "pricing_identity": f"pricing-record:sha256:{_DIGEST}",
+            "pricing_source_snapshot_sha256": f"sha256:{_DIGEST}",
+            "pricing_source_url": qualification._CATALOG_URL,
             "resolved_manifest_identity": f"resolved-v1-manifest:sha256:{_DIGEST}",
             "source_yaml_sha256": f"sha256:{_DIGEST}",
             "status": "passed",
@@ -82,7 +91,7 @@ def _record() -> dict[str, object]:
             "manifests": manifests,
             "provider_id": "opencode-go",
             "retrieved_at_utc": _TIMESTAMP,
-            "schema_version": 1,
+            "schema_version": 2,
             "source_url": qualification._CATALOG_URL,
             "status": "passed",
         },
@@ -113,9 +122,9 @@ def _record() -> dict[str, object]:
             "worker_uplink": "mb-host0",
         },
         "schema": _SCHEMA_REGISTRY.envelope(
-            "model-benchmark/functional-v1-dry-launch-qualification", 1
+            "model-benchmark/functional-v1-dry-launch-qualification", 2
         ),
-        "schema_version": 1,
+        "schema_version": 2,
         "sealed_at_utc": _TIMESTAMP,
         "summary": {
             "cleanup_complete": True,
@@ -127,6 +136,68 @@ def _record() -> dict[str, object]:
             "terminal_lifecycles": 16,
         },
     }
+
+
+def test_catalog_validation_rejects_model_protocol_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeManifest:
+        source_path = Path("functional-v1-minimax-m3.yaml")
+        identity = f"functional-v1-manifest:sha256:{_DIGEST}"
+        resolved_identity = f"resolved-v1-manifest:sha256:{_DIGEST}"
+        source_yaml_sha256 = f"sha256:{_DIGEST}"
+        value = {
+            "provider": {
+                "base_url": "https://opencode.ai/zen/go/v1",
+                "model": "minimax-m3",
+                "protocol": "openai-chat-completions",
+                "pricing": {
+                    "effective_from_utc": _TIMESTAMP,
+                    "effective_until_utc": "2026-09-01T00:00:00Z",
+                    "identity": f"pricing-record:sha256:{_DIGEST}",
+                    "input_usd_per_million_tokens": "0.30",
+                    "output_usd_per_million_tokens": "1.20",
+                },
+            }
+        }
+
+    catalog_provider = {
+        "api": "https://opencode.ai/zen/go/v1",
+        "npm": "@ai-sdk/openai-compatible",
+        "models": {
+            "minimax-m3": {
+                "cost": {"input": 0.3, "output": 1.2},
+                "id": "minimax-m3",
+                "provider": {"npm": "@ai-sdk/anthropic"},
+            }
+        },
+    }
+    monkeypatch.setattr(qualification, "_check_pricing_window", lambda *_: None)
+
+    with pytest.raises(
+        qualification.DryLaunchQualificationError, match="protocol drift"
+    ):
+        qualification._manifest_catalog_entry(
+            FakeManifest(),  # type: ignore[arg-type]
+            catalog_document_sha256=f"sha256:{_DIGEST}",
+            provider=catalog_provider,
+            route_status=401,
+        )
+
+
+def test_catalog_limits_require_positive_integer_context_and_output() -> None:
+    assert qualification._catalog_limits(
+        {"limit": {"context": 1_000_000, "output": 131_072}},
+        "minimax-m3",
+    ) == (1_000_000, 131_072)
+
+    with pytest.raises(
+        qualification.DryLaunchQualificationError, match="limits are invalid"
+    ):
+        qualification._catalog_limits(
+            {"limit": {"context": 1_000_000, "output": True}},
+            "minimax-m3",
+        )
 
 
 def test_dry_launch_record_schema_requires_complete_non_run_lifecycle() -> None:
@@ -172,13 +243,10 @@ def test_seal_writes_identity_and_inventory_only_after_uplink_restoration(
         draft_path, output=output, worker_uplink="mb-host0"
     )
 
-    assert str(identity).startswith(
-        "dry-launch-qualification:sha256:"
-    )
+    assert str(identity).startswith("dry-launch-qualification:sha256:")
     assert output.is_file()
-    assert (
-        output.with_suffix(".identity").read_text(encoding="utf-8").strip()
-        == str(identity)
+    assert output.with_suffix(".identity").read_text(encoding="utf-8").strip() == str(
+        identity
     )
     inventory = output.with_suffix(".sha256").read_text(encoding="utf-8")
     assert output.name in inventory
@@ -246,4 +314,85 @@ def test_execute_preflights_without_reading_provider_credential(
             catalog_validation_path=tmp_path / "catalog.json",
             draft_path=tmp_path / "draft.json",
             worker_uplink="mb-host0",
+        )
+
+
+@pytest.mark.parametrize(
+    ("protocol", "endpoint", "anthropic_version"),
+    [
+        ("openai-chat-completions", "/chat/completions", None),
+        ("anthropic-messages", "/messages", "2023-06-01"),
+    ],
+)
+def test_live_route_probe_is_endpoint_specific_and_credential_free(
+    monkeypatch: pytest.MonkeyPatch,
+    protocol: str,
+    endpoint: str,
+    anthropic_version: str | None,
+) -> None:
+    observed: list[bool] = []
+
+    def reject(request: urllib.request.Request, *, timeout: int) -> None:
+        assert request.full_url.endswith(endpoint)
+        assert request.get_method() == "POST"
+        assert request.data == b"{}"
+        assert request.get_header("Authorization") is None
+        assert request.get_header("X-api-key") is None
+        assert request.get_header("Anthropic-version") == anthropic_version
+        assert timeout == 20
+        observed.append(True)
+        raise urllib.error.HTTPError(request.full_url, 401, "unauthorized", {}, None)
+
+    monkeypatch.setattr(qualification.urllib.request, "urlopen", reject)
+
+    assert (
+        qualification._live_route_status("https://opencode.ai/zen/go/v1", protocol)
+        == 401
+    )
+    assert observed == [True]
+
+
+def test_catalog_validation_rejects_missing_protocol_route() -> None:
+    manifest = qualification.FunctionalV1Manifest.load(
+        Path(__file__).resolve().parents[2] / "functional-v1-minimax-m3.yaml"
+    )
+    provider_value = manifest.value["provider"]
+    pricing = provider_value["pricing"]
+    tier = pricing["tiers"][0]
+    catalog_provider = {
+        "api": provider_value["base_url"],
+        "models": {
+            provider_value["model"]: {
+                "cost": {
+                    "cache_read": pricing["cache_read_usd_per_million_tokens"],
+                    "input": pricing["input_usd_per_million_tokens"],
+                    "output": pricing["output_usd_per_million_tokens"],
+                    "tiers": [
+                        {
+                            "cache_read": tier["cache_read_usd_per_million_tokens"],
+                            "input": tier["input_usd_per_million_tokens"],
+                            "output": tier["output_usd_per_million_tokens"],
+                            "tier": {
+                                "size": tier["input_tokens_gt"],
+                                "type": "context",
+                            },
+                        }
+                    ],
+                },
+                "id": provider_value["model"],
+                "limit": {"context": 1_000_000, "output": 131_072},
+                "provider": {"npm": "@ai-sdk/anthropic"},
+            }
+        },
+    }
+
+    with pytest.raises(
+        qualification.DryLaunchQualificationError,
+        match="did not reject an unauthenticated probe",
+    ):
+        qualification._manifest_catalog_entry(
+            manifest,
+            catalog_document_sha256=pricing["source_snapshot_sha256"],
+            provider=catalog_provider,
+            route_status=404,
         )

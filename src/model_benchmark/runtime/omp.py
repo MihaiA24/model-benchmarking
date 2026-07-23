@@ -16,6 +16,10 @@ from model_benchmark.declarations.canonical import (
     load_canonical_json,
 )
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
+from model_benchmark.declarations.provider_routes import (
+    PROVIDER_PROTOCOL_ENV,
+    parse_provider_protocol,
+)
 from model_benchmark.declarations.scenario_locks import (
     project_resource_root,
     standard_profile_path,
@@ -34,8 +38,7 @@ from model_benchmark.runtime.credential_proxy import TRIAL_PROXY_TOKEN_ENV
 
 OMP_VERSION = "v16.4.0"
 OMP_ARTIFACT_URL = (
-    "https://github.com/can1357/oh-my-pi/releases/download/"
-    "v16.4.0/omp-linux-x64"
+    "https://github.com/can1357/oh-my-pi/releases/download/v16.4.0/omp-linux-x64"
 )
 OMP_ARTIFACT_IDENTITY = (
     "artifact:sha256:c7a2fa328c965131c0d0ef62a07a4fe63306ed1b7a90fbbb924c75605c68d38a"
@@ -48,10 +51,11 @@ OMP_DIAGNOSTIC_EXCLUSIONS: Mapping[str, str] = MappingProxyType(
     {OMP_NATIVE_DIAGNOSTIC_PATH: OMP_ARTIFACT_IDENTITY}
 )
 OMP_SHIM_IDENTITY = (
-    "artifact:sha256:3fa359ee22bb709a545a3dfed099d95f5567e189e13786bc00e415f387206271"
+    "artifact:sha256:ff5cd1b8ccc7d351a93e1bcbd04837995e3bebfdab39b471fc30f174c0d694f1"
 )
 OMP_ENVIRONMENT_NAMES = (
     "MODEL_BENCHMARK_PROVIDER_MODEL",
+    PROVIDER_PROTOCOL_ENV,
     "MODEL_BENCHMARK_PROXY_BASE_URL",
     TRIAL_PROXY_TOKEN_ENV,
 )
@@ -75,14 +79,18 @@ def omp_condition_lock_path() -> Path:
         / "omp-v16.4.0.condition.json"
     )
     if not path.is_file():
-        raise ConditionAdapterError("condition-lock-unavailable", "OMP condition lock is unavailable")
+        raise ConditionAdapterError(
+            "condition-lock-unavailable", "OMP condition lock is unavailable"
+        )
     return path
 
 
 def omp_launch_shim_path() -> Path:
     path = Path(__file__).with_name("omp_launch.py")
     if not path.is_file():
-        raise ConditionAdapterError("launch-shim-unavailable", "OMP launch shim is unavailable")
+        raise ConditionAdapterError(
+            "launch-shim-unavailable", "OMP launch shim is unavailable"
+        )
     return path
 
 
@@ -90,8 +98,9 @@ def _locked_provider_config() -> dict[str, object]:
     return {
         "providers": {
             "model-benchmark-proxy": {
-                "api": "openai-completions",
+                "api": "manifest-provider-api",
                 "apiKey": "MODEL_BENCHMARK_PROXY_TOKEN",
+                "auth": "apiKey",
                 "authHeader": True,
                 "baseUrl": "manifest-provider-base-url",
                 "models": [
@@ -134,7 +143,9 @@ def load_omp_condition_lock() -> tuple[bytes, Mapping[str, object], TypedDigest]
     except (OSError, CanonicalizationError) as error:
         raise ConditionAdapterError("invalid-condition-lock", str(error)) from error
     if not isinstance(value, dict):
-        raise ConditionAdapterError("invalid-condition-lock", "OMP condition lock is not an object")
+        raise ConditionAdapterError(
+            "invalid-condition-lock", "OMP condition lock is not an object"
+        )
     _verify_lock_dependencies(value)
     identity = TypedDigest.from_bytes(DigestKind.FUNCTIONAL_V1_CONDITION, data)
     return data, MappingProxyType(value), identity
@@ -154,7 +165,9 @@ def _verify_lock_dependencies(lock: dict[str, object]) -> None:
     artifact = lock.get("artifact")
     adapter = lock.get("adapter")
     if not isinstance(artifact, dict) or not isinstance(adapter, dict):
-        raise ConditionAdapterError("invalid-condition-lock", "OMP lock structure is invalid")
+        raise ConditionAdapterError(
+            "invalid-condition-lock", "OMP lock structure is invalid"
+        )
     expected_profile = TypedDigest.from_bytes(
         DigestKind.EXECUTION_PROFILE,
         standard_profile_path().read_bytes(),
@@ -204,7 +217,9 @@ def provision_omp(cache_root: Path, condition_lock: bytes) -> OmpProvisioning:
     artifact_relative = (
         Path("artifacts") / OMP_ARTIFACT_IDENTITY.rsplit(":", 1)[1] / "omp"
     )
-    shim_relative = Path("adapters") / OMP_SHIM_IDENTITY.rsplit(":", 1)[1] / "omp-launch"
+    shim_relative = (
+        Path("adapters") / OMP_SHIM_IDENTITY.rsplit(":", 1)[1] / "omp-launch"
+    )
     artifact_path = cache_root / artifact_relative
     shim_path = cache_root / shim_relative
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -238,7 +253,9 @@ def provision_omp(cache_root: Path, condition_lock: bytes) -> OmpProvisioning:
         "network": "provision-only",
         "schema_version": 1,
     }
-    publish_bytes(manifest_path, canonical_json_bytes(manifest), mode=0o400, condition="OMP")
+    publish_bytes(
+        manifest_path, canonical_json_bytes(manifest), mode=0o400, condition="OMP"
+    )
     return preflight_omp(cache_root, condition_lock)
 
 
@@ -257,7 +274,9 @@ def preflight_omp(cache_root: Path, condition_lock: bytes) -> OmpProvisioning:
     artifact_relative = (
         Path("artifacts") / OMP_ARTIFACT_IDENTITY.rsplit(":", 1)[1] / "omp"
     )
-    shim_relative = Path("adapters") / OMP_SHIM_IDENTITY.rsplit(":", 1)[1] / "omp-launch"
+    shim_relative = (
+        Path("adapters") / OMP_SHIM_IDENTITY.rsplit(":", 1)[1] / "omp-launch"
+    )
     shim_data = omp_launch_shim_path().read_bytes()
     expected = {
         "artifact": {
@@ -301,16 +320,13 @@ def sealed_omp_process(
     proxy_base_url: str,
     provider_model: str,
     trial_proxy_token: str,
+    provider_protocol: str = "openai-chat-completions",
 ) -> SealedConditionProcess:
     _, lock, condition_identity = load_omp_condition_lock()
     artifact = lock.get("artifact")
     adapter = lock.get("adapter")
     configuration = adapter.get("configuration") if isinstance(adapter, dict) else None
-    shim = (
-        configuration.get("launch_shim")
-        if isinstance(configuration, dict)
-        else None
-    )
+    shim = configuration.get("launch_shim") if isinstance(configuration, dict) else None
     if (
         not isinstance(artifact, dict)
         or not isinstance(configuration, dict)
@@ -354,9 +370,19 @@ def sealed_omp_process(
             "OMP must receive one canonical internal HTTP Credential Proxy route",
         )
     if not provider_model or any(ord(character) < 32 for character in provider_model):
-        raise ConditionAdapterError("condition-unqualified", "OMP provider model is invalid")
-    if not trial_proxy_token or any(character in trial_proxy_token for character in "\r\n\x00"):
-        raise ConditionAdapterError("condition-unqualified", "OMP proxy token is invalid")
+        raise ConditionAdapterError(
+            "condition-unqualified", "OMP provider model is invalid"
+        )
+    if not trial_proxy_token or any(
+        character in trial_proxy_token for character in "\r\n\x00"
+    ):
+        raise ConditionAdapterError(
+            "condition-unqualified", "OMP proxy token is invalid"
+        )
+    try:
+        protocol = parse_provider_protocol(provider_protocol)
+    except ValueError as error:
+        raise ConditionAdapterError("condition-unqualified", str(error)) from error
     return SealedConditionProcess(
         condition="omp",
         artifact_path=provisioning.launch_shim_path,
@@ -369,6 +395,7 @@ def sealed_omp_process(
         ),
         environment={
             "MODEL_BENCHMARK_PROVIDER_MODEL": provider_model,
+            PROVIDER_PROTOCOL_ENV: protocol.value,
             "MODEL_BENCHMARK_PROXY_BASE_URL": proxy_base_url,
             TRIAL_PROXY_TOKEN_ENV: trial_proxy_token,
         },

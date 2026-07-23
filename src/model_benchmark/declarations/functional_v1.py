@@ -29,6 +29,7 @@ from model_benchmark.declarations.identities import (
     TypedDigest,
 )
 from model_benchmark.declarations.limits import FIXED_LIMITS
+from model_benchmark.declarations.provider_routes import parse_provider_protocol
 from model_benchmark.declarations.scenario_locks import schema_root_path
 from model_benchmark.declarations.schemas import SchemaRegistry, SchemaValidationError
 
@@ -239,9 +240,10 @@ def _pricing_rate(value: object, label: str) -> str:
 
 
 def _pricing_timestamp(value: object, label: str) -> datetime:
-    if not isinstance(value, str) or re.fullmatch(
-        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value
-    ) is None:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value) is None
+    ):
         _reject(
             "invalid-pricing-record",
             f"provider.pricing.{label} must be a whole-second UTC timestamp",
@@ -254,10 +256,107 @@ def _pricing_timestamp(value: object, label: str) -> datetime:
         ) from error
 
 
+_PRICING_TIER_FIELDS = {
+    "cache_read_usd_per_million_tokens",
+    "input_tokens_gt",
+    "input_usd_per_million_tokens",
+    "output_usd_per_million_tokens",
+}
+
+
+def _validate_pricing_tier(
+    value: object, index: int
+) -> tuple[int, tuple[Decimal, Decimal, Decimal]]:
+    tier = _strict_object(
+        value, _PRICING_TIER_FIELDS, f"provider.pricing.tiers[{index}]"
+    )
+    threshold = tier["input_tokens_gt"]
+    if (
+        not isinstance(threshold, int)
+        or isinstance(threshold, bool)
+        or not 0 < threshold <= 10_000_000
+    ):
+        _reject(
+            "invalid-pricing-record",
+            f"provider.pricing.tiers[{index}].input_tokens_gt is invalid",
+        )
+    rates = tuple(
+        Decimal(_pricing_rate(tier[field], f"tiers[{index}].{field}"))
+        for field in (
+            "input_usd_per_million_tokens",
+            "output_usd_per_million_tokens",
+            "cache_read_usd_per_million_tokens",
+        )
+    )
+    return threshold, (rates[0], rates[1], rates[2])
+
+
+def _validate_pricing_tiers(record: Mapping[str, object]) -> None:
+    previous_rates = tuple(
+        Decimal(_pricing_rate(record[field], field))
+        for field in (
+            "input_usd_per_million_tokens",
+            "output_usd_per_million_tokens",
+            "cache_read_usd_per_million_tokens",
+        )
+    )
+    tiers = record["tiers"]
+    if not isinstance(tiers, list) or len(tiers) > 8:
+        _reject("invalid-pricing-record", "provider.pricing.tiers is invalid")
+    previous_threshold = 0
+    for index, value in enumerate(tiers):
+        threshold, rates = _validate_pricing_tier(value, index)
+        if threshold <= previous_threshold:
+            _reject(
+                "invalid-pricing-record",
+                "provider.pricing tier thresholds must be strictly increasing",
+            )
+        if any(rate < previous for rate, previous in zip(rates, previous_rates)):
+            _reject(
+                "invalid-pricing-record",
+                "provider.pricing tier rates must not decrease",
+            )
+        previous_threshold = threshold
+        previous_rates = rates
+
+
+def _validate_pricing_source(record: Mapping[str, object]) -> None:
+    source = record["source_url"]
+    if not isinstance(source, str):
+        _reject("invalid-pricing-record", "provider.pricing.source_url is invalid")
+    parsed = urlsplit(source)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname is None
+        or parsed.hostname != parsed.hostname.lower()
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path in {"", "/"}
+        or urlunsplit(parsed) != source
+    ):
+        _reject(
+            "invalid-pricing-record",
+            "provider.pricing.source_url must be a canonical HTTPS URL",
+        )
+    snapshot = record["source_snapshot_sha256"]
+    if (
+        not isinstance(snapshot, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", snapshot) is None
+    ):
+        _reject(
+            "invalid-pricing-record",
+            "provider.pricing.source_snapshot_sha256 is invalid",
+        )
+
+
 def _validate_pricing_record(value: object) -> dict[str, Any]:
     record = _strict_object(
         value,
         {
+            "billing_basis",
+            "cache_read_usd_per_million_tokens",
             "currency",
             "effective_from_utc",
             "effective_until_utc",
@@ -266,28 +365,24 @@ def _validate_pricing_record(value: object) -> dict[str, Any]:
             "output_usd_per_million_tokens",
             "retrieved_at_utc",
             "schema_version",
+            "source_snapshot_sha256",
             "source_url",
+            "tiers",
             "unit",
         },
         "provider.pricing",
     )
     if (
-        record["schema_version"] != 1
+        record["schema_version"] != 3
+        or record["billing_basis"] != "opencode-go-catalog"
         or record["currency"] != "USD"
         or record["unit"] != "usd-per-million-tokens"
     ):
         _reject(
             "invalid-pricing-record",
-            "provider.pricing must use schema version 1 USD per million tokens",
+            "provider.pricing must use the schema version 3 OpenCode Go catalog USD rates",
         )
-    _pricing_rate(
-        record["input_usd_per_million_tokens"],
-        "input_usd_per_million_tokens",
-    )
-    _pricing_rate(
-        record["output_usd_per_million_tokens"],
-        "output_usd_per_million_tokens",
-    )
+    _validate_pricing_tiers(record)
     effective_from = _pricing_timestamp(
         record["effective_from_utc"], "effective_from_utc"
     )
@@ -300,25 +395,7 @@ def _validate_pricing_record(value: object) -> dict[str, Any]:
             "invalid-pricing-record",
             "provider.pricing retrieval must fall within its effective interval",
         )
-    source = record["source_url"]
-    if not isinstance(source, str):
-        _reject("invalid-pricing-record", "provider.pricing.source_url is invalid")
-    parsed_source = urlsplit(source)
-    if (
-        parsed_source.scheme != "https"
-        or parsed_source.hostname is None
-        or parsed_source.hostname != parsed_source.hostname.lower()
-        or parsed_source.username is not None
-        or parsed_source.password is not None
-        or parsed_source.query
-        or parsed_source.fragment
-        or parsed_source.path in {"", "/"}
-        or urlunsplit(parsed_source) != source
-    ):
-        _reject(
-            "invalid-pricing-record",
-            "provider.pricing.source_url must be a canonical HTTPS URL",
-        )
+    _validate_pricing_source(record)
     try:
         identity = TypedDigest.parse(record["identity"])
     except (IdentityError, TypeError) as error:
@@ -625,9 +702,17 @@ class FunctionalV1Manifest:
         if manifest["schema_version"] != 1:
             _reject("unsupported-manifest-version", "schema_version must equal 1")
         provider = _strict_object(
-            manifest["provider"], {"base_url", "model", "pricing"}, "provider"
+            manifest["provider"],
+            {"base_url", "model", "pricing", "protocol"},
+            "provider",
         )
         _validate_base_url(provider["base_url"])
+        try:
+            parse_provider_protocol(provider["protocol"])
+        except ValueError as error:
+            raise FunctionalV1ManifestError(
+                "invalid-provider-protocol", str(error)
+            ) from error
         _validate_pricing_record(provider["pricing"])
         if (
             not isinstance(provider["model"], str)

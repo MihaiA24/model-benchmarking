@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import stat
 import tarfile
@@ -18,6 +17,10 @@ from model_benchmark.declarations.canonical import (
     load_canonical_json,
 )
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
+from model_benchmark.declarations.provider_routes import (
+    PROVIDER_PROTOCOL_ENV,
+    parse_provider_protocol,
+)
 from model_benchmark.declarations.scenario_locks import (
     project_resource_root,
     standard_profile_path,
@@ -49,10 +52,11 @@ OPENCODE_ARTIFACT_IDENTITY = (
 )
 OPENCODE_ARTIFACT_BYTES = 188_979_328
 OPENCODE_SHIM_IDENTITY = (
-    "artifact:sha256:ca042e0b8c901025569191493ffd86e9ec6771ed9494919008a0c079e1aeb2d0"
+    "artifact:sha256:bddb2f91b0d1555d7de23a19976b470e7630bc78ce8e38f0ae9fa68eea6c8e5d"
 )
 OPENCODE_ENVIRONMENT_NAMES = (
     "MODEL_BENCHMARK_PROVIDER_MODEL",
+    PROVIDER_PROTOCOL_ENV,
     "MODEL_BENCHMARK_PROXY_BASE_URL",
     TRIAL_PROXY_TOKEN_ENV,
 )
@@ -108,7 +112,7 @@ def _locked_provider_config() -> dict[str, object]:
                     }
                 },
                 "name": "Model Benchmark Credential Proxy",
-                "npm": "@ai-sdk/openai-compatible",
+                "npm": "manifest-provider-npm",
                 "options": {
                     "apiKey": "{env:MODEL_BENCHMARK_PROXY_TOKEN}",
                     "baseURL": "manifest-provider-base-url",
@@ -240,9 +244,7 @@ def provision_opencode(cache_root: Path, condition_lock: bytes) -> OpenCodeProvi
         Path("artifacts") / OPENCODE_ARTIFACT_IDENTITY.rsplit(":", 1)[1] / "opencode"
     )
     shim_relative = (
-        Path("adapters")
-        / OPENCODE_SHIM_IDENTITY.rsplit(":", 1)[1]
-        / "opencode-launch"
+        Path("adapters") / OPENCODE_SHIM_IDENTITY.rsplit(":", 1)[1] / "opencode-launch"
     )
     archive_path = cache_root / archive_relative
     artifact_path = cache_root / artifact_relative
@@ -323,9 +325,7 @@ def preflight_opencode(cache_root: Path, condition_lock: bytes) -> OpenCodeProvi
         Path("artifacts") / OPENCODE_ARTIFACT_IDENTITY.rsplit(":", 1)[1] / "opencode"
     )
     shim_relative = (
-        Path("adapters")
-        / OPENCODE_SHIM_IDENTITY.rsplit(":", 1)[1]
-        / "opencode-launch"
+        Path("adapters") / OPENCODE_SHIM_IDENTITY.rsplit(":", 1)[1] / "opencode-launch"
     )
     shim_data = opencode_launch_shim_path().read_bytes()
     expected = _provisioning_manifest(
@@ -419,6 +419,7 @@ def sealed_opencode_process(
     proxy_base_url: str,
     provider_model: str,
     trial_proxy_token: str,
+    provider_protocol: str = "openai-chat-completions",
 ) -> SealedConditionProcess:
     _, lock, condition_identity = load_opencode_condition_lock()
     artifact = lock.get("artifact")
@@ -497,6 +498,10 @@ def sealed_opencode_process(
             "condition-unqualified",
             "OpenCode proxy token is invalid",
         )
+    try:
+        protocol = parse_provider_protocol(provider_protocol)
+    except ValueError as error:
+        raise ConditionAdapterError("condition-unqualified", str(error)) from error
     return SealedConditionProcess(
         condition="opencode",
         artifact_path=provisioning.launch_shim_path,
@@ -509,6 +514,7 @@ def sealed_opencode_process(
         ),
         environment={
             "MODEL_BENCHMARK_PROVIDER_MODEL": provider_model,
+            PROVIDER_PROTOCOL_ENV: protocol.value,
             "MODEL_BENCHMARK_PROXY_BASE_URL": proxy_base_url,
             TRIAL_PROXY_TOKEN_ENV: trial_proxy_token,
         },

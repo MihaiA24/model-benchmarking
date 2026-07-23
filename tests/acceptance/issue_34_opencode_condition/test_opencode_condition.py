@@ -14,14 +14,21 @@ from typing import Any
 import pytest
 
 import model_benchmark.runtime.opencode as opencode_runtime
-from model_benchmark.declarations.canonical import canonical_json_bytes, load_canonical_json
+import model_benchmark.runtime.opencode_launch as opencode_launch
+from model_benchmark.declarations.canonical import (
+    canonical_json_bytes,
+    load_canonical_json,
+)
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
 from model_benchmark.runtime.conditions import (
     ConditionAdapterError,
     ConditionRunRequest,
     ConditionRunner,
 )
-from model_benchmark.runtime.credential_proxy import CredentialProxy, CredentialProxyConfig
+from model_benchmark.runtime.credential_proxy import (
+    CredentialProxy,
+    CredentialProxyConfig,
+)
 from model_benchmark.runtime.opencode import (
     OPENCODE_ARCHIVE_BYTES,
     OPENCODE_ARCHIVE_IDENTITY,
@@ -42,9 +49,7 @@ from model_benchmark.runtime.opencode import (
 
 _REAL_KEY = "provider-secret-value"
 _MODEL = "locked/model"
-_BRIEF = (
-    b"Implement the exact locked behavior. Run `python task.py --output generated.csv`.\n"
-)
+_BRIEF = b"Implement the exact locked behavior. Run `python task.py --output generated.csv`.\n"
 
 
 def test_condition_lock_seals_exact_stock_opencode_profile(
@@ -94,7 +99,7 @@ def test_condition_lock_seals_exact_stock_opencode_profile(
                     }
                 },
                 "name": "Model Benchmark Credential Proxy",
-                "npm": "@ai-sdk/openai-compatible",
+                "npm": "manifest-provider-npm",
                 "options": {
                     "apiKey": "{env:MODEL_BENCHMARK_PROXY_TOKEN}",
                     "baseURL": "manifest-provider-base-url",
@@ -158,8 +163,12 @@ def test_provision_extracts_once_and_warm_preflight_is_read_only(
     monkeypatch.setattr(opencode_runtime, "OPENCODE_ARCHIVE_IDENTITY", archive_identity)
     monkeypatch.setattr(opencode_runtime, "OPENCODE_ARCHIVE_URL", artifact_url)
     monkeypatch.setattr(opencode_runtime, "OPENCODE_ARTIFACT_BYTES", len(artifact))
-    monkeypatch.setattr(opencode_runtime, "OPENCODE_ARTIFACT_IDENTITY", artifact_identity)
-    monkeypatch.setattr(opencode_runtime, "opencode_condition_lock_path", lambda: lock_path)
+    monkeypatch.setattr(
+        opencode_runtime, "OPENCODE_ARTIFACT_IDENTITY", artifact_identity
+    )
+    monkeypatch.setattr(
+        opencode_runtime, "opencode_condition_lock_path", lambda: lock_path
+    )
     calls: list[str] = []
 
     def open_artifact(url: str, *, timeout: int) -> io.BytesIO:
@@ -209,7 +218,10 @@ def test_provision_extracts_once_and_warm_preflight_is_read_only(
 def _fake_opencode(tmp_path: Path) -> Path:
     path = tmp_path / "opencode"
     path.write_text(
-        "#!" + sys.executable + "\n" + """import http.client
+        "#!"
+        + sys.executable
+        + "\n"
+        + """import http.client
 import json
 import os
 import sys
@@ -301,9 +313,7 @@ def _install_fake_condition(
     archive.write_bytes(b"sealed archive")
     archive.chmod(0o444)
     artifact_data = artifact.read_bytes()
-    artifact_identity = str(
-        TypedDigest.from_bytes(DigestKind.ARTIFACT, artifact_data)
-    )
+    artifact_identity = str(TypedDigest.from_bytes(DigestKind.ARTIFACT, artifact_data))
     archive_identity = str(
         TypedDigest.from_bytes(DigestKind.ARTIFACT, archive.read_bytes())
     )
@@ -450,7 +460,9 @@ def test_fresh_run_trials_preserve_stock_autonomy_and_complete_evidence(
             for line in (
                 result.capture_root
                 / "native/home/.model-benchmark/opencode-events.jsonl"
-            ).read_text(encoding="utf-8").splitlines()
+            )
+            .read_text(encoding="utf-8")
+            .splitlines()
         ]
         assert qualification.qualified is True
         assert qualification.reason_code == "qualified"
@@ -477,7 +489,9 @@ def test_fresh_run_trials_preserve_stock_autonomy_and_complete_evidence(
         assert delivery["proxy_base_url"].startswith("http://127.0.0.1:")
         assert delivery["transport"] == "run-stdin-json-events"
         assert delivery["workspace"] == str(trial_root / "repository")
-        assert (trial_root / "repository/generated.csv").read_text(encoding="utf-8") == "derived output"
+        assert (trial_root / "repository/generated.csv").read_text(
+            encoding="utf-8"
+        ) == "derived output"
         assert snapshot.request_count == 2
         assert snapshot.provider_tokens == 34
         assert snapshot.provider_cost_usd == "0.20"
@@ -552,3 +566,25 @@ def test_unsupported_run_behavior_is_unqualified_without_fallback(
         "unsupported-opencode-unqualified",
         {"fallback_attempts": 0, "reason_code": qualification.reason_code},
     )
+
+
+@pytest.mark.parametrize(
+    ("protocol", "npm"),
+    [
+        ("openai-chat-completions", "@ai-sdk/openai-compatible"),
+        ("anthropic-messages", "@ai-sdk/anthropic"),
+    ],
+)
+def test_launch_config_selects_the_declared_provider_protocol(
+    protocol: str,
+    npm: str,
+) -> None:
+    value = opencode_launch._provider_config(
+        base_url="http://credential-proxy:8080",
+        model=_MODEL,
+        protocol=protocol,
+    )
+
+    provider = value["provider"]["model-benchmark-proxy"]
+    assert provider["npm"] == npm
+    assert provider["options"]["baseURL"] == ("http://credential-proxy:8080")

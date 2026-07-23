@@ -9,7 +9,7 @@ import sys
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from model_benchmark.declarations.canonical import (
@@ -21,6 +21,10 @@ from model_benchmark.declarations.identities import (
     DigestKind,
     IdentityError,
     TypedDigest,
+)
+from model_benchmark.declarations.provider_routes import (
+    parse_provider_protocol,
+    provider_protocol_spec,
 )
 from model_benchmark.declarations.scenario_locks import schema_root_path
 from model_benchmark.declarations.schemas import SchemaRegistry, SchemaValidationError
@@ -82,11 +86,18 @@ def _link_state(name: str) -> str:
     return state
 
 
-def _live_route_status(base_url: str) -> int:
+def _live_route_status(base_url: str, protocol: str) -> int:
+    spec = provider_protocol_spec(parse_provider_protocol(protocol))
+    route_url = f"{base_url.rstrip('/')}{spec.endpoint_path}"
     request = urllib.request.Request(
-        base_url,
-        headers={"User-Agent": "model-benchmark-dry-launch-qualification/1"},
-        method="HEAD",
+        route_url,
+        data=b"{}",
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "model-benchmark-dry-launch-qualification/1",
+            **spec.required_headers,
+        },
+        method="POST",
     )
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
@@ -95,13 +106,102 @@ def _live_route_status(base_url: str) -> int:
         return int(error.code)
     except (OSError, urllib.error.URLError) as error:
         raise DryLaunchQualificationError(
-            f"provider route is unreachable without a paid request: {base_url}: {error}"
+            f"provider route is unreachable without credentials: {route_url}: {error}"
         ) from error
+
+
+_RATE_FIELDS = (
+    ("input", "input_usd_per_million_tokens"),
+    ("output", "output_usd_per_million_tokens"),
+    ("cache_read", "cache_read_usd_per_million_tokens"),
+)
+
+
+def _catalog_rates(value: Mapping[str, object], model: str) -> dict[str, Decimal]:
+    try:
+        rates = {target: Decimal(str(value[source])) for source, target in _RATE_FIELDS}
+    except (KeyError, InvalidOperation) as error:
+        raise DryLaunchQualificationError(
+            f"catalog pricing is malformed for {model}"
+        ) from error
+    if any(not rate.is_finite() or rate <= 0 for rate in rates.values()):
+        raise DryLaunchQualificationError(f"catalog pricing is invalid for {model}")
+    return rates
+
+
+def _catalog_limits(value: Mapping[str, object], model: str) -> tuple[int, int]:
+    limits = value.get("limit")
+    if not isinstance(limits, Mapping):
+        raise DryLaunchQualificationError(f"catalog limits are absent for {model}")
+    context_tokens = limits.get("context")
+    output_tokens = limits.get("output")
+    if any(
+        not isinstance(limit, int)
+        or isinstance(limit, bool)
+        or not 1 <= limit <= 10_000_000
+        for limit in (context_tokens, output_tokens)
+    ):
+        raise DryLaunchQualificationError(f"catalog limits are invalid for {model}")
+    return context_tokens, output_tokens
+
+
+def _catalog_tiers(cost: Mapping[str, object], model: str) -> list[dict[str, object]]:
+    raw_tiers = cost.get("tiers", [])
+    if not isinstance(raw_tiers, list) or len(raw_tiers) > 8:
+        raise DryLaunchQualificationError(
+            f"catalog pricing tiers are invalid for {model}"
+        )
+    tiers: list[dict[str, object]] = []
+    for raw_tier in raw_tiers:
+        if not isinstance(raw_tier, Mapping):
+            raise DryLaunchQualificationError(
+                f"catalog pricing tier is malformed for {model}"
+            )
+        selector = raw_tier.get("tier")
+        if (
+            not isinstance(selector, Mapping)
+            or selector.get("type") != "context"
+            or not isinstance(selector.get("size"), int)
+            or isinstance(selector.get("size"), bool)
+            or int(selector["size"]) <= 0
+        ):
+            raise DryLaunchQualificationError(
+                f"catalog pricing tier selector is invalid for {model}"
+            )
+        rates = _catalog_rates(raw_tier, model)
+        tiers.append(
+            {
+                "input_tokens_gt": int(selector["size"]),
+                **{field: format(rate, "f") for field, rate in rates.items()},
+            }
+        )
+    return tiers
+
+
+def _pricing_tiers_match(
+    manifest_tiers: object, catalog_tiers: Sequence[Mapping[str, object]]
+) -> bool:
+    if not isinstance(manifest_tiers, list) or len(manifest_tiers) != len(
+        catalog_tiers
+    ):
+        return False
+    for manifest_tier, catalog_tier in zip(manifest_tiers, catalog_tiers):
+        if not isinstance(manifest_tier, Mapping):
+            return False
+        if manifest_tier.get("input_tokens_gt") != catalog_tier["input_tokens_gt"]:
+            return False
+        if any(
+            Decimal(str(manifest_tier[field])) != Decimal(str(catalog_tier[field]))
+            for _, field in _RATE_FIELDS
+        ):
+            return False
+    return True
 
 
 def _manifest_catalog_entry(
     manifest: FunctionalV1Manifest,
     *,
+    catalog_document_sha256: str,
     provider: Mapping[str, object],
     route_status: int,
 ) -> dict[str, object]:
@@ -118,26 +218,57 @@ def _manifest_catalog_entry(
         raise DryLaunchQualificationError(
             f"model is absent from {_PROVIDER_ID}: {model}"
         )
+    protocol = parse_provider_protocol(manifest_provider["protocol"])
+    protocol_spec = provider_protocol_spec(protocol)
+    model_provider = catalog_model.get("provider")
+    catalog_package = (
+        model_provider.get("npm")
+        if isinstance(model_provider, Mapping)
+        else provider.get("npm")
+    )
+    if catalog_package != protocol_spec.ai_sdk_package:
+        raise DryLaunchQualificationError(f"provider protocol drift for {model}")
+    catalog_context_tokens, catalog_output_tokens = _catalog_limits(
+        catalog_model, model
+    )
     cost = catalog_model.get("cost")
     if not isinstance(cost, Mapping):
         raise DryLaunchQualificationError(f"catalog pricing is absent for {model}")
-    input_cost = Decimal(str(cost.get("input")))
-    output_cost = Decimal(str(cost.get("output")))
-    if input_cost != Decimal(str(pricing["input_usd_per_million_tokens"])):
-        raise DryLaunchQualificationError(f"input pricing drift for {model}")
-    if output_cost != Decimal(str(pricing["output_usd_per_million_tokens"])):
-        raise DryLaunchQualificationError(f"output pricing drift for {model}")
+    catalog_rates = _catalog_rates(cost, model)
+    if any(
+        catalog_rates[field] != Decimal(str(pricing[field]))
+        for _, field in _RATE_FIELDS
+    ):
+        raise DryLaunchQualificationError(f"base pricing drift for {model}")
+    catalog_tiers = _catalog_tiers(cost, model)
+    if not _pricing_tiers_match(pricing["tiers"], catalog_tiers):
+        raise DryLaunchQualificationError(f"tiered pricing drift for {model}")
+    if pricing["source_url"] != _CATALOG_URL:
+        raise DryLaunchQualificationError(f"pricing source drift for {model}")
+    if pricing["source_snapshot_sha256"] != catalog_document_sha256:
+        raise DryLaunchQualificationError(f"pricing snapshot drift for {model}")
     if provider.get("api") != manifest_provider["base_url"]:
         raise DryLaunchQualificationError(f"provider route drift for {model}")
-    if not 100 <= route_status <= 599:
+    if not 400 <= route_status < 500 or route_status == 404:
         raise DryLaunchQualificationError(
-            f"provider route returned invalid status for {model}"
+            f"provider route did not reject an unauthenticated probe for {model}: "
+            f"HTTP {route_status}"
         )
     _check_pricing_window(manifest)
     return {
         "base_url": manifest_provider["base_url"],
-        "catalog_input_usd_per_million_tokens": format(input_cost, "f"),
-        "catalog_output_usd_per_million_tokens": format(output_cost, "f"),
+        "catalog_cache_read_usd_per_million_tokens": format(
+            catalog_rates["cache_read_usd_per_million_tokens"], "f"
+        ),
+        "catalog_context_tokens": catalog_context_tokens,
+        "catalog_input_usd_per_million_tokens": format(
+            catalog_rates["input_usd_per_million_tokens"], "f"
+        ),
+        "catalog_output_usd_per_million_tokens": format(
+            catalog_rates["output_usd_per_million_tokens"], "f"
+        ),
+        "catalog_output_tokens": catalog_output_tokens,
+        "catalog_tiers": catalog_tiers,
         "effective_from_utc": pricing["effective_from_utc"],
         "effective_until_utc": pricing["effective_until_utc"],
         "live_route_status": route_status,
@@ -145,6 +276,8 @@ def _manifest_catalog_entry(
         "manifest_identity": str(manifest.identity),
         "model": model,
         "pricing_identity": pricing["identity"],
+        "pricing_source_snapshot_sha256": pricing["source_snapshot_sha256"],
+        "pricing_source_url": pricing["source_url"],
         "resolved_manifest_identity": str(manifest.resolved_identity),
         "source_yaml_sha256": manifest.source_yaml_sha256,
         "status": "passed",
@@ -177,25 +310,35 @@ def collect_catalog_validation(
     provider = catalog.get(_PROVIDER_ID) if isinstance(catalog, dict) else None
     if not isinstance(provider, Mapping):
         raise DryLaunchQualificationError(f"catalog provider is absent: {_PROVIDER_ID}")
+    catalog_document_sha256 = _sha256(catalog_bytes)
     statuses = {
-        str(manifest.value["provider"]["base_url"]): _live_route_status(
-            str(manifest.value["provider"]["base_url"])
+        (str(provider_value["base_url"]), str(provider_value["protocol"])): (
+            _live_route_status(
+                str(provider_value["base_url"]), str(provider_value["protocol"])
+            )
         )
         for manifest in manifests
+        for provider_value in (manifest.value["provider"],)
     }
     value = {
-        "catalog_document_sha256": _sha256(catalog_bytes),
+        "catalog_document_sha256": catalog_document_sha256,
         "manifests": [
             _manifest_catalog_entry(
                 manifest,
+                catalog_document_sha256=catalog_document_sha256,
                 provider=provider,
-                route_status=statuses[str(manifest.value["provider"]["base_url"])],
+                route_status=statuses[
+                    (
+                        str(manifest.value["provider"]["base_url"]),
+                        str(manifest.value["provider"]["protocol"]),
+                    )
+                ],
             )
             for manifest in manifests
         ],
         "provider_id": _PROVIDER_ID,
         "retrieved_at_utc": _utc_now(),
-        "schema_version": 1,
+        "schema_version": 2,
         "source_url": _CATALOG_URL,
         "status": "passed",
     }
@@ -215,7 +358,12 @@ def _load_catalog_validation(
         raise DryLaunchQualificationError(
             "catalog validation is not canonical JSON"
         ) from error
-    if not isinstance(value, dict) or value.get("status") != "passed":
+    if (
+        not isinstance(value, dict)
+        or value.get("status") != "passed"
+        or value.get("schema_version") != 2
+        or value.get("source_url") != _CATALOG_URL
+    ):
         raise DryLaunchQualificationError("catalog validation did not pass")
     records = value.get("manifests")
     if not isinstance(records, list) or len(records) != 4:
@@ -433,8 +581,8 @@ def execute_qualification(
                     "restored": None,
                     "worker_uplink": worker_uplink,
                 },
-                "schema": _SCHEMAS.envelope(_SCHEMA_NAME, 1),
-                "schema_version": 1,
+                "schema": _SCHEMAS.envelope(_SCHEMA_NAME, 2),
+                "schema_version": 2,
                 "summary": {
                     "cleanup_complete": True,
                     "invalid_infrastructure": 0,
@@ -465,7 +613,7 @@ def _validate_record(value: Mapping[str, object]) -> None:
     local_provider = value.get("local_provider")
     network = value.get("network")
     execution = value.get("execution")
-    if value.get("schema_version") != 1 or not isinstance(cells, list):
+    if value.get("schema_version") != 2 or not isinstance(cells, list):
         raise DryLaunchQualificationError("dry-launch record header is malformed")
     expected_ids = [str(cell["cell_id"]) for cell in CELL_SCHEDULE]
     if [

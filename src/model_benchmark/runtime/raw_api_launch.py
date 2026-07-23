@@ -7,6 +7,11 @@ import os
 import sys
 from pathlib import Path
 
+from model_benchmark.declarations.provider_routes import (
+    PROVIDER_PROTOCOL_ENV,
+    parse_provider_protocol,
+)
+
 from model_benchmark.runtime.raw_api import RawApiMaterializer, RawApiRequest
 
 
@@ -42,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
                 repository=Path.cwd(),
                 target_path=arguments.target_path,
                 max_content_bytes=_MAX_CONTENT_BYTES,
+                protocol=parse_provider_protocol(os.environ[PROVIDER_PROTOCOL_ENV]),
             )
         )
         delivery = {

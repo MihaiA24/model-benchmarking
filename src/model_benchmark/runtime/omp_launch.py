@@ -12,6 +12,11 @@ from pathlib import Path
 
 _UNQUALIFIED_EXIT = 78
 _PROVIDER_ID = "model-benchmark-proxy"
+_PROVIDER_PROTOCOL_ENV = "MODEL_BENCHMARK_PROVIDER_PROTOCOL"
+_PROVIDER_API = {
+    "openai-chat-completions": "openai-completions",
+    "anthropic-messages": "anthropic-messages",
+}
 _NONINTERACTIVE_UI_METHODS = frozenset(
     {"cancel", "notify", "setStatus", "setTitle", "setWidget", "set_editor_text"}
 )
@@ -25,18 +30,18 @@ def _artifact_digest(path: Path) -> str:
     return f"artifact:sha256:{digest.hexdigest()}"
 
 
-def _write_models_config(home: Path, *, base_url: str, model: str) -> None:
-    config = {
-        "providers": {
-            _PROVIDER_ID: {
-                "api": "openai-completions",
-                "apiKey": "MODEL_BENCHMARK_PROXY_TOKEN",
-                "authHeader": True,
-                "baseUrl": base_url,
-                "models": [{"id": model, "name": model}],
-            }
-        }
+def _write_models_config(
+    home: Path, *, base_url: str, model: str, protocol: str
+) -> None:
+    provider: dict[str, object] = {
+        "api": _PROVIDER_API[protocol],
+        "apiKey": "MODEL_BENCHMARK_PROXY_TOKEN",
+        "auth": "apiKey",
+        "authHeader": True,
+        "baseUrl": base_url,
+        "models": [{"id": model, "name": model}],
     }
+    config = {"providers": {_PROVIDER_ID: provider}}
     destination = home / ".omp" / "agent" / "models.yml"
     destination.parent.mkdir(parents=True, mode=0o700)
     data = json.dumps(config, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
@@ -194,11 +199,15 @@ def main(argv: list[str] | None = None) -> int:
         home = Path(os.environ["HOME"])
         base_url = os.environ["MODEL_BENCHMARK_PROXY_BASE_URL"]
         model = os.environ["MODEL_BENCHMARK_PROVIDER_MODEL"]
-        if not base_url or not model or any(
-            ord(character) < 32 for character in base_url + model
+        protocol = os.environ[_PROVIDER_PROTOCOL_ENV]
+        if (
+            protocol not in _PROVIDER_API
+            or not base_url
+            or not model
+            or any(ord(character) < 32 for character in base_url + model)
         ):
             return _UNQUALIFIED_EXIT
-        _write_models_config(home, base_url=base_url, model=model)
+        _write_models_config(home, base_url=base_url, model=model, protocol=protocol)
         evidence = home / ".model-benchmark"
         evidence.mkdir(mode=0o700)
         _write_delivery_evidence(

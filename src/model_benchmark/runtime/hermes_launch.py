@@ -13,6 +13,11 @@ from pathlib import Path
 _UNQUALIFIED_EXIT = 78
 _PROVIDER_ID = "model-benchmark-proxy"
 _PROVIDER_ARGUMENT = f"custom:{_PROVIDER_ID}"
+_PROVIDER_PROTOCOL_ENV = "MODEL_BENCHMARK_PROVIDER_PROTOCOL"
+_HERMES_TRANSPORT = {
+    "anthropic-messages": "anthropic_messages",
+    "openai-chat-completions": "chat_completions",
+}
 _CONTAINER_HOME = "/opt/data"
 _CONTAINER_WORKSPACE = "/workspace"
 
@@ -25,10 +30,11 @@ def _artifact_digest(path: Path) -> str:
     return f"artifact:sha256:{digest.hexdigest()}"
 
 
-def _provider_config(*, base_url: str, model: str) -> dict[str, object]:
+def _provider_config(*, base_url: str, model: str, protocol: str) -> dict[str, object]:
+    transport = _HERMES_TRANSPORT[protocol]
     return {
         "model": {
-            "api_mode": "chat_completions",
+            "api_mode": transport,
             "base_url": base_url,
             "default": model,
             "provider": _PROVIDER_ARGUMENT,
@@ -39,17 +45,17 @@ def _provider_config(*, base_url: str, model: str) -> dict[str, object]:
                 "default_model": model,
                 "key_env": "MODEL_BENCHMARK_PROXY_TOKEN",
                 "name": "Model Benchmark Credential Proxy",
-                "transport": "chat_completions",
+                "transport": transport,
             }
         },
     }
 
 
-def _write_config(home: Path, *, base_url: str, model: str) -> bytes:
+def _write_config(home: Path, *, base_url: str, model: str, protocol: str) -> bytes:
     destination = home / ".hermes" / "config.yaml"
     destination.parent.mkdir(mode=0o700)
     data = json.dumps(
-        _provider_config(base_url=base_url, model=model),
+        _provider_config(base_url=base_url, model=model, protocol=protocol),
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -220,13 +226,17 @@ def main(argv: list[str] | None = None) -> int:
         home = Path(os.environ["HOME"])
         base_url = os.environ["MODEL_BENCHMARK_PROXY_BASE_URL"]
         model = os.environ["MODEL_BENCHMARK_PROVIDER_MODEL"]
-        if not base_url or not model or any(
-            ord(character) < 32 for character in base_url + model
+        protocol = os.environ[_PROVIDER_PROTOCOL_ENV]
+        if (
+            protocol not in _HERMES_TRANSPORT
+            or not base_url
+            or not model
+            or any(ord(character) < 32 for character in base_url + model)
         ):
             return _UNQUALIFIED_EXIT
         evidence = home / ".model-benchmark"
         evidence.mkdir(mode=0o700)
-        config = _write_config(home, base_url=base_url, model=model)
+        config = _write_config(home, base_url=base_url, model=model, protocol=protocol)
         _write_delivery_evidence(
             evidence / "hermes-delivery.json",
             base_url=base_url,

@@ -21,12 +21,19 @@ from model_benchmark.declarations.identities import (
     IdentityError,
     TypedDigest,
 )
+from model_benchmark.declarations.provider_routes import (
+    ProviderProtocol,
+    ProviderProtocolSpec,
+    provider_protocol_spec,
+)
 
 
 PROVIDER_API_KEY_ENV = "MODEL_BENCHMARK_PROVIDER_API_KEY"
 TRIAL_PROXY_TOKEN_ENV = "MODEL_BENCHMARK_PROXY_TOKEN"
+PRICING_TIERS_ENV = "MODEL_BENCHMARK_PRICING_TIERS_JSON"
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_METADATA_BYTES = 16 * 1024 * 1024
+_CREDENTIAL_HEADERS = frozenset({"authorization", "x-api-key"})
 _HOP_BY_HOP_HEADERS = frozenset(
     {
         "connection",
@@ -54,8 +61,66 @@ _ROUTE_CONTROL_FIELDS = frozenset(
 )
 
 
+def _valid_trial_credential(
+    headers: http.client.HTTPMessage,
+    protocol_spec: ProviderProtocolSpec,
+    trial_token: str,
+) -> bool:
+    accepted = protocol_spec.accepted_trial_credentials()
+    accepted_names = {name.lower() for name, _ in accepted}
+    if any(headers.get_all(name, []) for name in _CREDENTIAL_HEADERS - accepted_names):
+        return False
+    observed: list[tuple[str, str]] = []
+    for name, prefix in accepted:
+        values = headers.get_all(name, [])
+        if len(values) > 1:
+            return False
+        if values:
+            observed.append((values[0], prefix))
+    return len(observed) == 1 and observed[0][0] == observed[0][1] + trial_token
+
+
 class CredentialProxyError(ValueError):
     """A per-Trial proxy could not be configured safely."""
+
+
+@dataclass(frozen=True)
+class PricingTier:
+    input_tokens_gt: int
+    input_usd_per_million_tokens: Decimal
+    output_usd_per_million_tokens: Decimal
+    cache_read_usd_per_million_tokens: Decimal
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.input_tokens_gt, int)
+            or isinstance(self.input_tokens_gt, bool)
+            or self.input_tokens_gt <= 0
+        ):
+            raise CredentialProxyError("pricing tier threshold must be positive")
+        _validate_pricing_rates(
+            self.input_usd_per_million_tokens,
+            self.output_usd_per_million_tokens,
+            self.cache_read_usd_per_million_tokens,
+        )
+
+
+def _validate_pricing_rates(
+    input_rate: Decimal, output_rate: Decimal, cache_read_rate: Decimal
+) -> None:
+    if any(
+        not isinstance(rate, Decimal) or not rate.is_finite() or rate <= 0
+        for rate in (input_rate, output_rate)
+    ):
+        raise CredentialProxyError("pricing rates must be finite and positive")
+    if (
+        not isinstance(cache_read_rate, Decimal)
+        or not cache_read_rate.is_finite()
+        or cache_read_rate < 0
+    ):
+        raise CredentialProxyError(
+            "cache-read pricing rate must be finite and non-negative"
+        )
 
 
 @dataclass(frozen=True)
@@ -63,6 +128,8 @@ class PricingRecord:
     identity: str
     input_usd_per_million_tokens: Decimal
     output_usd_per_million_tokens: Decimal
+    cache_read_usd_per_million_tokens: Decimal = Decimal(0)
+    tiers: tuple[PricingTier, ...] = ()
 
     def __post_init__(self) -> None:
         try:
@@ -71,22 +138,82 @@ class PricingRecord:
             raise CredentialProxyError("pricing record identity is invalid") from error
         if identity.kind is not DigestKind.PRICING_RECORD:
             raise CredentialProxyError("pricing record identity has the wrong kind")
-        for rate in (
+        _validate_pricing_rates(
             self.input_usd_per_million_tokens,
             self.output_usd_per_million_tokens,
+            self.cache_read_usd_per_million_tokens,
+        )
+        if not isinstance(self.tiers, tuple) or any(
+            not isinstance(tier, PricingTier) for tier in self.tiers
         ):
-            if not rate.is_finite() or rate <= 0:
-                raise CredentialProxyError("pricing rates must be finite and positive")
+            raise CredentialProxyError(
+                "pricing tiers must be a tuple of PricingTier values"
+            )
+        previous_threshold = 0
+        previous_rates = (
+            self.input_usd_per_million_tokens,
+            self.output_usd_per_million_tokens,
+            self.cache_read_usd_per_million_tokens,
+        )
+        for tier in self.tiers:
+            if tier.input_tokens_gt <= previous_threshold:
+                raise CredentialProxyError(
+                    "pricing tier thresholds must be strictly increasing"
+                )
+            rates = (
+                tier.input_usd_per_million_tokens,
+                tier.output_usd_per_million_tokens,
+                tier.cache_read_usd_per_million_tokens,
+            )
+            if any(rate < previous for rate, previous in zip(rates, previous_rates)):
+                raise CredentialProxyError("pricing tier rates must not decrease")
+            previous_threshold = tier.input_tokens_gt
+            previous_rates = rates
 
     def cost_usd(
-        self, input_tokens: int, output_tokens: int
-    ) -> tuple[Decimal, Decimal, Decimal]:
-        million = Decimal(1_000_000)
-        input_cost = Decimal(input_tokens) * self.input_usd_per_million_tokens / million
-        output_cost = (
-            Decimal(output_tokens) * self.output_usd_per_million_tokens / million
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_input_tokens: int = 0,
+        cache_creation_input_tokens: int = 0,
+    ) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+        counts = (
+            input_tokens,
+            output_tokens,
+            cache_read_input_tokens,
+            cache_creation_input_tokens,
         )
-        return input_cost + output_cost, input_cost, output_cost
+        if any(
+            not isinstance(count, int) or isinstance(count, bool) or count < 0
+            for count in counts
+        ):
+            raise CredentialProxyError(
+                "pricing token counts must be non-negative integers"
+            )
+        input_rate = self.input_usd_per_million_tokens
+        output_rate = self.output_usd_per_million_tokens
+        cache_read_rate = self.cache_read_usd_per_million_tokens
+        total_input_tokens = (
+            input_tokens + cache_read_input_tokens + cache_creation_input_tokens
+        )
+        for tier in self.tiers:
+            if total_input_tokens <= tier.input_tokens_gt:
+                break
+            input_rate = tier.input_usd_per_million_tokens
+            output_rate = tier.output_usd_per_million_tokens
+            cache_read_rate = tier.cache_read_usd_per_million_tokens
+        million = Decimal(1_000_000)
+        input_cost = (
+            Decimal(input_tokens + cache_creation_input_tokens) * input_rate / million
+        )
+        output_cost = Decimal(output_tokens) * output_rate / million
+        cache_read_cost = Decimal(cache_read_input_tokens) * cache_read_rate / million
+        return (
+            input_cost + output_cost + cache_read_cost,
+            input_cost,
+            output_cost,
+            cache_read_cost,
+        )
 
 
 @dataclass(frozen=True)
@@ -96,6 +223,7 @@ class CredentialProxyConfig:
     provider_tokens_per_trial: int
     stop_after_cost_usd_per_trial: Decimal
     evidence_path: Path
+    provider_protocol: ProviderProtocol = ProviderProtocol.OPENAI_CHAT_COMPLETIONS
     pricing_record: PricingRecord | None = None
     requests_per_trial: int = 64
     listen_host: str = "127.0.0.1"
@@ -105,6 +233,10 @@ class CredentialProxyConfig:
     trial_token: str = field(repr=False, default="")
 
     def __post_init__(self) -> None:
+        try:
+            protocol_spec = provider_protocol_spec(self.provider_protocol)
+        except ValueError as error:
+            raise CredentialProxyError(str(error)) from error
         parsed = urlsplit(self.upstream_base_url)
         loopback_http = parsed.scheme == "http" and parsed.hostname in {
             "127.0.0.1",
@@ -179,6 +311,10 @@ class CredentialProxyConfig:
                 raise CredentialProxyError(f"invalid provider endpoint path: {value!r}")
         if len(set(self.allowed_endpoint_paths)) != len(self.allowed_endpoint_paths):
             raise CredentialProxyError("provider endpoint paths must be unique")
+        if protocol_spec.endpoint_path not in self.allowed_endpoint_paths:
+            raise CredentialProxyError(
+                "provider protocol endpoint is absent from the route allowlist"
+            )
 
     @classmethod
     def create(
@@ -190,6 +326,7 @@ class CredentialProxyConfig:
         provider_tokens_per_trial: int,
         stop_after_cost_usd_per_trial: Decimal,
         evidence_path: Path,
+        provider_protocol: ProviderProtocol = ProviderProtocol.OPENAI_CHAT_COMPLETIONS,
         pricing_record: PricingRecord | None = None,
         requests_per_trial: int = 64,
         allowed_endpoint_paths: tuple[str, ...] = ("/chat/completions",),
@@ -200,10 +337,11 @@ class CredentialProxyConfig:
             upstream_base_url=upstream_base_url,
             model=model,
             real_api_key=real_api_key,
-            trial_token=secrets.token_urlsafe(32),
+            trial_token=secrets.token_hex(32),
             provider_tokens_per_trial=provider_tokens_per_trial,
             stop_after_cost_usd_per_trial=stop_after_cost_usd_per_trial,
             evidence_path=evidence_path,
+            provider_protocol=provider_protocol,
             pricing_record=pricing_record,
             requests_per_trial=requests_per_trial,
             listen_host=listen_host,
@@ -231,6 +369,8 @@ class _MetadataObserver:
         self.tokens: int | None = None
         self.input_tokens: int | None = None
         self.output_tokens: int | None = None
+        self.cache_read_input_tokens: int | None = None
+        self.cache_creation_input_tokens: int | None = None
         self.cost: Decimal | None = None
 
     def feed(self, chunk: bytes) -> None:
@@ -274,27 +414,47 @@ class _MetadataObserver:
             return
         if not isinstance(value, dict):
             return
-        model = value.get("model")
-        if isinstance(model, str):
-            self.model = model
-        usage = value.get("usage")
-        if isinstance(usage, dict):
-            tokens, input_tokens, output_tokens = _usage_token_counts(usage)
-            if tokens is not None:
-                self.tokens = tokens
-            if input_tokens is not None:
-                self.input_tokens = input_tokens
-            if output_tokens is not None:
-                self.output_tokens = output_tokens
-            self._observe_cost(usage)
-        self._observe_cost(value)
+        message = value.get("message")
+        for metadata in (value, message):
+            if not isinstance(metadata, dict):
+                continue
+            model = metadata.get("model")
+            if isinstance(model, str):
+                self.model = model
+            usage = metadata.get("usage")
+            if isinstance(usage, dict):
+                self._observe_usage(usage)
+            self._observe_cost(metadata)
+
+    def _observe_usage(self, usage: dict[str, object]) -> None:
+        tokens, input_tokens, output_tokens, cache_read, cache_creation = (
+            _usage_token_details(usage)
+        )
+        if input_tokens is not None:
+            self.input_tokens = input_tokens
+        if output_tokens is not None:
+            self.output_tokens = output_tokens
+        if cache_read is not None:
+            self.cache_read_input_tokens = cache_read
+        if cache_creation is not None:
+            self.cache_creation_input_tokens = cache_creation
+        if tokens is not None:
+            self.tokens = tokens
+        elif self.input_tokens is not None and self.output_tokens is not None:
+            self.tokens = (
+                self.input_tokens
+                + self.output_tokens
+                + (self.cache_read_input_tokens or 0)
+                + (self.cache_creation_input_tokens or 0)
+            )
+        self._observe_cost(usage)
 
     def _observe_cost(self, value: dict[str, object]) -> None:
         # Providers report spend as `cost_usd` or `cost` (opencode zen); one
         # response may carry several cost events (zen appends a zero-cost
         # event after [DONE]), so keep the per-response maximum.
-        for field in ("cost_usd", "cost"):
-            parsed = _parse_cost(value.get(field))
+        for name in ("cost_usd", "cost"):
+            parsed = _parse_cost(value.get(name))
             if parsed is not None and (self.cost is None or parsed > self.cost):
                 self.cost = parsed
 
@@ -314,16 +474,53 @@ def _token_count(value: object) -> int | None:
     return None
 
 
-def _usage_token_counts(
+def _usage_token_details(
     usage: dict[str, object],
-) -> tuple[int | None, int | None, int | None]:
-    input_tokens = _token_count(usage.get("prompt_tokens"))
-    if input_tokens is None:
+) -> tuple[
+    int | None,
+    int | None,
+    int | None,
+    int | None,
+    int | None,
+]:
+    prompt_tokens = _token_count(usage.get("prompt_tokens"))
+    if prompt_tokens is not None:
+        details = usage.get("prompt_tokens_details")
+        cached_tokens = (
+            _token_count(details.get("cached_tokens"))
+            if isinstance(details, dict)
+            else None
+        )
+        cache_read = cached_tokens or 0
+        if cache_read > prompt_tokens:
+            cache_read = 0
+        input_tokens = prompt_tokens - cache_read
+        cache_creation = 0
+    else:
         input_tokens = _token_count(usage.get("input_tokens"))
+        if input_tokens is None:
+            cache_read = None
+            cache_creation = None
+        else:
+            cache_read = _token_count(usage.get("cache_read_input_tokens")) or 0
+            cache_creation = _token_count(usage.get("cache_creation_input_tokens")) or 0
     output_tokens = _token_count(usage.get("completion_tokens"))
     if output_tokens is None:
         output_tokens = _token_count(usage.get("output_tokens"))
-    return _token_count(usage.get("total_tokens")), input_tokens, output_tokens
+    return (
+        _token_count(usage.get("total_tokens")),
+        input_tokens,
+        output_tokens,
+        cache_read,
+        cache_creation,
+    )
+
+
+def _usage_token_counts(
+    usage: dict[str, object],
+) -> tuple[int | None, int | None, int | None]:
+    total, input_tokens, output_tokens, _, _ = _usage_token_details(usage)
+    return total, input_tokens, output_tokens
 
 
 def _parse_cost(value: object) -> Decimal | None:
@@ -342,13 +539,32 @@ def _canonical_cost(value: Decimal) -> str:
 
 def _accounted_cost(
     config: CredentialProxyConfig, observer: _MetadataObserver
-) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+) -> tuple[Decimal | None, Decimal | None, Decimal | None, Decimal | None]:
     pricing = config.pricing_record
     if pricing is None:
-        return observer.cost, None, None
+        return observer.cost, None, None, None
     if observer.input_tokens is None or observer.output_tokens is None:
-        return None, None, None
-    return pricing.cost_usd(observer.input_tokens, observer.output_tokens)
+        return None, None, None, None
+    return pricing.cost_usd(
+        observer.input_tokens,
+        observer.output_tokens,
+        observer.cache_read_input_tokens or 0,
+        observer.cache_creation_input_tokens or 0,
+    )
+
+
+def _cost_components(
+    input_cost: Decimal | None,
+    output_cost: Decimal | None,
+    cache_read_cost: Decimal | None,
+) -> dict[str, str] | None:
+    if input_cost is None or output_cost is None or cache_read_cost is None:
+        return None
+    components = {"input": _canonical_cost(input_cost)}
+    if cache_read_cost:
+        components["cache_read"] = _canonical_cost(cache_read_cost)
+    components["output"] = _canonical_cost(output_cost)
+    return components
 
 
 class _ProxyState:
@@ -556,9 +772,10 @@ class CredentialProxy:
                     return "undeclared-provider-path", 404
                 if any(name.lower() in _ROUTE_CONTROL_HEADERS for name in self.headers):
                     return "route-control-forbidden", 400
-                if self.headers.get_all("Authorization", []) != [
-                    f"Bearer {state.config.trial_token}"
-                ]:
+                protocol_spec = provider_protocol_spec(state.config.provider_protocol)
+                if not _valid_trial_credential(
+                    self.headers, protocol_spec, state.config.trial_token
+                ):
                     return "proxy-authentication-failed", 401
                 if len(self.headers.get_all("Content-Length", [])) != 1:
                     return "invalid-request-length", 400
@@ -612,14 +829,23 @@ class CredentialProxy:
             ) -> None:
                 upstream = urlsplit(state.config.upstream_base_url)
                 connection = _connection(upstream)
+                protocol_spec = provider_protocol_spec(state.config.provider_protocol)
+                reserved_headers = {
+                    "authorization",
+                    "x-api-key",
+                    "host",
+                    "content-length",
+                    *(name.lower() for name in protocol_spec.required_headers),
+                }
                 headers = {
                     name: value
                     for name, value in self.headers.items()
-                    if name.lower()
-                    not in _HOP_BY_HOP_HEADERS
-                    | {"authorization", "host", "content-length"}
+                    if name.lower() not in _HOP_BY_HOP_HEADERS | reserved_headers
                 }
-                headers["Authorization"] = f"Bearer {state.config.real_api_key}"
+                headers[protocol_spec.credential_header] = (
+                    f"{protocol_spec.credential_prefix}{state.config.real_api_key}"
+                )
+                headers.update(protocol_spec.required_headers)
                 headers["Content-Length"] = str(len(body))
                 # Cloudflare's WAF tarpits requests with a missing or
                 # python-default User-Agent (403 error 1010, issue #99);
@@ -692,9 +918,12 @@ class CredentialProxy:
                 budget_events: list[str] = []
                 token_overshoot = 0
                 cost_overshoot = Decimal(0)
-                accounted_cost, input_cost, output_cost = _accounted_cost(
-                    state.config, observer
-                )
+                (
+                    accounted_cost,
+                    input_cost,
+                    output_cost,
+                    cache_read_cost,
+                ) = _accounted_cost(state.config, observer)
                 model_mismatch = (
                     observer.model is not None and observer.model != state.config.model
                 )
@@ -730,17 +959,16 @@ class CredentialProxy:
                 pricing = state.config.pricing_record
                 event: dict[str, object] = {
                     "budget_events": budget_events,
-                    "cost_components_usd": (
-                        {
-                            "input": _canonical_cost(input_cost),
-                            "output": _canonical_cost(output_cost),
-                        }
-                        if input_cost is not None and output_cost is not None
-                        else None
+                    "cost_components_usd": _cost_components(
+                        input_cost, output_cost, cache_read_cost
                     ),
                     "cost_overshoot_usd": _canonical_cost(cost_overshoot),
                     "duration_ns": time.monotonic_ns() - started_ns,
                     "event": "provider-response",
+                    "cache_creation_input_tokens": (
+                        observer.cache_creation_input_tokens
+                    ),
+                    "cache_read_input_tokens": observer.cache_read_input_tokens,
                     "input_tokens": observer.input_tokens,
                     "output_tokens": observer.output_tokens,
                     "pricing_record_identity": pricing.identity if pricing else None,

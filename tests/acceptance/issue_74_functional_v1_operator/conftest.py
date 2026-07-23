@@ -19,20 +19,22 @@ _HEX = "0" * 64
 
 def _pricing_record() -> dict[str, Any]:
     value: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 3,
+        "billing_basis": "opencode-go-catalog",
         "currency": "USD",
         "unit": "usd-per-million-tokens",
         "input_usd_per_million_tokens": "1.00",
         "output_usd_per_million_tokens": "2.00",
+        "cache_read_usd_per_million_tokens": "0.10",
+        "tiers": [],
         "effective_from_utc": "2026-01-01T00:00:00Z",
         "effective_until_utc": "2027-01-01T00:00:00Z",
         "source_url": "https://provider.example/pricing",
+        "source_snapshot_sha256": f"sha256:{_HEX}",
         "retrieved_at_utc": "2026-01-01T00:00:00Z",
     }
     value["identity"] = str(
-        TypedDigest.from_bytes(
-            DigestKind.PRICING_RECORD, canonical_json_bytes(value)
-        )
+        TypedDigest.from_bytes(DigestKind.PRICING_RECORD, canonical_json_bytes(value))
     )
     return value
 
@@ -170,6 +172,7 @@ def _manifest_value(root: Path) -> dict[str, Any]:
         "provider": {
             "base_url": "https://provider.example/v1",
             "model": "exact/model-slug",
+            "protocol": "openai-chat-completions",
             "pricing": _pricing_record(),
         },
         "limits": {

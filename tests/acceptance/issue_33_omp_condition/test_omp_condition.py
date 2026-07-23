@@ -12,14 +12,21 @@ from typing import Any
 import pytest
 
 import model_benchmark.runtime.omp as omp_runtime
-from model_benchmark.declarations.canonical import canonical_json_bytes, load_canonical_json
+import model_benchmark.runtime.omp_launch as omp_launch
+from model_benchmark.declarations.canonical import (
+    canonical_json_bytes,
+    load_canonical_json,
+)
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
 from model_benchmark.runtime.conditions import (
     ConditionAdapterError,
     ConditionRunRequest,
     ConditionRunner,
 )
-from model_benchmark.runtime.credential_proxy import CredentialProxy, CredentialProxyConfig
+from model_benchmark.runtime.credential_proxy import (
+    CredentialProxy,
+    CredentialProxyConfig,
+)
 from model_benchmark.runtime.omp import (
     OMP_ARTIFACT_BYTES,
     OMP_ARTIFACT_IDENTITY,
@@ -70,8 +77,9 @@ def test_condition_lock_seals_the_exact_stock_omp_profile(
     assert configuration["models_yml"] == {
         "providers": {
             "model-benchmark-proxy": {
-                "api": "openai-completions",
+                "api": "manifest-provider-api",
                 "apiKey": "MODEL_BENCHMARK_PROXY_TOKEN",
+                "auth": "apiKey",
                 "authHeader": True,
                 "baseUrl": "manifest-provider-base-url",
                 "models": [
@@ -230,9 +238,7 @@ def _install_fake_condition(
     artifact: Path,
 ) -> None:
     artifact_data = artifact.read_bytes()
-    artifact_identity = str(
-        TypedDigest.from_bytes(DigestKind.ARTIFACT, artifact_data)
-    )
+    artifact_identity = str(TypedDigest.from_bytes(DigestKind.ARTIFACT, artifact_data))
     condition_identity = TypedDigest.from_bytes(
         DigestKind.FUNCTIONAL_V1_CONDITION,
         canonical_json_bytes({"artifact": artifact_identity}),
@@ -279,7 +285,9 @@ def _run_trial(
             evidence_path=evidence_path,
         )
     )
-    artifact_identity = str(TypedDigest.from_bytes(DigestKind.ARTIFACT, artifact.read_bytes()))
+    artifact_identity = str(
+        TypedDigest.from_bytes(DigestKind.ARTIFACT, artifact.read_bytes())
+    )
     provisioning = OmpProvisioning(
         condition_identity=str(omp_runtime.load_omp_condition_lock()[2]),
         artifact_path=artifact,
@@ -333,7 +341,8 @@ def test_fresh_rpc_trials_preserve_stock_transport_and_complete_evidence(
             result,
             evidence_path,
             expected_brief_sha256="sha256:" + hashlib.sha256(_BRIEF).hexdigest(),
-            observed_brief_sha256="sha256:" + hashlib.sha256(observed_brief).hexdigest(),
+            observed_brief_sha256="sha256:"
+            + hashlib.sha256(observed_brief).hexdigest(),
             workspace_verified=(
                 observation["workspace"] == str(trial_root / "repository")
             ),
@@ -342,8 +351,7 @@ def test_fresh_rpc_trials_preserve_stock_transport_and_complete_evidence(
 
         delivery = json.loads(
             (
-                result.capture_root
-                / "native/home/.model-benchmark/omp-delivery.json"
+                result.capture_root / "native/home/.model-benchmark/omp-delivery.json"
             ).read_text(encoding="utf-8")
         )
         assert qualification.qualified is True
@@ -423,3 +431,30 @@ def test_unsupported_rpc_behavior_is_unqualified_without_fallback(
         "unsupported-omp-unqualified",
         {"fallback_attempts": 0, "reason_code": qualification.reason_code},
     )
+
+
+@pytest.mark.parametrize(
+    ("protocol", "api"),
+    [
+        ("openai-chat-completions", "openai-completions"),
+        ("anthropic-messages", "anthropic-messages"),
+    ],
+)
+def test_launch_config_selects_the_declared_provider_protocol(
+    tmp_path: Path,
+    protocol: str,
+    api: str,
+) -> None:
+    omp_launch._write_models_config(
+        tmp_path,
+        base_url="http://credential-proxy:8080",
+        model=_MODEL,
+        protocol=protocol,
+    )
+
+    value = json.loads(
+        (tmp_path / ".omp" / "agent" / "models.yml").read_text(encoding="utf-8")
+    )
+    provider = value["providers"]["model-benchmark-proxy"]
+    assert provider["api"] == api
+    assert provider["baseUrl"] == "http://credential-proxy:8080"

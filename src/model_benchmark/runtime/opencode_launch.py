@@ -12,6 +12,11 @@ from pathlib import Path
 
 _UNQUALIFIED_EXIT = 78
 _PROVIDER_ID = "model-benchmark-proxy"
+_PROVIDER_PROTOCOL_ENV = "MODEL_BENCHMARK_PROVIDER_PROTOCOL"
+_PROVIDER_NPM = {
+    "anthropic-messages": "@ai-sdk/anthropic",
+    "openai-chat-completions": "@ai-sdk/openai-compatible",
+}
 
 
 def _artifact_digest(path: Path) -> str:
@@ -22,7 +27,7 @@ def _artifact_digest(path: Path) -> str:
     return f"artifact:sha256:{digest.hexdigest()}"
 
 
-def _provider_config(*, base_url: str, model: str) -> dict[str, object]:
+def _provider_config(*, base_url: str, model: str, protocol: str) -> dict[str, object]:
     return {
         "autoupdate": False,
         "mcp": {},
@@ -31,7 +36,7 @@ def _provider_config(*, base_url: str, model: str) -> dict[str, object]:
             _PROVIDER_ID: {
                 "models": {model: {"name": model}},
                 "name": "Model Benchmark Credential Proxy",
-                "npm": "@ai-sdk/openai-compatible",
+                "npm": _PROVIDER_NPM[protocol],
                 "options": {
                     "apiKey": "{env:MODEL_BENCHMARK_PROXY_TOKEN}",
                     "baseURL": base_url,
@@ -42,12 +47,12 @@ def _provider_config(*, base_url: str, model: str) -> dict[str, object]:
     }
 
 
-def _write_config(home: Path, *, base_url: str, model: str) -> Path:
+def _write_config(home: Path, *, base_url: str, model: str, protocol: str) -> Path:
     destination = home / ".model-benchmark" / "opencode.json"
     destination.parent.mkdir(mode=0o700)
     destination.write_bytes(
         json.dumps(
-            _provider_config(base_url=base_url, model=model),
+            _provider_config(base_url=base_url, model=model, protocol=protocol),
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
@@ -169,12 +174,18 @@ def main(argv: list[str] | None = None) -> int:
         home = Path(os.environ["HOME"])
         base_url = os.environ["MODEL_BENCHMARK_PROXY_BASE_URL"]
         model = os.environ["MODEL_BENCHMARK_PROVIDER_MODEL"]
-        if not base_url or not model or any(
-            ord(character) < 32 for character in base_url + model
+        protocol = os.environ[_PROVIDER_PROTOCOL_ENV]
+        if (
+            protocol not in _PROVIDER_NPM
+            or not base_url
+            or not model
+            or any(ord(character) < 32 for character in base_url + model)
         ):
             return _UNQUALIFIED_EXIT
         evidence = home / ".model-benchmark"
-        config_path = _write_config(home, base_url=base_url, model=model)
+        config_path = _write_config(
+            home, base_url=base_url, model=model, protocol=protocol
+        )
         exit_code = _run_opencode(
             arguments.opencode,
             brief,

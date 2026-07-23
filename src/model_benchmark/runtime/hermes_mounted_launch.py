@@ -12,6 +12,11 @@ from pathlib import Path
 _UNQUALIFIED_EXIT = 78
 _PROVIDER_ID = "model-benchmark-proxy"
 _PROVIDER_ARGUMENT = f"custom:{_PROVIDER_ID}"
+_PROVIDER_PROTOCOL_ENV = "MODEL_BENCHMARK_PROVIDER_PROTOCOL"
+_HERMES_TRANSPORT = {
+    "anthropic-messages": "anthropic_messages",
+    "openai-chat-completions": "chat_completions",
+}
 _STOCK_ELF_INTERPRETER = "/lib64/ld-linux-x86-64.so.2"
 _STOCK_PYTHON_PATH = "/usr/bin/python3.13"
 _STOCK_PYTHON_IDENTITY = (
@@ -35,10 +40,11 @@ def _digest(path: Path) -> str:
     return f"artifact:sha256:{digest.hexdigest()}"
 
 
-def _config(base_url: str, model: str) -> dict[str, object]:
+def _config(base_url: str, model: str, protocol: str) -> dict[str, object]:
+    transport = _HERMES_TRANSPORT[protocol]
     return {
         "model": {
-            "api_mode": "chat_completions",
+            "api_mode": transport,
             "base_url": base_url,
             "default": model,
             "provider": _PROVIDER_ARGUMENT,
@@ -49,7 +55,7 @@ def _config(base_url: str, model: str) -> dict[str, object]:
                 "default_model": model,
                 "key_env": "MODEL_BENCHMARK_PROXY_TOKEN",
                 "name": "Model Benchmark Credential Proxy",
-                "transport": "chat_completions",
+                "transport": transport,
             }
         },
     }
@@ -135,6 +141,7 @@ def _materialize_relocated_python(
         raise
     return python_path, (python_path, loader_path)
 
+
 def _valid_usage(path: Path, model: str) -> bool:
     try:
         value = json.loads(path.read_text(encoding="utf-8", errors="strict"))
@@ -173,13 +180,14 @@ def main(argv: list[str] | None = None) -> int:
         home = Path(os.environ["HOME"])
         base_url = os.environ["MODEL_BENCHMARK_PROXY_BASE_URL"]
         model = os.environ["MODEL_BENCHMARK_PROVIDER_MODEL"]
+        protocol = os.environ[_PROVIDER_PROTOCOL_ENV]
         evidence = home / ".model-benchmark"
         evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
         python, relocated_paths = _materialize_relocated_python(mounted_root)
         hermes_home = home / ".hermes"
         hermes_home.mkdir(mode=0o700, parents=True, exist_ok=True)
         config = json.dumps(
-            _config(base_url, model),
+            _config(base_url, model, protocol),
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
@@ -239,6 +247,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
             ),
         }
+        environment.pop("ANTHROPIC_API_KEY", None)
+        environment.pop("ANTHROPIC_AUTH_TOKEN", None)
         completed = subprocess.run(
             [
                 str(python),

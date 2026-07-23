@@ -125,6 +125,20 @@ def _reseal_pricing(pricing: dict[str, object]) -> None:
         ("unit", "usd-per-token"),
         ("currency", "EUR"),
         ("schema_version", 2),
+        ("billing_basis", "provider-marketing-page"),
+        ("cache_read_usd_per_million_tokens", "0"),
+        ("source_snapshot_sha256", "sha256:short"),
+        (
+            "tiers",
+            [
+                {
+                    "input_tokens_gt": 512_000,
+                    "input_usd_per_million_tokens": "0.50",
+                    "output_usd_per_million_tokens": "2.00",
+                    "cache_read_usd_per_million_tokens": "0.10",
+                }
+            ],
+        ),
     ],
 )
 def test_manifest_rejects_invalid_pricing_fields_before_identity(
@@ -170,6 +184,7 @@ def test_manifest_rejects_pricing_with_missing_field(
         FunctionalV1Manifest.load(path)
 
     assert captured.value.reason_code == "invalid-manifest-schema"
+
 
 @pytest.mark.parametrize(
     ("section", "field", "value", "reason_code"),

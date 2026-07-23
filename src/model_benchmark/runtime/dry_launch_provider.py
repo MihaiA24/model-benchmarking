@@ -7,6 +7,11 @@ from types import TracebackType
 from typing import Self
 from urllib.parse import urlsplit
 
+from model_benchmark.declarations.provider_routes import (
+    ProviderProtocol,
+    provider_protocol_spec,
+)
+
 
 DRY_LAUNCH_ENV = "MODEL_BENCHMARK_DRY_LAUNCH"
 DRY_LAUNCH_API_KEY = "functional-v1-dry-launch-local-provider"
@@ -20,9 +25,15 @@ class DryLaunchProviderError(ValueError):
 
 
 class DryLaunchProvider:
-    """Loopback-only OpenAI-compatible responder for no-spend qualification."""
+    """Loopback-only provider-protocol responder for no-spend qualification."""
 
-    def __init__(self, *, model: str, route_prefix: str) -> None:
+    def __init__(
+        self,
+        *,
+        model: str,
+        route_prefix: str,
+        protocol: ProviderProtocol = ProviderProtocol.OPENAI_CHAT_COMPLETIONS,
+    ) -> None:
         if not model or any(ord(character) < 32 for character in model):
             raise DryLaunchProviderError("model must be non-empty control-free text")
         if route_prefix in {"", "/"}:
@@ -32,6 +43,8 @@ class DryLaunchProvider:
                 "route prefix must be absolute without a trailing slash"
             )
         self.model = model
+        self.protocol = protocol
+        self.protocol_spec = provider_protocol_spec(protocol)
         self.route_prefix = route_prefix
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -55,12 +68,20 @@ class DryLaunchProvider:
                 return
 
             def do_POST(self) -> None:
-                expected_path = provider.route_prefix + "/chat/completions"
+                spec = provider.protocol_spec
+                expected_path = provider.route_prefix + spec.endpoint_path
                 if urlsplit(self.path).path != expected_path:
                     self._error(404, "undeclared-provider-path")
                     return
-                if self.headers.get("Authorization") != f"Bearer {DRY_LAUNCH_API_KEY}":
+                expected_credential = spec.credential_prefix + DRY_LAUNCH_API_KEY
+                if self.headers.get(spec.credential_header) != expected_credential:
                     self._error(401, "provider-authentication-failed")
+                    return
+                if any(
+                    self.headers.get(name) != value
+                    for name, value in spec.required_headers.items()
+                ):
+                    self._error(400, "provider-header-mismatch")
                     return
                 try:
                     length = int(self.headers.get("Content-Length", ""))
@@ -74,12 +95,21 @@ class DryLaunchProvider:
                 ):
                     self._error(400, "model-mismatch")
                     return
+                anthropic = provider.protocol is ProviderProtocol.ANTHROPIC_MESSAGES
                 if request.get("stream") is True:
                     content_type = "text/event-stream"
-                    body = _stream_response(provider.model)
+                    body = (
+                        _anthropic_stream_response(provider.model)
+                        if anthropic
+                        else _stream_response(provider.model)
+                    )
                 else:
                     content_type = "application/json"
-                    body = _json_response(provider.model)
+                    body = (
+                        _anthropic_json_response(provider.model)
+                        if anthropic
+                        else _json_response(provider.model)
+                    )
                 self.send_response(200)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(body)))
@@ -134,6 +164,85 @@ class DryLaunchProvider:
 
 def _usage() -> dict[str, int]:
     return {"completion_tokens": 1, "prompt_tokens": 1, "total_tokens": 2}
+
+
+def _anthropic_usage(*, output_tokens: int) -> dict[str, int]:
+    return {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 1,
+        "output_tokens": output_tokens,
+    }
+
+
+def _anthropic_json_response(model: str) -> bytes:
+    value = {
+        "content": [{"text": DRY_LAUNCH_RESPONSE, "type": "text"}],
+        "id": "msg_functional_v1_dry_launch",
+        "model": model,
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "stop_sequence": None,
+        "type": "message",
+        "usage": _anthropic_usage(output_tokens=1),
+    }
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _anthropic_stream_response(model: str) -> bytes:
+    events: list[tuple[str, dict[str, object]]] = [
+        (
+            "message_start",
+            {
+                "message": {
+                    "content": [],
+                    "id": "msg_functional_v1_dry_launch",
+                    "model": model,
+                    "role": "assistant",
+                    "stop_reason": None,
+                    "stop_sequence": None,
+                    "type": "message",
+                    "usage": _anthropic_usage(output_tokens=0),
+                },
+                "type": "message_start",
+            },
+        ),
+        (
+            "content_block_start",
+            {
+                "content_block": {"text": "", "type": "text"},
+                "index": 0,
+                "type": "content_block_start",
+            },
+        ),
+        (
+            "content_block_delta",
+            {
+                "delta": {"text": DRY_LAUNCH_RESPONSE, "type": "text_delta"},
+                "index": 0,
+                "type": "content_block_delta",
+            },
+        ),
+        (
+            "content_block_stop",
+            {"index": 0, "type": "content_block_stop"},
+        ),
+        (
+            "message_delta",
+            {
+                "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                "type": "message_delta",
+                "usage": {"output_tokens": 1},
+            },
+        ),
+        ("message_stop", {"type": "message_stop"}),
+    ]
+    payloads = [
+        f"event: {event}\ndata: "
+        + json.dumps(value, sort_keys=True, separators=(",", ":"))
+        for event, value in events
+    ]
+    return ("\n\n".join(payloads) + "\n\n").encode("utf-8")
 
 
 def _json_response(model: str) -> bytes:

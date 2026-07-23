@@ -18,28 +18,43 @@ def test_published_minimax_m3_manifest_loads_with_sealed_projection() -> None:
 
     assert str(manifest.identity) == (
         "functional-v1-manifest:sha256:"
-        "2453dbdad9a5b5203fbe99af70423fe085d2cac0bfdcd88d097774d8f64ba8f2"
+        "f2a2ce8cd5761343c6a868d0abf39fe89abc93792ba3d216f5571e50f4e06353"
     )
     assert str(manifest.resolved_identity) == (
         "resolved-v1-manifest:sha256:"
-        "3cb8daff85d6e236af4176f91c91a3d26079678bbea0cddc91cd06efd08c83fa"
+        "0682341dbf53f0eccd7c0e8791ac497c139cdf986715a03933b4cefe98c2247e"
     )
     assert manifest.identity_value["provider"] == {
         "base_url": "https://opencode.ai/zen/go/v1",
+        "protocol": "anthropic-messages",
         "model": "minimax-m3",
         "pricing": {
-            "schema_version": 1,
+            "schema_version": 3,
+            "billing_basis": "opencode-go-catalog",
             "currency": "USD",
             "unit": "usd-per-million-tokens",
             "input_usd_per_million_tokens": "0.30",
             "output_usd_per_million_tokens": "1.20",
+            "cache_read_usd_per_million_tokens": "0.06",
+            "tiers": [
+                {
+                    "input_tokens_gt": 512_000,
+                    "input_usd_per_million_tokens": "0.60",
+                    "output_usd_per_million_tokens": "2.40",
+                    "cache_read_usd_per_million_tokens": "0.12",
+                }
+            ],
             "effective_from_utc": "2026-07-22T00:00:00Z",
             "effective_until_utc": "2026-09-01T00:00:00Z",
-            "source_url": "https://models.dev/providers/opencode-go",
-            "retrieved_at_utc": "2026-07-22T23:01:53Z",
+            "source_url": "https://models.dev/api.json",
+            "source_snapshot_sha256": (
+                "sha256:"
+                "0fde178efd91764a20ae11948d9c26cdaad216a76efcd48590904962b77bb48e"
+            ),
+            "retrieved_at_utc": "2026-07-23T07:08:24Z",
             "identity": (
                 "pricing-record:sha256:"
-                "5af2bdabfcc0b7e2c7b26da13b78e90dfa852b252d719e0c92ae12542f0c4d83"
+                "74f5cec73deffbe44e4a6b5ead7c742dd47b73df05cbc7a7ce8ba9e1f179f8b9"
             ),
         },
     }

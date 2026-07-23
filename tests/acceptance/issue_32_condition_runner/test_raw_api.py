@@ -7,7 +7,15 @@ from typing import Any
 
 import pytest
 
-from model_benchmark.runtime.credential_proxy import CredentialProxy, CredentialProxyConfig
+from model_benchmark.declarations.provider_routes import (
+    ProviderProtocol,
+    provider_protocol_spec,
+)
+
+from model_benchmark.runtime.credential_proxy import (
+    CredentialProxy,
+    CredentialProxyConfig,
+)
 from model_benchmark.runtime.raw_api import (
     RawApiError,
     RawApiMaterializer,
@@ -21,13 +29,20 @@ _TRIAL_TOKEN = "opaque-trial-token"
 _TARGET = "src/answer.py"
 
 
-def _proxy(recording_provider: Any, tmp_path: Path) -> CredentialProxy:
+def _proxy(
+    recording_provider: Any,
+    tmp_path: Path,
+    *,
+    protocol: ProviderProtocol = ProviderProtocol.OPENAI_CHAT_COMPLETIONS,
+) -> CredentialProxy:
     return CredentialProxy(
         CredentialProxyConfig(
             upstream_base_url=recording_provider.base_url,
             model=_MODEL,
             real_api_key=_REAL_KEY,
             trial_token=_TRIAL_TOKEN,
+            provider_protocol=protocol,
+            allowed_endpoint_paths=(provider_protocol_spec(protocol).endpoint_path,),
             provider_tokens_per_trial=100_000,
             stop_after_cost_usd_per_trial=Decimal("5.00"),
             evidence_path=tmp_path / "proxy-events.jsonl",
@@ -35,7 +50,9 @@ def _proxy(recording_provider: Any, tmp_path: Path) -> CredentialProxy:
     )
 
 
-def _provider_envelope(content: str | None, *, refusal: str | None = None) -> dict[str, object]:
+def _provider_envelope(
+    content: str | None, *, refusal: str | None = None
+) -> dict[str, object]:
     return {
         "choices": [
             {
@@ -74,12 +91,21 @@ def _sse_stream(
             events.append(
                 {
                     "choices": [
-                        {"delta": {"content": content[start : start + chunk_size]}, "index": 0}
+                        {
+                            "delta": {"content": content[start : start + chunk_size]},
+                            "index": 0,
+                        }
                     ],
                     "model": _MODEL,
                 }
             )
-    events.append({"choices": [], "model": _MODEL, "usage": {"cost_usd": "0.10", "total_tokens": 23}})
+    events.append(
+        {
+            "choices": [],
+            "model": _MODEL,
+            "usage": {"cost_usd": "0.10", "total_tokens": 23},
+        }
+    )
     body = b"".join(
         b"data: " + json.dumps(event, separators=(",", ":")).encode() + b"\n\n"
         for event in events
@@ -89,11 +115,95 @@ def _sse_stream(
     return body
 
 
-def _enqueue_stream(provider: Any, content: str | None, *, refusal: str | None = None) -> None:
-    provider.enqueue_bytes(_sse_stream(content, refusal=refusal), content_type="text/event-stream")
+def _anthropic_sse_stream(content: str, *, chunk_size: int = 7) -> bytes:
+    events: list[tuple[str, dict[str, object]]] = [
+        (
+            "message_start",
+            {
+                "message": {
+                    "content": [],
+                    "id": "msg_test",
+                    "model": _MODEL,
+                    "role": "assistant",
+                    "stop_reason": None,
+                    "stop_sequence": None,
+                    "type": "message",
+                    "usage": {
+                        "cache_creation_input_tokens": 0,
+                        "cache_read_input_tokens": 0,
+                        "input_tokens": 11,
+                        "output_tokens": 0,
+                    },
+                },
+                "type": "message_start",
+            },
+        ),
+        (
+            "content_block_start",
+            {
+                "content_block": {"text": "", "type": "text"},
+                "index": 0,
+                "type": "content_block_start",
+            },
+        ),
+    ]
+    events.extend(
+        (
+            "content_block_delta",
+            {
+                "delta": {
+                    "text": content[start : start + chunk_size],
+                    "type": "text_delta",
+                },
+                "index": 0,
+                "type": "content_block_delta",
+            },
+        )
+        for start in range(0, len(content), chunk_size)
+    )
+    events.extend(
+        [
+            (
+                "content_block_stop",
+                {"index": 0, "type": "content_block_stop"},
+            ),
+            (
+                "message_delta",
+                {
+                    "delta": {
+                        "stop_reason": "end_turn",
+                        "stop_sequence": None,
+                    },
+                    "type": "message_delta",
+                    "usage": {"output_tokens": 5},
+                },
+            ),
+            ("message_stop", {"type": "message_stop"}),
+        ]
+    )
+    return b"".join(
+        f"event: {event}\ndata: ".encode()
+        + json.dumps(value, separators=(",", ":")).encode()
+        + b"\n\n"
+        for event, value in events
+    )
 
 
-def _request(proxy: CredentialProxy, repository: Path, *, max_bytes: int = 128) -> RawApiRequest:
+def _enqueue_stream(
+    provider: Any, content: str | None, *, refusal: str | None = None
+) -> None:
+    provider.enqueue_bytes(
+        _sse_stream(content, refusal=refusal), content_type="text/event-stream"
+    )
+
+
+def _request(
+    proxy: CredentialProxy,
+    repository: Path,
+    *,
+    max_bytes: int = 128,
+    protocol: ProviderProtocol = ProviderProtocol.OPENAI_CHAT_COMPLETIONS,
+) -> RawApiRequest:
     return RawApiRequest(
         proxy_base_url=proxy.base_url,
         proxy_token=_TRIAL_TOKEN,
@@ -102,6 +212,7 @@ def _request(proxy: CredentialProxy, repository: Path, *, max_bytes: int = 128) 
         repository=repository,
         target_path=_TARGET,
         max_content_bytes=max_bytes,
+        protocol=protocol,
     )
 
 
@@ -133,7 +244,11 @@ def test_raw_api_makes_one_request_and_atomically_changes_only_locked_file(
     assert result.final_repository.repository == repository
     assert (repository / _TARGET).read_text(encoding="utf-8") == "print('after')\n"
     assert (repository / "unchanged.txt").read_text(encoding="utf-8") == "stable\n"
-    assert sorted(path.relative_to(repository).as_posix() for path in repository.rglob("*") if path.is_file()) == [
+    assert sorted(
+        path.relative_to(repository).as_posix()
+        for path in repository.rglob("*")
+        if path.is_file()
+    ) == [
         "src/answer.py",
         "unchanged.txt",
     ]
@@ -162,6 +277,43 @@ def test_raw_api_makes_one_request_and_atomically_changes_only_locked_file(
     assert provider_request.headers["user-agent"] == "model-benchmark-raw-api/1"
 
 
+def test_raw_api_uses_anthropic_messages_route_and_envelope(
+    recording_provider: Any,
+    tmp_path: Path,
+) -> None:
+    replacement = {"content": "print('anthropic')\n", "path": _TARGET}
+    recording_provider.enqueue_bytes(
+        _anthropic_sse_stream(json.dumps(replacement)),
+        content_type="text/event-stream",
+    )
+    repository = _repository(tmp_path)
+    protocol = ProviderProtocol.ANTHROPIC_MESSAGES
+
+    with _proxy(recording_provider, tmp_path, protocol=protocol) as proxy:
+        result = RawApiMaterializer().materialize(
+            _request(proxy, repository, protocol=protocol)
+        )
+
+    assert result.reason_code == "materialized"
+    assert (repository / _TARGET).read_text(encoding="utf-8") == (
+        "print('anthropic')\n"
+    )
+    assert len(recording_provider.requests) == 1
+    provider_request = recording_provider.requests[0]
+    assert provider_request.path.endswith("/messages")
+    assert provider_request.headers["x-api-key"] == _REAL_KEY
+    assert provider_request.headers["anthropic-version"] == "2023-06-01"
+    request_value = json.loads(provider_request.body)
+    assert request_value["system"].startswith(
+        "The final user message contains the exact current target file"
+    )
+    assert request_value["max_tokens"] == 131_072
+    assert [message["role"] for message in request_value["messages"]] == [
+        "user",
+        "user",
+    ]
+
+
 def test_raw_api_rejects_non_utf8_target_before_provider_request(
     recording_provider: Any,
     tmp_path: Path,
@@ -182,11 +334,31 @@ def test_raw_api_rejects_non_utf8_target_before_provider_request(
     ("content", "reason_code", "max_bytes"),
     [
         ("not json", "invalid-provider-json", 128),
-        (json.dumps({"content": "after", "extra": True, "path": _TARGET}), "invalid-materialization-envelope", 128),
-        (json.dumps({"content": "after", "path": "src/wrong.py"}), "response-path-mismatch", 128),
-        (json.dumps({"content": "x" * 129, "path": _TARGET}), "content-size-limit", 128),
-        ('{"path":"src/answer.py","content":"a","path":"src/answer.py"}', "duplicate-json-field", 128),
-        (json.dumps({"content": "\ud800", "path": _TARGET}), "invalid-content-encoding", 128),
+        (
+            json.dumps({"content": "after", "extra": True, "path": _TARGET}),
+            "invalid-materialization-envelope",
+            128,
+        ),
+        (
+            json.dumps({"content": "after", "path": "src/wrong.py"}),
+            "response-path-mismatch",
+            128,
+        ),
+        (
+            json.dumps({"content": "x" * 129, "path": _TARGET}),
+            "content-size-limit",
+            128,
+        ),
+        (
+            '{"path":"src/answer.py","content":"a","path":"src/answer.py"}',
+            "duplicate-json-field",
+            128,
+        ),
+        (
+            json.dumps({"content": "\ud800", "path": _TARGET}),
+            "invalid-content-encoding",
+            128,
+        ),
     ],
 )
 def test_invalid_raw_api_envelope_is_terminal_without_retry(
@@ -263,16 +435,8 @@ def test_sse_metadata_and_finish_reason_are_valid_without_done(
     replacement = {"content": "print('after')\n", "path": _TARGET}
     events = (
         {"choices": [{"delta": {"role": "assistant"}, "index": 0}]},
-        {
-            "choices": [
-                {"delta": {"content": json.dumps(replacement)}, "index": 0}
-            ]
-        },
-        {
-            "choices": [
-                {"delta": {}, "finish_reason": "stop", "index": 0}
-            ]
-        },
+        {"choices": [{"delta": {"content": json.dumps(replacement)}, "index": 0}]},
+        {"choices": [{"delta": {}, "finish_reason": "stop", "index": 0}]},
     )
     body = b": keepalive\n\nevent: message\n" + b"".join(
         b"data: " + json.dumps(event, separators=(",", ":")).encode() + b"\n\n"

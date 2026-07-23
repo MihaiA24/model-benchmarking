@@ -2,18 +2,27 @@ schema_version: 1
 
 provider:
   base_url: https://opencode.ai/zen/go/v1
+  protocol: anthropic-messages
   model: minimax-m3
   pricing:
-    schema_version: 1
+    schema_version: 3
+    billing_basis: opencode-go-catalog
     currency: USD
     unit: usd-per-million-tokens
     input_usd_per_million_tokens: "0.30"
     output_usd_per_million_tokens: "1.20"
+    cache_read_usd_per_million_tokens: "0.06"
+    tiers:
+      - input_tokens_gt: 512000
+        input_usd_per_million_tokens: "0.60"
+        output_usd_per_million_tokens: "2.40"
+        cache_read_usd_per_million_tokens: "0.12"
     effective_from_utc: "2026-07-22T00:00:00Z"
     effective_until_utc: "2026-09-01T00:00:00Z"
-    source_url: https://models.dev/providers/opencode-go
-    retrieved_at_utc: "2026-07-22T23:01:53Z"
-    identity: pricing-record:sha256:5af2bdabfcc0b7e2c7b26da13b78e90dfa852b252d719e0c92ae12542f0c4d83
+    source_url: https://models.dev/api.json
+    source_snapshot_sha256: sha256:0fde178efd91764a20ae11948d9c26cdaad216a76efcd48590904962b77bb48e
+    retrieved_at_utc: "2026-07-23T07:08:24Z"
+    identity: pricing-record:sha256:74f5cec73deffbe44e4a6b5ead7c742dd47b73df05cbc7a7ce8ba9e1f179f8b9
 
 limits:
   requests_per_trial: 64
@@ -45,13 +54,13 @@ scenarios:
 conditions:
   omp:
     path: profiles/functional-v1/omp-v16.4.0.condition.json
-    digest: functional-v1-condition:sha256:37eb25435b4126685f93968cc06c36b868a196db572cad455ff6365ff4f15ffb
+    digest: functional-v1-condition:sha256:5cb192c0c0db785207cf402fe8570f98bd09ba10404c6095a2e4ea1131197869
   opencode:
     path: profiles/functional-v1/opencode-v1.17.18.condition.json
-    digest: functional-v1-condition:sha256:b5613bac0b9c296a717a4a510b6dbed8b7a5c1bbac59316916980a2ab47c49fa
+    digest: functional-v1-condition:sha256:3d40908a2bfd73a2d8803b096fca2ec940d8ddf253c3d1696011eb44f14aa0b2
   hermes:
     path: profiles/functional-v1/hermes-v0.18.2.condition.json
-    digest: functional-v1-condition:sha256:5535eaefacc5c6161e69d4cd8b7bfbaa960051a2aeb691e573df623f18bc2054
+    digest: functional-v1-condition:sha256:638d133bc5695648524af287784ff6c8a77fd88deed4f3decad1ccbe5a33fae0
   raw-api:
     path: profiles/functional-v1/raw-api-v1.condition.json
-    digest: functional-v1-condition:sha256:b9ce4670c2a6e41a65199a62227a9aa1b56e93113b6aa837a0acc8e26b6af7bd
+    digest: functional-v1-condition:sha256:51438c33ba35594852eb6c42955d7fa22e816cd5a665a559910a19bb38ab43eb

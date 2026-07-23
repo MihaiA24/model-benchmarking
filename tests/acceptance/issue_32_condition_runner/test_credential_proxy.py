@@ -11,11 +11,13 @@ from urllib.parse import urlsplit
 import pytest
 
 import model_benchmark.runtime.credential_proxy_service as proxy_service
+from model_benchmark.declarations.provider_routes import ProviderProtocol
 from model_benchmark.runtime.credential_proxy import (
     CredentialProxy,
     CredentialProxyConfig,
     CredentialProxyError,
     PricingRecord,
+    PricingTier,
     _usage_token_counts,
 )
 from model_benchmark.runtime.dry_launch_provider import (
@@ -284,6 +286,42 @@ def test_pricing_record_derives_cost_when_provider_omits_cost(
     }
     assert event["pricing_record_identity"] == pricing.identity
     assert event["budget_events"] == ["cost-stop-after-response"]
+
+
+def test_pricing_record_switches_all_rates_above_context_tier() -> None:
+    pricing = PricingRecord(
+        identity="pricing-record:sha256:" + "0" * 64,
+        input_usd_per_million_tokens=Decimal("0.30"),
+        output_usd_per_million_tokens=Decimal("1.20"),
+        cache_read_usd_per_million_tokens=Decimal("0.06"),
+        tiers=(
+            PricingTier(
+                input_tokens_gt=512_000,
+                input_usd_per_million_tokens=Decimal("0.60"),
+                output_usd_per_million_tokens=Decimal("2.40"),
+                cache_read_usd_per_million_tokens=Decimal("0.12"),
+            ),
+        ),
+    )
+
+    assert pricing.cost_usd(512_000, 1_000) == (
+        Decimal("0.1548"),
+        Decimal("0.1536"),
+        Decimal("0.0012"),
+        Decimal("0"),
+    )
+    assert pricing.cost_usd(512_001, 1_000) == (
+        Decimal("0.3096006"),
+        Decimal("0.3072006"),
+        Decimal("0.0024"),
+        Decimal("0"),
+    )
+    assert pricing.cost_usd(1, 0, cache_read_input_tokens=512_000) == (
+        Decimal("0.0614406"),
+        Decimal("0.0000006"),
+        Decimal("0"),
+        Decimal("0.06144"),
+    )
 
 
 def test_sixty_fifth_request_is_denied_without_an_upstream_retry(
@@ -562,12 +600,20 @@ def test_usage_token_counts_accept_alternate_field_names() -> None:
 _SERVICE_ENVIRONMENT = {
     "MODEL_BENCHMARK_PROVIDER_BASE_URL": "https://provider.example/v1",
     "MODEL_BENCHMARK_PROVIDER_MODEL": _MODEL,
+    "MODEL_BENCHMARK_PROVIDER_PROTOCOL": "openai-chat-completions",
     "MODEL_BENCHMARK_REQUESTS_PER_TRIAL": "64",
     "MODEL_BENCHMARK_PROVIDER_TOKENS_PER_TRIAL": "100000",
     "MODEL_BENCHMARK_STOP_AFTER_COST_USD_PER_TRIAL": "5.00",
     "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY": "pricing-record:sha256:" + "0" * 64,
     "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS": "0.14",
     "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS": "0.28",
+    "MODEL_BENCHMARK_CACHE_READ_USD_PER_MILLION_TOKENS": "0.0028",
+    "MODEL_BENCHMARK_PRICING_TIERS_JSON": (
+        '[{"cache_read_usd_per_million_tokens":"0.12",'
+        '"input_tokens_gt":512000,'
+        '"input_usd_per_million_tokens":"0.60",'
+        '"output_usd_per_million_tokens":"2.40"}]'
+    ),
     "MODEL_BENCHMARK_PROVIDER_API_KEY": _REAL_KEY,
     "MODEL_BENCHMARK_PROXY_TOKEN": _TRIAL_TOKEN,
 }
@@ -609,6 +655,8 @@ def test_service_main_builds_its_config_from_the_cell_environment(
     config = captured["config"]
     assert config.upstream_base_url == "https://provider.example/v1"
     assert config.model == _MODEL
+    assert config.provider_protocol is ProviderProtocol.OPENAI_CHAT_COMPLETIONS
+    assert config.allowed_endpoint_paths == ("/chat/completions",)
     assert config.requests_per_trial == 64
     assert config.provider_tokens_per_trial == 100_000
     assert config.stop_after_cost_usd_per_trial == Decimal("5.00")
@@ -622,6 +670,15 @@ def test_service_main_builds_its_config_from_the_cell_environment(
     assert pricing.identity == "pricing-record:sha256:" + "0" * 64
     assert pricing.input_usd_per_million_tokens == Decimal("0.14")
     assert pricing.output_usd_per_million_tokens == Decimal("0.28")
+    assert pricing.cache_read_usd_per_million_tokens == Decimal("0.0028")
+    assert pricing.tiers == (
+        PricingTier(
+            input_tokens_gt=512_000,
+            input_usd_per_million_tokens=Decimal("0.60"),
+            output_usd_per_million_tokens=Decimal("2.40"),
+            cache_read_usd_per_million_tokens=Decimal("0.12"),
+        ),
+    )
 
 
 def test_service_main_fails_at_startup_when_an_environment_variable_is_missing(
@@ -684,8 +741,9 @@ def test_service_dry_launch_uses_no_real_provider_credential(
     class _LocalProvider:
         base_url = "http://127.0.0.1:12345/v1"
 
-        def __init__(self, *, model: str, route_prefix: str) -> None:
+        def __init__(self, *, model: str, protocol: object, route_prefix: str) -> None:
             assert model == _MODEL
+            assert getattr(protocol, "value", None) == "openai-chat-completions"
             assert route_prefix == "/v1"
 
         def __enter__(self) -> _LocalProvider:

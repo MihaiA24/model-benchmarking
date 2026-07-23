@@ -16,13 +16,13 @@ die() {
 
 usage() {
   cat <<'EOF'
-Usage: scripts/run-functional-v1
+Usage: scripts/run-functional-v1 [--resume RUN_ID]
 
-Runs the committed Functional V1 configuration end to end:
+Runs the committed Functional V1 configuration end to end, or resumes only
+the unstarted cells of an interrupted Run under its original Run ID:
   1. start the dedicated worker
-  2. provision inputs
-  3. run network-disabled preflight
-  4. execute and seal all 16 cells
+  2. provision inputs and run network-disabled preflight (new Run only)
+  3. execute and seal all 16 cells
 
 Optional environment overrides:
   MODEL_BENCHMARK_MANIFEST   manifest path
@@ -40,6 +40,11 @@ run_benchmark() {
     --home "$RUN_HOME" --json "$1" "$MANIFEST"
 }
 
+run_resume() {
+  uv run --frozen --env-file "$ENV_FILE" model-benchmark \
+    --home "$RUN_HOME" --json run --resume "$resume_run_id"
+}
+
 restore_uplink() {
   if [[ ${uplink_disabled:-0} -eq 1 ]]; then
     printf '==> restoring worker network uplink\n' >&2
@@ -48,11 +53,27 @@ restore_uplink() {
   fi
 }
 
-case ${1:-} in
-  '') ;;
-  -h|--help)
-    usage
-    exit 0
+resume_run_id=
+case $# in
+  0) ;;
+  1)
+    case $1 in
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  2)
+    [[ $1 == --resume && -n $2 ]] || {
+      usage >&2
+      exit 2
+    }
+    resume_run_id=$2
     ;;
   *)
     usage >&2
@@ -83,17 +104,22 @@ printf '==> starting dedicated Functional V1 worker\n' >&2
 sudo bash "$WORKER" start
 export DOCKER_HOST="unix://$WORKER_SOCKET"
 
-printf '==> provisioning Functional V1 inputs\n' >&2
-run_benchmark provision
+if [[ -n $resume_run_id ]]; then
+  printf '==> resuming unstarted Functional V1 cells under Run %s\n' "$resume_run_id" >&2
+  run_resume
+else
+  printf '==> provisioning Functional V1 inputs\n' >&2
+  run_benchmark provision
 
-printf '==> running network-disabled preflight\n' >&2
-uplink_disabled=0
-trap restore_uplink EXIT INT TERM
-sudo ip link set "$WORKER_UPLINK" down
-uplink_disabled=1
-run_benchmark preflight
-restore_uplink
-trap - EXIT INT TERM
+  printf '==> running network-disabled preflight\n' >&2
+  uplink_disabled=0
+  trap restore_uplink EXIT INT TERM
+  sudo ip link set "$WORKER_UPLINK" down
+  uplink_disabled=1
+  run_benchmark preflight
+  restore_uplink
+  trap - EXIT INT TERM
 
-printf '==> executing all 16 Functional V1 cells\n' >&2
-run_benchmark run
+  printf '==> executing all 16 Functional V1 cells\n' >&2
+  run_benchmark run
+fi
