@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""Run Harbor Functional V1 across three agents/harnesses."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_JOBS_DIR = PROJECT_ROOT / ".model-benchmark" / "harbor-jobs"
+DEFAULT_JOB_NAME = "functional-v1-harbor-3harness-3models"
+HARNESSES = ("opencode", "hermes", "pi")
+MODELS = (
+    "opencode-go/deepseek-v4-flash",
+    "opencode-go/minimax-m3",
+    "opencode-go/hy3",
+)
+SCENARIOS = (
+    "scenarios/calibration/python-sales-by-genre",
+    "scenarios/calibration/spring-petvalidator-whitespace",
+    "scenarios/calibration/angular-reading-time",
+)
+ENVIRONMENT_HOSTS = (
+    "deb.debian.org",
+    "security.debian.org",
+    "raw.githubusercontent.com",
+    "nodejs.org",
+    "registry.npmjs.org",
+    "github.com",
+    "astral.sh",
+    "releases.astral.sh",
+    "pypi.org",
+    "files.pythonhosted.org",
+)
+AGENT_HOSTS = ("opencode.ai", "models.dev")
+
+
+def _env_value(name: str) -> str | None:
+    if value := os.environ.get(name):
+        return value
+    env_file = PROJECT_ROOT / ".env"
+    if not env_file.exists():
+        return None
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key == name:
+            return value.strip().strip("'\"") or None
+    return None
+
+
+def _agents() -> list[dict[str, str]]:
+    return [
+        {"name": harness, "model_name": model}
+        for model in MODELS
+        for harness in HARNESSES
+    ]
+
+
+def _config_path(arguments: argparse.Namespace) -> Path:
+    return arguments.jobs_dir / f"{arguments.job_name}.yaml"
+
+
+def _overlay_path(arguments: argparse.Namespace) -> Path:
+    return arguments.jobs_dir / f"{arguments.job_name}-writable.yaml"
+
+
+def _write_overlay(arguments: argparse.Namespace) -> Path:
+    path = _overlay_path(arguments)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "services:\n"
+        "  main:\n"
+        "    read_only: false\n"
+        "    cap_add:\n"
+        "      - CHOWN\n"
+        "      - DAC_OVERRIDE\n"
+        "      - FOWNER\n"
+        "      - SETGID\n"
+        "      - SETUID\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_config(arguments: argparse.Namespace) -> Path:
+    agents = _agents()
+    scenarios = list(SCENARIOS)
+    attempts = 3
+    if arguments.first is not None:
+        agents = agents[: arguments.first]
+        scenarios = scenarios[:1]
+        attempts = 1
+
+    overlay_path = _write_overlay(arguments)
+    opencode_key = _env_value("OPENCODE_API_KEY")
+    lines = [
+        f"job_name: {json.dumps(arguments.job_name)}",
+        f"jobs_dir: {json.dumps(str(arguments.jobs_dir))}",
+        f"n_attempts: {attempts}",
+        f"n_concurrent_trials: {arguments.concurrency}",
+        "environment:",
+        "  type: docker",
+        "  extra_docker_compose:",
+        f"    - {json.dumps(str(overlay_path))}",
+        "  extra_allowed_hosts:",
+    ]
+    lines.extend(f"    - {json.dumps(host)}" for host in ENVIRONMENT_HOSTS)
+    lines.append("agents:")
+    for agent in agents:
+        lines.extend(
+            (
+                f"  - name: {json.dumps(agent['name'])}",
+                f"    model_name: {json.dumps(agent['model_name'])}",
+                "    extra_allowed_hosts:",
+            )
+        )
+        lines.extend(f"      - {json.dumps(host)}" for host in AGENT_HOSTS)
+        if agent["name"] == "opencode":
+            lines.extend(("    kwargs:", "      version: \"1.17.18\""))
+        lines.append("    env:")
+        if agent["name"] == "opencode" and opencode_key:
+            lines.append(f"      OPENCODE_API_KEY: {json.dumps(opencode_key)}")
+        lines.append("      HOME: \"/logs/agent/home\"")
+        lines.append("      TMPDIR: \"/logs/agent/home\"")
+    lines.append("tasks:")
+    for scenario in scenarios:
+        lines.append(f"  - path: {json.dumps(str(PROJECT_ROOT / scenario))}")
+
+    path = _config_path(arguments)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def _command(config_path: Path) -> list[str]:
+    command = ["uv", "run", "--offline", "--frozen", "harbor", "run", "-c", str(config_path), "-y"]
+    env_file = PROJECT_ROOT / ".env"
+    if env_file.exists():
+        command.extend(("--env-file", str(env_file)))
+    return command
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run 3 Harbor agents/harnesses × 3 OpenCode Go models × "
+            "3 scenarios × 3 attempts."
+        )
+    )
+    parser.add_argument("--jobs-dir", type=Path, default=DEFAULT_JOBS_DIR)
+    parser.add_argument("--job-name", default=None)
+    parser.add_argument("--concurrency", type=int, default=3)
+    parser.add_argument(
+        "--first",
+        type=int,
+        default=None,
+        metavar="N",
+        help="smoke-test the first N harness/model cells on one scenario with one attempt",
+    )
+    parser.add_argument("--dry-run", action="store_true")
+    arguments = parser.parse_args(argv)
+
+    max_first = len(HARNESSES) * len(MODELS)
+    if arguments.concurrency < 1:
+        print("harbor-run: --concurrency must be >= 1", file=sys.stderr)
+        return 2
+    if arguments.first is not None and not 1 <= arguments.first <= max_first:
+        print(f"harbor-run: --first must be between 1 and {max_first}", file=sys.stderr)
+        return 2
+
+    suffix = f"-first-{arguments.first}" if arguments.first is not None else ""
+    arguments.job_name = arguments.job_name or f"{DEFAULT_JOB_NAME}{suffix}"
+
+    config_path = _write_config(arguments)
+    command = _command(config_path)
+    job_path = arguments.jobs_dir / arguments.job_name
+    if arguments.dry_run:
+        print(shlex.join(command))
+        print(f"config: {config_path}")
+        print(f"job: {job_path}")
+        print(f"result: {job_path / 'result.json'}")
+        return 0
+
+    completed = subprocess.run(command, cwd=PROJECT_ROOT, check=False)
+    if completed.returncode != 0:
+        return completed.returncode
+    print(f"config: {config_path}")
+    print(f"job: {job_path}")
+    print(f"result: {job_path / 'result.json'}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
