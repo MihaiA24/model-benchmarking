@@ -590,6 +590,7 @@ def test_harbor_overlay_exposes_only_selected_image_and_proxy_route(
     )
     for pricing_variable in (
         "MODEL_BENCHMARK_PRICING_RECORD_IDENTITY",
+        "MODEL_BENCHMARK_PRICING_TIERS_JSON",
         "MODEL_BENCHMARK_INPUT_USD_PER_MILLION_TOKENS",
         "MODEL_BENCHMARK_OUTPUT_USD_PER_MILLION_TOKENS",
         "MODEL_BENCHMARK_CACHE_READ_USD_PER_MILLION_TOKENS",

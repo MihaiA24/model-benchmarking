@@ -50,13 +50,13 @@ scenarios:
 conditions:
   omp:
     path: profiles/functional-v1/omp-v16.4.0.condition.json
-    digest: functional-v1-condition:sha256:58d25ec003e0943e78c3097a0cbe0dc7418a7081584bc146b3167ea2500ab7b8
+    digest: functional-v1-condition:sha256:0ca0f6673c8c2eaf1462f8497cc04d4bd702b93bc97c26774e12dca874b0ca68
   opencode:
     path: profiles/functional-v1/opencode-v1.17.18.condition.json
-    digest: functional-v1-condition:sha256:35e571224e6500e238dc5a4366de6eb994f949d111b0ef6a554c2713124b5d32
+    digest: functional-v1-condition:sha256:91a160ccc2deeaa9cf336c51f4e9263aedfae249e1b556eff156dfa1601c66b8
   hermes:
     path: profiles/functional-v1/hermes-v0.18.2.condition.json
-    digest: functional-v1-condition:sha256:57ba165f483fe951885b6ab80274953eec76d0837d448a16580ba31e242ebad3
+    digest: functional-v1-condition:sha256:481e95c8191e6efbae5ae703607a0b8f4ce76e1e95b3904771aee1197c0c5ae2
   raw-api:
     path: profiles/functional-v1/raw-api-v1.condition.json
-    digest: functional-v1-condition:sha256:4280a660d7b69d1e193e190a5b1360f5edcd3094613b60e8674f9e2191f7379f
+    digest: functional-v1-condition:sha256:1d4ab75f9321e3acb3cd987acb39543135190647b976a1d660fb9b0e29b8aa8d
