@@ -2,6 +2,106 @@ jobs_dir: .model-benchmark/harbor-jobs
 n_attempts: 3
 n_concurrent_trials: 3
 
+environment:
+  extra_docker_compose:
+    - harbor-agent-install.yaml
+  extra_allowed_hosts:
+    - api.github.com
+    - astral.sh
+    - codeload.github.com
+    - deb.debian.org
+    - files.pythonhosted.org
+    - github.com
+    - nodejs.org
+    - objects.githubusercontent.com
+    - opencode.ai
+    - pypi.org
+    - raw.githubusercontent.com
+    - registry.npmjs.org
+    - releases.astral.sh
+    - release-assets.githubusercontent.com
+    - security.debian.org
+
+agents:
+  - import_path: model_benchmark.runtime.adapters.native_harbor:OpenCodeGoAgent
+    model_name: opencode-go/deepseek-v4-flash
+    kwargs:
+      version: 1.17.18
+    extra_allowed_hosts:
+      - opencode.ai
+    env:
+      HOME: /logs/agent/home
+  - import_path: model_benchmark.runtime.adapters.native_harbor:OpenCodeGoAgent
+    model_name: opencode-go/minimax-m3
+    kwargs:
+      version: 1.17.18
+    extra_allowed_hosts:
+      - opencode.ai
+    env:
+      HOME: /logs/agent/home
+  - import_path: model_benchmark.runtime.adapters.native_harbor:OpenCodeGoAgent
+    model_name: opencode-go/hy3
+    kwargs:
+      version: 1.17.18
+    extra_allowed_hosts:
+      - opencode.ai
+    env:
+      HOME: /logs/agent/home
+  - import_path: model_benchmark.runtime.adapters.native_harbor:OpenCodeGoPi
+    model_name: openai/deepseek-v4-flash
+    kwargs:
+      version: 0.73.1
+    extra_allowed_hosts:
+      - opencode.ai
+    env:
+      HOME: /logs/agent/home
+      OPENAI_BASE_URL: https://opencode.ai/zen/go/v1
+  - import_path: model_benchmark.runtime.adapters.native_harbor:OpenCodeGoPi
+    model_name: openai/minimax-m3
+    kwargs:
+      version: 0.73.1
+    extra_allowed_hosts:
+      - opencode.ai
+    env:
+      HOME: /logs/agent/home
+      OPENAI_BASE_URL: https://opencode.ai/zen/go/v1
+  - import_path: model_benchmark.runtime.adapters.native_harbor:OpenCodeGoPi
+    model_name: openai/hy3
+    kwargs:
+      version: 0.73.1
+    extra_allowed_hosts:
+      - opencode.ai
+    env:
+      HOME: /logs/agent/home
+      OPENAI_BASE_URL: https://opencode.ai/zen/go/v1
+  - import_path: model_benchmark.runtime.adapters.native_harbor:OpenCodeGoHermes
+    model_name: openai/deepseek-v4-flash
+    kwargs:
+      version: v2026.7.7.2
+    extra_allowed_hosts:
+      - opencode.ai
+    env:
+      HOME: /logs/agent/home
+      OPENAI_BASE_URL: https://opencode.ai/zen/go/v1
+  - import_path: model_benchmark.runtime.adapters.native_harbor:OpenCodeGoHermes
+    model_name: openai/minimax-m3
+    kwargs:
+      version: v2026.7.7.2
+    extra_allowed_hosts:
+      - opencode.ai
+    env:
+      HOME: /logs/agent/home
+      OPENAI_BASE_URL: https://opencode.ai/zen/go/v1
+  - import_path: model_benchmark.runtime.adapters.native_harbor:OpenCodeGoHermes
+    model_name: openai/hy3
+    kwargs:
+      version: v2026.7.7.2
+    extra_allowed_hosts:
+      - opencode.ai
+    env:
+      HOME: /logs/agent/home
+      OPENAI_BASE_URL: https://opencode.ai/zen/go/v1
+
 tasks:
   - path: scenarios/calibration/python-sales-by-genre
   - path: scenarios/calibration/spring-petvalidator-whitespace

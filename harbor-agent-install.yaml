@@ -1,0 +1,12 @@
+services:
+  main:
+    read_only: false
+    tmpfs:
+      - /solution:rw,exec,nosuid,nodev,size=1m,mode=0755
+      - /tmp:rw,noexec,nosuid,nodev,size=512m
+    cap_add:
+      - SETUID
+      - SETGID
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER

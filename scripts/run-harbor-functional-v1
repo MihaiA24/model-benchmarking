@@ -14,28 +14,32 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_JOBS_DIR = PROJECT_ROOT / ".model-benchmark" / "harbor-jobs"
 DEFAULT_JOB_NAME = "functional-v1-harbor-3harness-3models"
-HARNESSES = ("opencode", "hermes", "pi")
-MODELS = (
-    "opencode-go/deepseek-v4-flash",
-    "opencode-go/minimax-m3",
-    "opencode-go/hy3",
+ADAPTERS = (
+    ("OpenCodeGoAgent", "opencode-go", "1.17.18"),
+    ("OpenCodeGoHermes", "openai", "v2026.7.7.2"),
+    ("OpenCodeGoPi", "openai", "0.73.1"),
 )
+MODELS = ("deepseek-v4-flash", "minimax-m3", "hy3")
 SCENARIOS = (
     "scenarios/calibration/python-sales-by-genre",
     "scenarios/calibration/spring-petvalidator-whitespace",
     "scenarios/calibration/angular-reading-time",
 )
 ENVIRONMENT_HOSTS = (
-    "deb.debian.org",
-    "security.debian.org",
-    "raw.githubusercontent.com",
-    "nodejs.org",
-    "registry.npmjs.org",
-    "github.com",
+    "api.github.com",
     "astral.sh",
-    "releases.astral.sh",
-    "pypi.org",
+    "codeload.github.com",
+    "deb.debian.org",
     "files.pythonhosted.org",
+    "github.com",
+    "nodejs.org",
+    "objects.githubusercontent.com",
+    "pypi.org",
+    "raw.githubusercontent.com",
+    "registry.npmjs.org",
+    "releases.astral.sh",
+    "release-assets.githubusercontent.com",
+    "security.debian.org",
 )
 AGENT_HOSTS = ("opencode.ai", "models.dev")
 
@@ -58,9 +62,15 @@ def _env_value(name: str) -> str | None:
 
 def _agents() -> list[dict[str, str]]:
     return [
-        {"name": harness, "model_name": model}
+        {
+            "import_path": (
+                "model_benchmark.runtime.adapters.native_harbor:" + adapter
+            ),
+            "model_name": f"{provider}/{model}",
+            "version": version,
+        }
         for model in MODELS
-        for harness in HARNESSES
+        for adapter, provider, version in ADAPTERS
     ]
 
 
@@ -79,6 +89,9 @@ def _write_overlay(arguments: argparse.Namespace) -> Path:
         "services:\n"
         "  main:\n"
         "    read_only: false\n"
+        "    tmpfs:\n"
+        "      - /solution:rw,exec,nosuid,nodev,size=1m,mode=0755\n"
+        "      - /tmp:rw,noexec,nosuid,nodev,size=512m\n"
         "    cap_add:\n"
         "      - CHOWN\n"
         "      - DAC_OVERRIDE\n"
@@ -100,7 +113,6 @@ def _write_config(arguments: argparse.Namespace) -> Path:
         attempts = 1
 
     overlay_path = _write_overlay(arguments)
-    opencode_key = _env_value("OPENCODE_API_KEY")
     lines = [
         f"job_name: {json.dumps(arguments.job_name)}",
         f"jobs_dir: {json.dumps(str(arguments.jobs_dir))}",
@@ -117,17 +129,19 @@ def _write_config(arguments: argparse.Namespace) -> Path:
     for agent in agents:
         lines.extend(
             (
-                f"  - name: {json.dumps(agent['name'])}",
+                f"  - import_path: {json.dumps(agent['import_path'])}",
                 f"    model_name: {json.dumps(agent['model_name'])}",
                 "    extra_allowed_hosts:",
             )
         )
         lines.extend(f"      - {json.dumps(host)}" for host in AGENT_HOSTS)
-        if agent["name"] == "opencode":
-            lines.extend(("    kwargs:", "      version: \"1.17.18\""))
-        lines.append("    env:")
-        if agent["name"] == "opencode" and opencode_key:
-            lines.append(f"      OPENCODE_API_KEY: {json.dumps(opencode_key)}")
+        lines.extend(
+            (
+                "    kwargs:",
+                f"      version: {json.dumps(agent['version'])}",
+                "    env:",
+            )
+        )
         lines.append("      HOME: \"/logs/agent/home\"")
         lines.append("      TMPDIR: \"/logs/agent/home\"")
     lines.append("tasks:")
@@ -141,11 +155,10 @@ def _write_config(arguments: argparse.Namespace) -> Path:
 
 
 def _command(config_path: Path) -> list[str]:
-    command = ["uv", "run", "--offline", "--frozen", "harbor", "run", "-c", str(config_path), "-y"]
-    env_file = PROJECT_ROOT / ".env"
-    if env_file.exists():
-        command.extend(("--env-file", str(env_file)))
-    return command
+    return [
+        "uv", "run", "--offline", "--frozen",
+        "harbor", "run", "-c", str(config_path), "-y",
+    ]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -168,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true")
     arguments = parser.parse_args(argv)
 
-    max_first = len(HARNESSES) * len(MODELS)
+    max_first = len(ADAPTERS) * len(MODELS)
     if arguments.concurrency < 1:
         print("harbor-run: --concurrency must be >= 1", file=sys.stderr)
         return 2
@@ -189,7 +202,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"result: {job_path / 'result.json'}")
         return 0
 
-    completed = subprocess.run(command, cwd=PROJECT_ROOT, check=False)
+    opencode_key = _env_value("OPENCODE_API_KEY")
+    if not opencode_key:
+        print(
+            "harbor-run: OPENCODE_API_KEY is missing from .env",
+            file=sys.stderr,
+        )
+        return 2
+    run_environment = os.environ.copy()
+    run_environment["OPENCODE_API_KEY"] = opencode_key
+
+    completed = subprocess.run(
+        command, cwd=PROJECT_ROOT, env=run_environment, check=False
+    )
     if completed.returncode != 0:
         return completed.returncode
     print(f"config: {config_path}")
