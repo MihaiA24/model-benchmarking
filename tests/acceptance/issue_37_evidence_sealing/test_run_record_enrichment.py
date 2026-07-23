@@ -95,7 +95,7 @@ def test_sealed_record_carries_enriched_cells_and_provenance(
     assert first_row == (
         f"{planned['scenario']} | {planned['condition']} | valid_completed | "
         f"true | 1 | 1 | 2s | 3 | 500 | 0.12 | "
-        f"{_bundle_identity(planned['cell_id'])}"
+        f"{_bundle_identity(planned['cell_id'])} | -"
     )
 
 
@@ -140,5 +140,5 @@ def test_empty_terminal_details_yield_null_scores_and_placeholders(
     assert first_row == (
         f"{planned['scenario']} | {planned['condition']} | valid_completed | "
         f"- | - | - | 2s | - | - | - | "
-        f"{_bundle_identity(planned['cell_id'])}"
+        f"{_bundle_identity(planned['cell_id'])} | -"
     )
