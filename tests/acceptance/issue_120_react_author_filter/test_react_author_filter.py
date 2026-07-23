@@ -190,6 +190,7 @@ def run_isolated_verifier(
                 "services": {
                     "main": {
                         "command": ["/tests/test.sh"],
+                        "working_dir": "/workspace/repository",
                         "volumes": [
                             f"{capture}:/capture:ro",
                             f"{run_root / 'logs'}:/logs",
@@ -336,8 +337,10 @@ def test_evaluator_has_only_bounded_named_volume_exchange() -> None:
     main = compose["services"]["main"]
     evaluator = compose["services"]["evaluator"]
     assert main["network_mode"] == "none"
-    assert main["read_only"] is True
     assert main["cap_drop"] == ["ALL"]
+    assert main["cap_add"] == ["CHOWN"]
+    assert main["depends_on"] == {"evaluator": {"condition": "service_started"}}
+    assert "depends_on" not in evaluator
     assert evaluator["network_mode"] == "none"
     assert evaluator["read_only"] is True
     assert evaluator["cap_drop"] == ["ALL"]
@@ -348,9 +351,21 @@ def test_evaluator_has_only_bounded_named_volume_exchange() -> None:
         "evaluator-request:/request:ro",
         "evaluator-result:/result",
     }
-    declared_volumes = set(compose["volumes"])
-    for mount in evaluator["volumes"]:
-        assert mount.split(":", 1)[0] in declared_volumes
+    expected_sizes = {
+        "evaluator-repository": "64m",
+        "evaluator-request": "1m",
+        "evaluator-result": "1m",
+    }
+    assert set(compose["volumes"]) == set(expected_sizes)
+    for name, size in expected_sizes.items():
+        assert compose["volumes"][name] == {
+            "driver": "local",
+            "driver_opts": {
+                "device": "tmpfs",
+                "o": f"size={size},uid=65532,gid=65532,mode=0700",
+                "type": "tmpfs",
+            },
+        }
     evaluator_contract = json.dumps(evaluator, sort_keys=True)
     for forbidden in ("/tests", "/logs", "/capture", "docker.sock", "environment"):
         assert forbidden not in evaluator_contract
@@ -529,5 +544,5 @@ def test_react_package_activates_as_fourth_functional_v1_scenario() -> None:
         loaded = FunctionalV1Manifest.load(path)
         assert tuple(loaded.scenario_locks) == SCENARIOS
         assert loaded.identity_value["scenarios"]["react-author-filter"]["digest"] == (
-            "package-lock:sha256:80e3dbe5feae3af970ef6c090aeb19b8af2d6bc083bd7888c21183c19f4014c2"
+            "package-lock:sha256:89626643a38dd734b3cb52b03a98ee0c70db59dc3e43870c6d2ee4bb80cedd4f"
         )

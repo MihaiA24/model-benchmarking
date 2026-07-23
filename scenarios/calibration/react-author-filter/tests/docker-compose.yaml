@@ -3,11 +3,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    cap_add:
+    - CHOWN
     cap_drop:
     - ALL
+    depends_on:
+      evaluator:
+        condition: service_started
     network_mode: none
     pids_limit: 128
-    read_only: true
     security_opt:
     - no-new-privileges:true
     tmpfs:
@@ -23,9 +27,6 @@ services:
     cap_drop:
     - ALL
     cpus: 1.0
-    depends_on:
-      main:
-        condition: service_started
     mem_limit: 256m
     network_mode: none
     pids_limit: 64
@@ -41,6 +42,21 @@ services:
     - evaluator-request:/request:ro
     - evaluator-result:/result
 volumes:
-  evaluator-repository: null
-  evaluator-request: null
-  evaluator-result: null
+  evaluator-repository:
+    driver: local
+    driver_opts:
+      device: tmpfs
+      o: size=64m,uid=65532,gid=65532,mode=0700
+      type: tmpfs
+  evaluator-request:
+    driver: local
+    driver_opts:
+      device: tmpfs
+      o: size=1m,uid=65532,gid=65532,mode=0700
+      type: tmpfs
+  evaluator-result:
+    driver: local
+    driver_opts:
+      device: tmpfs
+      o: size=1m,uid=65532,gid=65532,mode=0700
+      type: tmpfs

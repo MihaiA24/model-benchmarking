@@ -40,7 +40,7 @@ scenarios:
     digest: package-lock:sha256:0abf78113f0d695f88c58e5ca137206ca644d0235c960a0ec58f8e34e5638284
   react-author-filter:
     path: scenarios/calibration/react-author-filter/scenario.lock.json
-    digest: package-lock:sha256:80e3dbe5feae3af970ef6c090aeb19b8af2d6bc083bd7888c21183c19f4014c2
+    digest: package-lock:sha256:89626643a38dd734b3cb52b03a98ee0c70db59dc3e43870c6d2ee4bb80cedd4f
 
 conditions:
   omp:

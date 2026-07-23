@@ -830,6 +830,7 @@ def _cell_executor(
         },
     }
     executor = HarborCellExecutor.__new__(HarborCellExecutor)
+    executor.dry_launch = False
     executor.manifest = SimpleNamespace(
         value={
             "provider": {

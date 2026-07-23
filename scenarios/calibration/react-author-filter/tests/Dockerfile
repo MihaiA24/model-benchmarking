@@ -3,6 +3,6 @@ USER root
 COPY . /tests/
 RUN --network=none chmod -R a=rX /tests \
     && chmod +x /tests/test.sh \
-    && install -d -o 65532 -g 65532 -m 0700 /evaluator-repository /evaluator-request /evaluator-result
+    && install -d -o 65532 -g 65532 -m 0700 /capture /evaluator-repository /evaluator-request /evaluator-result /workspace/repository
 USER 65532:65532
 WORKDIR /tests
