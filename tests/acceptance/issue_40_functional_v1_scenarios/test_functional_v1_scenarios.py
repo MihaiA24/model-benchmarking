@@ -121,7 +121,8 @@ def test_python_brief_keeps_sample_output_outside_submission() -> None:
 
 
 def test_diagnostic_qualification_evidence_covers_all_isolated_cases() -> None:
-    assert sorted(path.stem for path in EVIDENCE_ROOT.glob("*.json")) == sorted(PACKAGES)
+    evidence_names = sorted(path.stem for path in EVIDENCE_ROOT.glob("*.json"))
+    assert evidence_names == sorted([*PACKAGES, "dry-launch-qualification"])
     for directory in PACKAGES:
         package = SCENARIO_ROOT / directory
         lock = REGISTRY.validate_bytes((package / "scenario.lock.json").read_bytes())
