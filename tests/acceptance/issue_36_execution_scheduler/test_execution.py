@@ -15,6 +15,7 @@ import pytest
 import yaml
 
 import model_benchmark.runtime.execution as execution
+from model_benchmark.runtime import hermes_mounted_launch
 from model_benchmark.declarations.canonical import canonical_json_bytes
 from model_benchmark.declarations.identities import DigestKind, TypedDigest
 from model_benchmark.runtime.adapters.functional_v1 import FunctionalV1ConditionAgent
@@ -531,6 +532,7 @@ def test_harbor_overlay_exposes_only_selected_image_and_proxy_route(
         overlay,
         run_id="0198ae70-0000-7000-8000-000000000036",
         cell_id="python-sales-by-genre--omp",
+        condition="omp",
         condition_image="model-benchmark.local/functional-v1/omp:locked",
         main_image="model-benchmark.local/scenario-main:locked",
         capture_image="model-benchmark.local/scenario-capture:locked",
@@ -608,6 +610,7 @@ def test_dry_launch_overlay_removes_external_provider_egress(tmp_path: Path) -> 
         overlay,
         run_id="0198ae70-0000-7000-8000-000000000036",
         cell_id="python-sales-by-genre--omp",
+        condition="omp",
         condition_image="model-benchmark.local/functional-v1/omp:locked",
         main_image="model-benchmark.local/scenario-main:locked",
         capture_image="model-benchmark.local/scenario-capture:locked",
@@ -624,6 +627,41 @@ def test_dry_launch_overlay_removes_external_provider_egress(tmp_path: Path) -> 
     )
     assert "dns" not in proxy
     assert "provider-egress" not in value["networks"]
+
+
+def test_hermes_overlay_mounts_private_executable_relocation_tmpfs(
+    tmp_path: Path,
+) -> None:
+    executor = HarborCellExecutor.__new__(HarborCellExecutor)
+    executor.dry_launch = True
+    overlay = tmp_path / "hermes-overlay.yaml"
+    executor._overlay(
+        overlay,
+        run_id="0198ae70-0000-7000-8000-000000000036",
+        cell_id="python-sales-by-genre--hermes",
+        condition="hermes",
+        condition_image="model-benchmark.local/functional-v1/hermes:locked",
+        main_image="model-benchmark.local/scenario-main:locked",
+        capture_image="model-benchmark.local/scenario-capture:locked",
+        proxy_image="model-benchmark.local/functional-v1/credential-proxy:locked",
+        proxy_evidence=tmp_path / "proxy-evidence",
+    )
+
+    value = yaml.safe_load(overlay.read_text(encoding="utf-8"))
+    assert value["services"]["main"]["tmpfs"] == [
+        "/mb-runtime:rw,exec,nosuid,nodev,size=16m,uid=65532,gid=65532,mode=0700"
+    ]
+    relocation = hermes_mounted_launch.relocation_contract()
+    runtime_root = Path("/mb-runtime")
+    relocated_paths = (
+        relocation["elf_interpreter"]["after"],
+        relocation["loader"]["runtime_path"],
+        relocation["python"]["runtime_path"],
+    )
+    assert all(Path(path).is_relative_to(runtime_root) for path in relocated_paths)
+    assert len(relocation["elf_interpreter"]["after"].encode()) <= len(
+        relocation["elf_interpreter"]["before"].encode()
+    )
 
 
 def test_harbor_agent_command_has_only_proxy_credentials(tmp_path: Path) -> None:

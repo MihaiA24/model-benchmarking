@@ -1276,6 +1276,7 @@ class HarborCellExecutor:
         *,
         run_id: str,
         cell_id: str,
+        condition: str,
         condition_image: str,
         main_image: str,
         capture_image: str,
@@ -1349,6 +1350,10 @@ class HarborCellExecutor:
                 "proxy-only": {"internal": True, "labels": labels},
             },
         }
+        if condition == "hermes":
+            value["services"]["main"]["tmpfs"] = [
+                "/mb-runtime:rw,exec,nosuid,nodev,size=16m,uid=65532,gid=65532,mode=0700"
+            ]
         if getattr(self, "dry_launch", False):
             proxy_service = value["services"]["credential-proxy"]
             proxy_service.pop("dns")
@@ -1701,6 +1706,7 @@ class HarborCellExecutor:
                 overlay,
                 run_id=run_id,
                 cell_id=cell_id,
+                condition=condition,
                 condition_image=condition_image,
                 main_image=main_image,
                 capture_image=capture_image,

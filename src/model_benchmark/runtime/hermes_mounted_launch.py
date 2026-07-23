@@ -23,8 +23,8 @@ _STOCK_LOADER_IDENTITY = (
     "artifact:sha256:438c546d8e8cc48496bf3a95f753051afd9db66a629a74e31a9ded71586b56e0"
 )
 _STOCK_LOADER_BYTES = 225_672
-_RELOCATED_PYTHON_PATH = "/tmp/mb-hermes-python"
-_RELOCATED_LOADER_PATH = "/tmp/mb-hermes-ld.so"
+_RELOCATED_PYTHON_PATH = "/mb-runtime/python"
+_RELOCATED_LOADER_PATH = "/mb-runtime/ld.so"
 
 
 def _digest(path: Path) -> str:
