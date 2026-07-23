@@ -42,6 +42,9 @@ directories on disk in lockstep.
 | 11 | verification | `issue_54_verification_policy` | Closed-world development verification policy and guarded development runs | |
 | 12 | provisioning | `issue_55_digest_provisioning` | Cold registry pull, then warm cache with zero registry traffic | Docker, slow (~10 min) |
 | 13 | operator | `issue_74_functional_v1_operator` | Functional V1 operator: manifest, managed home, dispositions, CLI | |
+| 14 | operator | `issue_118_minimax_m3_manifest` | MiniMax M3 manifest route, pricing, fixed matrix, and canonical identities | Seals authored manifest input |
+| 15 | operator | `issue_123_hy3_manifest` | Hy3 manifest route, pricing, fixed matrix, and canonical identities | Seals authored manifest input |
+| 16 | scenarios | `issue_120_react_author_filter` | React package provenance, submission boundary, and isolated behavioral qualification | Seals qualified Scenario evidence |
 
 ## Proof contract
 
@@ -53,7 +56,10 @@ Enforced by the `model-benchmark-acceptance` pytest plugin
   rejected, and skips/xfails invalidate the proof.
 - Two directories claiming the same issue number are rejected.
 - Issues 29 and 55 mandate a responding Docker daemon; issue 51's canonical
-  invocation adds `--require-docker --acceptance-input=tests/architecture`
+  invocation adds `--require-docker --acceptance-input=tests/architecture`. Issue 118
+  adds `--acceptance-input=functional-v1-minimax-m3.yaml`; issue 123 adds
+  `--acceptance-input=functional-v1-hy3.yaml`. Each authored manifest participates in
+  the Acceptance Source Tree / reproducibility identity
   (see `research/development-and-ci-verification-strategy.md`).
 - On a full pass the plugin seals `artifacts/acceptance/issue-N/` with the
   executed command, case inventory, and digests over `src/`,

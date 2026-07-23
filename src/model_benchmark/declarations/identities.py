@@ -35,6 +35,7 @@ class DigestKind(str, Enum):
     PRICING_RECORD = "pricing-record"
     RESULT_BUNDLE = "result-bundle"
     FUNCTIONAL_V1_RUN_RECORD = "functional-v1-run-record"
+    DRY_LAUNCH_QUALIFICATION = "dry-launch-qualification"
 
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")

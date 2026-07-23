@@ -37,6 +37,7 @@ SCENARIOS = (
     "python-sales-by-genre",
     "spring-petvalidator-whitespace",
     "angular-reading-time",
+    "react-author-filter",
 )
 CONDITIONS = ("omp", "opencode", "hermes", "raw-api")
 NETWORK_POLICY = "proxy-only-v1"

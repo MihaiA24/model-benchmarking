@@ -25,6 +25,7 @@ _SCENARIOS = (
     "python-sales-by-genre",
     "spring-petvalidator-whitespace",
     "angular-reading-time",
+    "react-author-filter",
 )
 
 
@@ -97,7 +98,7 @@ def _write(tmp_path: Path, name: str, record: dict[str, object]) -> Path:
 def _three_runs(tmp_path: Path) -> list[Path]:
     # omp succeeds on python in every run; opencode succeeds on python in
     # one run; everything else fails -> omp-vs-opencode discordance 2:0
-    # over 9 blocks.
+    # over 12 blocks.
     paths = []
     for index in range(3):
         successes: dict[tuple[str, str], object] = {(_SCENARIOS[0], "omp"): True}
@@ -116,7 +117,7 @@ def _three_runs(tmp_path: Path) -> list[Path]:
 def test_pooled_pair_discordance_and_difference(tmp_path: Path) -> None:
     readout = build_readout(_three_runs(tmp_path))
 
-    assert readout["block_count"] == 9
+    assert readout["block_count"] == 12
     assert readout["claims"] == "none"
     pair = next(
         item
@@ -126,7 +127,7 @@ def test_pooled_pair_discordance_and_difference(tmp_path: Path) -> None:
     task = pair["task_success"]
     assert (task["n10"], task["n01"], task["n11"]) == (2, 0, 1)
     assert task["a_successes"] == 3 and task["b_successes"] == 1
-    assert task["difference_pp"] == pytest.approx(200 / 9, abs=1e-6)
+    assert task["difference_pp"] == pytest.approx(200 / 12, abs=1e-6)
     low, high = task["interval_95_pp"]
     assert low <= task["difference_pp"] <= high
 

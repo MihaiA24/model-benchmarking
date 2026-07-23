@@ -18,7 +18,12 @@ from model_benchmark.runtime.credential_proxy import (
     PricingRecord,
     _usage_token_counts,
 )
-
+from model_benchmark.runtime.dry_launch_provider import (
+    DRY_LAUNCH_API_KEY,
+    DRY_LAUNCH_ENV,
+    DRY_LAUNCH_RESPONSE,
+    DryLaunchProvider,
+)
 
 
 _MODEL = "locked/model"
@@ -118,7 +123,10 @@ def test_auth_replacement_and_streaming_preserve_bytes_and_observe_native_retrie
     assert second == (200, stream)
     assert len(recording_provider.requests) == 2
     assert all(request.body == request_body for request in recording_provider.requests)
-    assert all(request.path == "/v1/chat/completions" for request in recording_provider.requests)
+    assert all(
+        request.path == "/v1/chat/completions"
+        for request in recording_provider.requests
+    )
     assert all(
         request.headers["authorization"] == f"Bearer {_REAL_KEY}"
         for request in recording_provider.requests
@@ -172,11 +180,14 @@ def test_route_model_and_auth_controls_fail_closed_before_provider(
         assert _post(proxy, _request_body(model="wrong/model"))[0] == 400
         assert _post(proxy, b'{"model":"locked/model","model":"wrong/model"}')[0] == 400
         assert _post(proxy, _request_body(), token="wrong-token")[0] == 401
-        assert _post(
-            proxy,
-            _request_body(),
-            headers={"X-Upstream-Url": "https://attacker.invalid/v1"},
-        )[0] == 400
+        assert (
+            _post(
+                proxy,
+                _request_body(),
+                headers={"X-Upstream-Url": "https://attacker.invalid/v1"},
+            )[0]
+            == 400
+        )
 
     assert recording_provider.requests == []
     evidence = (tmp_path / "proxy-events.jsonl").read_text(encoding="utf-8")
@@ -215,7 +226,9 @@ def test_token_and_cost_thresholds_stop_after_one_overshooting_response(
     assert snapshot.provider_cost_usd == "1.25"
     evidence = [
         json.loads(line)
-        for line in (tmp_path / "proxy-events.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (tmp_path / "proxy-events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
     ]
     response = evidence[0]
     assert response["budget_events"] == [
@@ -501,7 +514,12 @@ def test_enforcement_uses_derived_total_and_records_reported_cost_alongside(
         ("pricing-record:sha256:" + "0" * 64, "0", "0.20", "finite and positive"),
         ("pricing-record:sha256:" + "0" * 64, "0.10", "-0.20", "finite and positive"),
         ("pricing-record:sha256:" + "0" * 64, "NaN", "0.20", "finite and positive"),
-        ("pricing-record:sha256:" + "0" * 64, "0.10", "Infinity", "finite and positive"),
+        (
+            "pricing-record:sha256:" + "0" * 64,
+            "0.10",
+            "Infinity",
+            "finite and positive",
+        ),
     ],
 )
 def test_pricing_record_rejects_invalid_identity_and_rates(
@@ -625,3 +643,72 @@ def test_service_main_fails_at_startup_when_an_environment_variable_is_missing(
     finally:
         for selected, handler in saved:
             signal.signal(selected, handler)
+
+
+def test_dry_launch_provider_is_loopback_only_and_openai_compatible() -> None:
+    with DryLaunchProvider(model=_MODEL, route_prefix="/v1") as provider:
+        parsed = urlsplit(provider.base_url)
+        assert parsed.hostname == "127.0.0.1"
+        assert parsed.path == "/v1"
+        for streaming in (False, True):
+            connection = http.client.HTTPConnection(
+                parsed.hostname, parsed.port, timeout=5
+            )
+            body = json.dumps({"model": _MODEL, "stream": streaming})
+            connection.request(
+                "POST",
+                "/v1/chat/completions",
+                body=body,
+                headers={
+                    "Authorization": f"Bearer {DRY_LAUNCH_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response = connection.getresponse()
+            payload = response.read()
+            connection.close()
+            assert response.status == 200
+            assert DRY_LAUNCH_RESPONSE.encode() in payload
+            assert b'"total_tokens":2' in payload
+            assert (b"data: [DONE]" in payload) is streaming
+
+
+def test_service_dry_launch_uses_no_real_provider_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name, value in _SERVICE_ENVIRONMENT.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv(DRY_LAUNCH_ENV, "1")
+    captured: dict[str, str] = {}
+
+    class _LocalProvider:
+        base_url = "http://127.0.0.1:12345/v1"
+
+        def __init__(self, *, model: str, route_prefix: str) -> None:
+            assert model == _MODEL
+            assert route_prefix == "/v1"
+
+        def __enter__(self) -> _LocalProvider:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    def serve(_stop: object, *, upstream_base_url: str, real_api_key: str) -> int:
+        captured["upstream"] = upstream_base_url
+        captured["key"] = real_api_key
+        return 0
+
+    monkeypatch.setattr(proxy_service, "DryLaunchProvider", _LocalProvider)
+    monkeypatch.setattr(proxy_service, "_serve", serve)
+    saved = _preserving_signal_handlers()
+    try:
+        assert proxy_service.main() == 0
+    finally:
+        for selected, handler in saved:
+            signal.signal(selected, handler)
+
+    assert captured == {
+        "key": DRY_LAUNCH_API_KEY,
+        "upstream": "http://127.0.0.1:12345/v1",
+    }

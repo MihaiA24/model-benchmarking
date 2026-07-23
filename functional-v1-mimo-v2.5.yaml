@@ -7,13 +7,13 @@ provider:
     schema_version: 1
     currency: USD
     unit: usd-per-million-tokens
-    input_usd_per_million_tokens: "0.40"
-    output_usd_per_million_tokens: "1.50"
-    effective_from_utc: "2026-07-21T00:00:00Z"
-    effective_until_utc: "2026-08-01T00:00:00Z"
+    input_usd_per_million_tokens: "0.14"
+    output_usd_per_million_tokens: "0.28"
+    effective_from_utc: "2026-07-22T00:00:00Z"
+    effective_until_utc: "2026-09-01T00:00:00Z"
     source_url: https://models.dev/providers/opencode-go
-    retrieved_at_utc: "2026-07-21T16:09:49Z"
-    identity: pricing-record:sha256:d574a6948cbe024b55c47ffbaa19ee9909e1e53323dcb60d67478b2e55bb6b69
+    retrieved_at_utc: "2026-07-22T23:01:53Z"
+    identity: pricing-record:sha256:0fc88e27621746b01950cc08be544ab9714204fe23f1915a7082c09711930fc7
 
 limits:
   requests_per_trial: 64
@@ -38,17 +38,20 @@ scenarios:
   angular-reading-time:
     path: scenarios/calibration/angular-reading-time/scenario.lock.json
     digest: package-lock:sha256:0abf78113f0d695f88c58e5ca137206ca644d0235c960a0ec58f8e34e5638284
+  react-author-filter:
+    path: scenarios/calibration/react-author-filter/scenario.lock.json
+    digest: package-lock:sha256:89626643a38dd734b3cb52b03a98ee0c70db59dc3e43870c6d2ee4bb80cedd4f
 
 conditions:
   omp:
     path: profiles/functional-v1/omp-v16.4.0.condition.json
-    digest: functional-v1-condition:sha256:dce8184104647439dd21e31d85b3360140c346d36a1d25ec4ebf65309bd88e28
+    digest: functional-v1-condition:sha256:37eb25435b4126685f93968cc06c36b868a196db572cad455ff6365ff4f15ffb
   opencode:
     path: profiles/functional-v1/opencode-v1.17.18.condition.json
-    digest: functional-v1-condition:sha256:844d49b5e623b44212c4c3ad1fda133daa215f630b350549e09e7bc5449c8e4c
+    digest: functional-v1-condition:sha256:b5613bac0b9c296a717a4a510b6dbed8b7a5c1bbac59316916980a2ab47c49fa
   hermes:
     path: profiles/functional-v1/hermes-v0.18.2.condition.json
-    digest: functional-v1-condition:sha256:cffbb5428fc6baf3a516bc7ef64206987fa5312d967333f83ec05ab0c2cb1f2f
+    digest: functional-v1-condition:sha256:5535eaefacc5c6161e69d4cd8b7bfbaa960051a2aeb691e573df623f18bc2054
   raw-api:
     path: profiles/functional-v1/raw-api-v1.condition.json
-    digest: functional-v1-condition:sha256:c3916e04f236774434394cd7da972ec15d33fff9fc01fb4f5fa13f515f7eee45
+    digest: functional-v1-condition:sha256:b9ce4670c2a6e41a65199a62227a9aa1b56e93113b6aa837a0acc8e26b6af7bd

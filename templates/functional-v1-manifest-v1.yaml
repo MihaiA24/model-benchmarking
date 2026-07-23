@@ -38,6 +38,9 @@ scenarios:
   angular-reading-time:
     path: locks/angular-reading-time.lock.json
     digest: package-lock:sha256:0000000000000000000000000000000000000000000000000000000000000000
+  react-author-filter:
+    path: locks/react-author-filter.lock.json
+    digest: package-lock:sha256:0000000000000000000000000000000000000000000000000000000000000000
 
 conditions:
   omp:

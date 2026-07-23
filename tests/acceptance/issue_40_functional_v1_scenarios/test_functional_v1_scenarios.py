@@ -19,6 +19,7 @@ EVIDENCE_ROOT = ROOT / "artifacts/qualification/functional-v1"
 PACKAGES = {
     "angular-reading-time": "functional-v1/angular-reading-time",
     "python-sales-by-genre": "functional-v1/python-sales-by-genre",
+    "react-author-filter": "functional-v1/react-author-filter",
     "spring-petvalidator-whitespace": "functional-v1/spring-petvalidator-whitespace",
 }
 REGISTRY = SchemaRegistry(schema_root_path())
@@ -120,7 +121,8 @@ def test_python_brief_keeps_sample_output_outside_submission() -> None:
 
 
 def test_diagnostic_qualification_evidence_covers_all_isolated_cases() -> None:
-    assert sorted(path.stem for path in EVIDENCE_ROOT.glob("*.json")) == sorted(PACKAGES)
+    evidence_names = sorted(path.stem for path in EVIDENCE_ROOT.glob("*.json"))
+    assert evidence_names == sorted([*PACKAGES, "dry-launch-qualification"])
     for directory in PACKAGES:
         package = SCENARIO_ROOT / directory
         lock = REGISTRY.validate_bytes((package / "scenario.lock.json").read_bytes())

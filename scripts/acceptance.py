@@ -135,6 +135,27 @@ STAGES: tuple[Stage, ...] = (
         group="operator",
         proves="Functional V1 operator: manifest validation, managed home, dispositions, and CLI",
     ),
+    Stage(
+        issue=118,
+        slug="minimax_m3_manifest",
+        group="operator",
+        proves="MiniMax M3 Functional V1 manifest: sealed route, pricing, fixed matrix, and canonical identities",
+        extra=("--acceptance-input=functional-v1-minimax-m3.yaml",),
+    ),
+    Stage(
+        issue=123,
+        slug="hy3_manifest",
+        group="operator",
+        proves="Hy3 Functional V1 manifest: sealed route, pricing, fixed matrix, and canonical identities",
+        extra=("--acceptance-input=functional-v1-hy3.yaml",),
+    ),
+    Stage(
+        issue=120,
+        slug="react_author_filter",
+        group="scenarios",
+        proves="React author-filter package: immutable provenance, bounded submission, and isolated behavioral qualification",
+        docker=True,
+    ),
 )
 
 

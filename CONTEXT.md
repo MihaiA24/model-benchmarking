@@ -33,7 +33,7 @@ The canonical execution declaration produced by resolving a Functional V1 Run Ma
 _Avoid_: Source YAML, mutable runtime configuration, Functional V1 Run Manifest
 
 **Functional V1 Execution Envelope**:
-The fixed diagnostic-only per-cell resource and provider limits shared by all 12 Functional V1 Trial Cells, including an enforced 30-minute wall-time limit that does not apply to production measured Trials.
+The fixed diagnostic-only per-cell resource and provider limits shared by all 16 Functional V1 Trial Cells, including an enforced 30-minute wall-time limit that does not apply to production measured Trials.
 _Avoid_: Execution Profile, production Trial limits, operator override
 
 **Advisory Token Threshold**:
@@ -61,7 +61,7 @@ The write-once unsealed local state of one Functional V1 invocation, containing 
 _Avoid_: Run Ledger, mutable results database, reusable Trial workspace
 
 **Functional V1 Run Record**:
-The immutable index of one Functional V1 invocation, binding its resolved inputs, terminal Trial-cell records, Result Bundle identities, and complete or incomplete terminal state. It is complete only when all 12 cells have one durable start, one valid terminal outcome, and one verified Result Bundle identity.
+The immutable index of one Functional V1 invocation, binding its resolved inputs, terminal Trial-cell records, Result Bundle identities, and complete or incomplete terminal state. It is complete only when all 16 cells have one durable start, one valid terminal outcome, and one verified Result Bundle identity.
 _Avoid_: Run Ledger, mutable results database, statistical report
 
 **Run ID**:
@@ -69,8 +69,16 @@ An opaque UUIDv7 locator assigned once to a Functional V1 invocation for managed
 _Avoid_: Run Record identity, manifest digest, Trial ID
 
 **Functional V1 Trial Cell**:
-One fixed slot in a Functional V1 Run, formed by one Scenario Package lock and one Functional V1 Condition Lock. A complete Functional V1 Run contains the fixed 12-cell cross product and does not create production Planned Trial Cells.
+One fixed slot in a Functional V1 Run, formed by one Scenario Package lock and one Functional V1 Condition Lock. A complete Functional V1 Run contains the fixed 16-cell cross product and does not create production Planned Trial Cells.
 _Avoid_: Planned Trial Cell, Run Cell, retry
+
+**Functional V1 16-cell Hard Cut**:
+The clean replacement of the former 12-cell Functional V1 operator contract with the four-Scenario, 16-cell contract. Cells 01–12 retain their order and React author-filter occupies cells 13–16. Existing sealed 12-cell Run Records remain immutable archival evidence but are not accepted by the current operator.
+_Avoid_: Functional V2, compatibility layer, alias, migration shim
+
+**Functional V1 Dry-launch Qualification**:
+A separately sealed no-spend record proving the complete 16-cell Condition/proxy/capture/Verifier/Result-Bundle lifecycle with a deterministic local-provider substitution, external uplink disabled, complete cleanup, and verified uplink restoration. It is not a Functional V1 Run Record and is excluded from benchmark readouts and dashboards.
+_Avoid_: dry run, benchmark Run, paid Trial, task-success evidence
 
 **Evaluated repository**:
 The immutable codebase snapshot that a harness may modify while attempting a scenario.

@@ -32,6 +32,7 @@ def _configure_parser(parser: argparse.ArgumentParser) -> None:
         required=True,
         choices=(
             "angular-typescript",
+            "react-javascript",
             "spring-boot-java",
             "python-data-engineering",
         ),
